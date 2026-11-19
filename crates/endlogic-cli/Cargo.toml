@@ -1,0 +1,16 @@
+[package]
+name = "endlogic-cli"
+description = "Command-line front end for the endlogic solver."
+version.workspace = true
+edition.workspace = true
+publish.workspace = true
+
+[[bin]]
+name = "endlogic"
+path = "src/main.rs"
+
+[dependencies]
+endlogic-core.workspace = true
+
+[lints]
+workspace = true

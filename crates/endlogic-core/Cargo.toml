@@ -1,0 +1,11 @@
+[package]
+name = "endlogic-core"
+description = "Model, text format, solver and verifier for endlogic puzzles."
+version.workspace = true
+edition.workspace = true
+publish.workspace = true
+
+[dependencies]
+
+[lints]
+workspace = true
