@@ -32,6 +32,11 @@ jobs:
           test -n "$version"
           name="wasm-bindgen-${version}-x86_64-unknown-linux-musl"
           curl --fail --location --silent --show-error --retry 3 --output "$RUNNER_TEMP/$name.tar.gz" "https://github.com/wasm-bindgen/wasm-bindgen/releases/download/${version}/${name}.tar.gz"
+          curl --fail --location --silent --show-error --retry 3 --output "$RUNNER_TEMP/$name.tar.gz.sha256sum" "https://github.com/wasm-bindgen/wasm-bindgen/releases/download/${version}/${name}.tar.gz.sha256sum"
+          # The file holds "<hash>  <path at build time>": check the hash against our download.
+          expected="$(cut -d ' ' -f 1 "$RUNNER_TEMP/$name.tar.gz.sha256sum")"
+          echo "$expected" | grep -Eq '^[0-9a-f]{64}$'
+          echo "$expected  $RUNNER_TEMP/$name.tar.gz" | sha256sum --check --strict -
           tar -xzf "$RUNNER_TEMP/$name.tar.gz" -C "$HOME/.cargo/bin" --strip-components=1 "$name/wasm-bindgen"
           test -x "$HOME/.cargo/bin/wasm-bindgen"
           wasm-bindgen --version
