@@ -10,7 +10,7 @@ use crate::shape::Rotation;
 
 /// Where one piece goes: its rotation and the top-left corner of the rotated
 /// shape's bounding box.
-#[derive(Debug, Clone, Copy, PartialEq, Eq, PartialOrd, Ord, Hash)]
+#[derive(Debug, Clone, Copy, PartialEq, Eq, PartialOrd, Ord, Hash, Default)]
 pub struct Placement {
     /// Rotation applied to the piece's shape as given in the puzzle.
     pub rotation: Rotation,
