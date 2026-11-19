@@ -188,7 +188,7 @@ impl Difficulty {
             Difficulty::Easy => (5, (3, 4), (3, 4), (0, 2), (0, 0), 5_000, 100),
             Difficulty::Normal => (6, (4, 5), (3, 5), (0, 4), (0, 2), 10_000, 100),
             Difficulty::Hard => (7, (5, 6), (3, 9), (3, 6), (0, 3), 20_000, 100),
-            Difficulty::Expert => (8, (6, 8), (3, 9), (3, 8), (0, 5), 40_000, 100),
+            Difficulty::Expert => (8, (6, 8), (3, 9), (3, 8), (0, 5), 200_000, 100),
         };
         GeneratorParams {
             width: size,
