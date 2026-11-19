@@ -26,12 +26,15 @@ jobs:
       - name: Install the toolchain from rust-toolchain.toml
         run: rustup toolchain install
 
-      - name: Install wasm-bindgen-cli of the version in Cargo.lock
+      - name: Install the prebuilt wasm-bindgen of the version in Cargo.lock
         run: |
           version="$(awk '$1 == "name" && $3 == "\"wasm-bindgen\"" { getline; gsub(/"/, "", $3); print $3 }' Cargo.lock)"
           test -n "$version"
-          echo "wasm-bindgen $version"
-          cargo install wasm-bindgen-cli --version "$version" --locked
+          name="wasm-bindgen-${version}-x86_64-unknown-linux-musl"
+          curl --fail --location --silent --show-error --retry 3 --output "$RUNNER_TEMP/$name.tar.gz" "https://github.com/wasm-bindgen/wasm-bindgen/releases/download/${version}/${name}.tar.gz"
+          tar -xzf "$RUNNER_TEMP/$name.tar.gz" -C "$HOME/.cargo/bin" --strip-components=1 "$name/wasm-bindgen"
+          test -x "$HOME/.cargo/bin/wasm-bindgen"
+          wasm-bindgen --version
 
       - name: Build the web version
         run: |
