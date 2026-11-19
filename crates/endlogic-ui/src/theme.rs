@@ -2,7 +2,8 @@
 
 use crate::painter::Rgba;
 
-/// Page background.
+/// Page background; a shell may use it around the drawing area (a window
+/// title bar, the page behind the canvas).
 pub const BACKGROUND: Rgba = Rgba::hex(0x0B_0D0C);
 /// Panels: the left column, banners and toasts.
 pub const PANEL: Rgba = Rgba::hex(0x15_1817);

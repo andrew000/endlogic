@@ -24,6 +24,7 @@ cells do not.
 - `crates/endlogic-ui` — the trainer itself: state, rules, layout and
   drawing, independent of any platform.
 - `crates/endlogic-web` — the browser shell for the trainer.
+- `crates/endlogic-win` — the Windows shell for the trainer.
 - `web/` — the web page.
 - `puzzles/` — sample puzzles.
 - `docs/FORMAT.md` — the puzzle file format.
@@ -116,6 +117,39 @@ just web-serve
 
 The `Deploy to GitHub Pages` workflow builds the same site and publishes it;
 it and the `CI` workflow run only when started by hand from the Actions tab.
+
+## Windows app
+
+`endlogic-win` is the same trainer in a native window (Win32, Direct2D,
+DirectWrite), for Windows 10 and 11 on x64. Build it on Windows with the
+toolchain from `rust-toolchain.toml`:
+
+```sh
+just win-build
+```
+
+The result, `target/release/endlogic-win.exe`, is a single file: the C
+runtime is linked in, so it runs on a clean system with nothing next to it.
+Run it directly, or with a puzzle link or code as the only argument:
+
+```sh
+just win-run "https://andrew000.github.io/endlogic/#p=<code>"
+```
+
+- "Share" copies a web link to the puzzle, so anyone can open it in a
+  browser.
+- `Ctrl+V` opens the puzzle in a link or code on the clipboard.
+- The app writes nothing to disk and keeps no settings between runs.
+- A downloaded `.exe` is not signed, so Windows SmartScreen may warn before
+  the first start; "More info", then "Run anyway" starts it.
+
+For checks without a screen, `--screenshot` draws one settled frame into a
+PNG file instead of opening the window (the seed is fixed, so the same
+arguments give the same picture):
+
+```sh
+just win-shot out.png 1366x768 --code "<link or code>" --lang uk --touch
+```
 
 ## License
 

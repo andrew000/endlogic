@@ -40,3 +40,4 @@ pub use shell::{
     SETTING_COUNTERS, SETTING_DIFFICULTY, SETTING_EDITOR, SETTING_KEYS, SETTING_LANG,
 };
 pub use text::{Lang, Text, difficulty_label, problem_text, solution_of, text};
+pub use theme::BACKGROUND;

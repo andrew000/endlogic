@@ -64,3 +64,33 @@ web-serve:
 [windows]
 web-serve:
     python -m http.server 8080 --bind 127.0.0.1 --directory web/dist
+
+# Build the Windows app (release): target/release/endlogic-win.exe.
+[windows]
+win-build:
+    cargo build -p endlogic-win --release
+
+# Build the Windows app (release): target/release/endlogic-win.exe.
+[unix]
+win-build:
+    @echo "win-build is available on Windows only"
+
+# Run the Windows app; an optional link or code opens that puzzle.
+[windows]
+win-run *ARGS:
+    cargo run -q -p endlogic-win --release -- {{ ARGS }}
+
+# Run the Windows app; an optional link or code opens that puzzle.
+[unix]
+win-run *ARGS:
+    @echo "win-run is available on Windows only"
+
+# Draw one frame into a PNG, e.g. just win-shot out.png 1366x768 --lang uk
+[windows]
+win-shot FILE SIZE *ARGS:
+    cargo run -q -p endlogic-win --release -- --screenshot '{{ replace(FILE, "'", "''") }}' --size {{ SIZE }} {{ ARGS }}
+
+# Draw one frame into a PNG, e.g. just win-shot out.png 1366x768 --lang uk
+[unix]
+win-shot FILE SIZE *ARGS:
+    @echo "win-shot is available on Windows only"

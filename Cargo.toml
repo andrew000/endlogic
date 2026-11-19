@@ -1,6 +1,12 @@
 [workspace]
 resolver = "3"
-members = ["crates/endlogic-core", "crates/endlogic-cli", "crates/endlogic-ui", "crates/endlogic-web"]
+members = [
+    "crates/endlogic-core",
+    "crates/endlogic-cli",
+    "crates/endlogic-ui",
+    "crates/endlogic-web",
+    "crates/endlogic-win",
+]
 
 [workspace.package]
 version = "0.1.0"
