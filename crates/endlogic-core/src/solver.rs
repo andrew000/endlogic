@@ -23,98 +23,122 @@ use crate::puzzle::Puzzle;
 use crate::shape::{Rotation, Shape};
 use crate::solution::{Placement, Solution};
 
-/// Result of counting solutions up to a limit.
-#[derive(Debug, Clone, Copy, PartialEq, Eq, Hash)]
-pub enum Count {
-    /// The search finished; the puzzle has exactly this many solutions.
-    Exact(usize),
-    /// The search stopped after finding this many solutions (the limit);
-    /// there may be more.
-    LimitReached(usize),
-}
-
-impl Count {
-    /// Number of solutions found.
-    #[must_use]
-    pub fn found(self) -> usize {
-        match self {
-            Count::Exact(n) | Count::LimitReached(n) => n,
-        }
-    }
-
-    /// Whether the search ran to completion.
-    #[must_use]
-    pub fn is_exact(self) -> bool {
-        matches!(self, Count::Exact(_))
-    }
-}
-
-/// Solutions found up to a limit.
-#[derive(Debug, Clone, PartialEq, Eq, Hash)]
-pub struct SolutionList {
-    /// Solutions in the solver's deterministic order.
-    pub solutions: Vec<Solution>,
-    /// `true` if the search stopped at the limit (there may be more
-    /// solutions); `false` if `solutions` is the complete set.
-    pub limit_reached: bool,
-}
-
-/// Finds the first solution in the solver's deterministic order.
-#[must_use]
-pub fn solve(puzzle: &Puzzle) -> Option<Solution> {
-    let mut first = None;
-    search(puzzle, &mut |solution| {
-        first = Some(solution);
-        ControlFlow::Break(())
-    });
-    first
-}
-
-/// Counts solutions, stopping as soon as `limit` are found.
+/// Default node budget for one search.
 ///
-/// Returns [`Count::Exact`] if the search finished below the limit and
-/// [`Count::LimitReached`] otherwise. A `limit` of 0 returns
-/// `LimitReached(0)` without searching.
-#[must_use]
-pub fn count_solutions(puzzle: &Puzzle, limit: usize) -> Count {
-    let mut found = 0;
-    let limit_reached = search_limited(puzzle, limit, &mut |_| found += 1);
-    if limit_reached {
-        Count::LimitReached(found)
-    } else {
-        Count::Exact(found)
-    }
+/// Every sample in `puzzles/` needs less than a hundredth of it.
+pub const DEFAULT_NODE_BUDGET: u64 = 200_000;
+
+/// Why a search stopped.
+#[derive(Debug, Clone, Copy, PartialEq, Eq, Hash)]
+pub enum StopReason {
+    /// The whole search space was explored: the solutions found are all the
+    /// solutions there are.
+    Exhausted,
+    /// The requested number of solutions was found; there may be more.
+    SolutionLimit,
+    /// The node budget ran out first; the search is incomplete.
+    NodeBudget,
 }
 
-/// Collects up to `limit` solutions in the solver's deterministic order.
-/// A `limit` of 0 returns an empty list with `limit_reached` set.
+/// Outcome of [`search`].
+#[derive(Debug, Clone, PartialEq, Eq, Hash)]
+pub struct SearchResult {
+    /// Solutions found, in the solver's deterministic order.
+    pub solutions: Vec<Solution>,
+    /// Nodes spent: the number of piece placements tried.
+    pub nodes: u64,
+    /// Why the search stopped.
+    pub stop: StopReason,
+}
+
+/// Searches for up to `max_solutions` solutions, trying at most `max_nodes`
+/// piece placements.
+///
+/// A *node* is one attempt to put a piece on the board. The count is
+/// deterministic: the same puzzle and limits give the same `nodes`, the same
+/// solutions in the same order and the same [`StopReason`] on every platform.
+///
+/// The limits are checked in this order: once `max_solutions` solutions are
+/// found the search stops with [`StopReason::SolutionLimit`]; a placement is
+/// only tried while fewer than `max_nodes` nodes have been spent, otherwise
+/// the search stops with [`StopReason::NodeBudget`]. A search that finishes
+/// within both limits reports [`StopReason::Exhausted`], so `Exhausted` always
+/// means the solution list is complete. `max_solutions == 0` returns
+/// immediately with `SolutionLimit`.
 #[must_use]
-pub fn find_solutions(puzzle: &Puzzle, limit: usize) -> SolutionList {
+pub fn search(puzzle: &Puzzle, max_solutions: usize, max_nodes: u64) -> SearchResult {
     let mut solutions = Vec::new();
-    let limit_reached = search_limited(puzzle, limit, &mut |s| solutions.push(s));
-    SolutionList {
-        solutions,
-        limit_reached,
+    if max_solutions == 0 {
+        return SearchResult {
+            solutions,
+            nodes: 0,
+            stop: StopReason::SolutionLimit,
+        };
     }
-}
-
-/// Passes up to `limit` solutions to `on_solution`; returns whether the
-/// limit was reached.
-fn search_limited(puzzle: &Puzzle, limit: usize, on_solution: &mut dyn FnMut(Solution)) -> bool {
-    if limit == 0 {
-        return true;
-    }
-    let mut found = 0;
-    search(puzzle, &mut |solution| {
-        on_solution(solution);
-        found += 1;
-        if found >= limit {
-            ControlFlow::Break(())
+    let (nodes, flow) = run(puzzle, max_nodes, &mut |solution| {
+        solutions.push(solution);
+        if solutions.len() >= max_solutions {
+            ControlFlow::Break(Halt::Solutions)
         } else {
             ControlFlow::Continue(())
         }
     });
-    found >= limit
+    let stop = match flow {
+        ControlFlow::Continue(()) => StopReason::Exhausted,
+        ControlFlow::Break(Halt::Solutions) => StopReason::SolutionLimit,
+        ControlFlow::Break(Halt::Budget) => StopReason::NodeBudget,
+    };
+    SearchResult {
+        solutions,
+        nodes,
+        stop,
+    }
+}
+
+/// Answer of [`check_uniqueness`].
+#[derive(Debug, Clone, PartialEq, Eq, Hash)]
+pub enum Uniqueness {
+    /// The puzzle has no solution.
+    NoSolution,
+    /// The puzzle has exactly one solution (up to swapping identical pieces).
+    Unique(Solution),
+    /// The puzzle has at least two solutions.
+    Multiple,
+    /// The node budget ran out before the question was settled.
+    Unknown,
+}
+
+/// Outcome of [`check_uniqueness`].
+#[derive(Debug, Clone, PartialEq, Eq, Hash)]
+pub struct UniquenessCheck {
+    /// The answer.
+    pub uniqueness: Uniqueness,
+    /// Nodes spent.
+    pub nodes: u64,
+}
+
+/// Decides whether the puzzle has no, exactly one or several solutions,
+/// trying at most `max_nodes` piece placements.
+#[must_use]
+pub fn check_uniqueness(puzzle: &Puzzle, max_nodes: u64) -> UniquenessCheck {
+    let result = search(puzzle, 2, max_nodes);
+    let mut solutions = result.solutions;
+    let uniqueness = match (result.stop, solutions.len()) {
+        (StopReason::Exhausted, 0) => Uniqueness::NoSolution,
+        (StopReason::Exhausted, _) => Uniqueness::Unique(solutions.swap_remove(0)),
+        (StopReason::SolutionLimit, _) => Uniqueness::Multiple,
+        (StopReason::NodeBudget, _) => Uniqueness::Unknown,
+    };
+    UniquenessCheck {
+        uniqueness,
+        nodes: result.nodes,
+    }
+}
+
+/// Why the internal search loop stopped early.
+enum Halt {
+    Solutions,
+    Budget,
 }
 
 /// One way to put a piece type on the board.
@@ -159,28 +183,33 @@ struct Search {
     min_index: Vec<usize>,
     /// Candidate indices chosen so far for each type, ascending.
     chosen: Vec<Vec<usize>>,
+    nodes: u64,
+    max_nodes: u64,
 }
 
-type Visit<'a> = dyn FnMut(Solution) -> ControlFlow<()> + 'a;
+type Visit<'a> = dyn FnMut(Solution) -> ControlFlow<Halt> + 'a;
 
-fn search(puzzle: &Puzzle, visit: &mut Visit<'_>) {
-    let Some(mut state) = Search::new(puzzle) else {
-        return;
+/// Runs the search, returning the nodes spent and how it ended.
+fn run(puzzle: &Puzzle, max_nodes: u64, visit: &mut Visit<'_>) -> (u64, ControlFlow<Halt>) {
+    let Some(mut state) = Search::new(puzzle, max_nodes) else {
+        return (0, ControlFlow::Continue(()));
     };
     let all: Vec<Vec<usize>> = state
         .types
         .iter()
         .map(|t| (0..t.candidates.len()).collect())
         .collect();
-    if let Some(candidates) = state.filter(&all) {
-        let _ = state.descend(&candidates, visit);
-    }
+    let flow = match state.filter(&all) {
+        Some(candidates) => state.descend(&candidates, visit),
+        None => ControlFlow::Continue(()),
+    };
+    (state.nodes, flow)
 }
 
 impl Search {
     /// Builds the search state, or returns `None` if a quick check already
     /// shows there is no solution.
-    fn new(puzzle: &Puzzle) -> Option<Search> {
+    fn new(puzzle: &Puzzle, max_nodes: u64) -> Option<Search> {
         let grid = puzzle.grid();
         let (width, height) = (grid.width(), grid.height());
         let colors: Vec<Color> = puzzle.colors();
@@ -249,6 +278,8 @@ impl Search {
             occupied: [0; MAX_GRID_SIZE],
             min_index: vec![0; type_count],
             chosen: vec![Vec::new(); type_count],
+            nodes: 0,
+            max_nodes,
         })
     }
 
@@ -334,7 +365,7 @@ impl Search {
         }
     }
 
-    fn descend(&mut self, candidates: &[Vec<usize>], visit: &mut Visit<'_>) -> ControlFlow<()> {
+    fn descend(&mut self, candidates: &[Vec<usize>], visit: &mut Visit<'_>) -> ControlFlow<Halt> {
         let next = (0..self.types.len())
             .filter(|&t| self.remaining[t] > 0)
             .min_by_key(|&t| candidates[t].len());
@@ -346,6 +377,10 @@ impl Search {
 
         let saved_min = self.min_index[t];
         for &i in &candidates[t] {
+            if self.nodes >= self.max_nodes {
+                return ControlFlow::Break(Halt::Budget);
+            }
+            self.nodes += 1;
             self.apply(t, i, true);
             self.remaining[t] -= 1;
             self.min_index[t] = i + 1;

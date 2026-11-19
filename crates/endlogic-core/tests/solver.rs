@@ -4,8 +4,10 @@ use std::collections::BTreeMap;
 use std::fmt::Write as _;
 
 use endlogic_core::format::{parse, render_solution};
-use endlogic_core::solver::{Count, count_solutions, find_solutions, solve};
-use endlogic_core::{Cell, Color, Grid, LineClues, Piece, Puzzle, Shape, verify};
+use endlogic_core::solver::{
+    DEFAULT_NODE_BUDGET, StopReason, Uniqueness, check_uniqueness, search,
+};
+use endlogic_core::{Cell, Color, Grid, LineClues, Piece, Puzzle, Shape, Solution, verify};
 
 const REFERENCE: &str = include_str!("../../../puzzles/wln006-2.txt");
 
@@ -43,6 +45,29 @@ fn puzzle(grid: &[&str], rows: &[usize], cols: &[usize], pieces: &[&[&str]]) -> 
     parse(&text).unwrap()
 }
 
+/// All solutions; panics if the default budget does not suffice.
+fn all(p: &Puzzle) -> Vec<Solution> {
+    let result = search(p, usize::MAX, DEFAULT_NODE_BUDGET);
+    assert_eq!(result.stop, StopReason::Exhausted);
+    result.solutions
+}
+
+fn count(p: &Puzzle) -> usize {
+    all(p).len()
+}
+
+/// The first solution, if any; panics if the default budget does not suffice.
+fn solve(p: &Puzzle) -> Option<Solution> {
+    let result = search(p, 1, DEFAULT_NODE_BUDGET);
+    assert_ne!(result.stop, StopReason::NodeBudget);
+    result.solutions.into_iter().next()
+}
+
+fn sample(name: &str) -> Puzzle {
+    let path = format!("{}/../../puzzles/{name}", env!("CARGO_MANIFEST_DIR"));
+    parse(&std::fs::read_to_string(path).unwrap()).unwrap()
+}
+
 /// `n` monominoes on an empty `n`×`n` board with every clue 1: one solution
 /// per permutation, `n!` in total.
 fn permutations(n: usize) -> Puzzle {
@@ -56,7 +81,7 @@ fn permutations(n: usize) -> Puzzle {
 #[test]
 fn reference_has_exactly_the_known_solution() {
     let puzzle = parse(REFERENCE).unwrap();
-    assert_eq!(count_solutions(&puzzle, 1000), Count::Exact(1));
+    assert_eq!(count(&puzzle), 1);
     let solution = solve(&puzzle).unwrap();
     assert_eq!(verify(&puzzle, &solution), Ok(()));
     let rendered = render_solution(&puzzle, &solution).unwrap();
@@ -68,7 +93,7 @@ fn no_solution_when_sums_disagree() {
     let text = REFERENCE.replace("rows 5 7 3 5 5 3 1", "rows 5 7 3 5 5 3 2");
     let puzzle = parse(&text).unwrap();
     assert_eq!(solve(&puzzle), None);
-    assert_eq!(count_solutions(&puzzle, 10), Count::Exact(0));
+    assert_eq!(count(&puzzle), 0);
 }
 
 #[test]
@@ -77,73 +102,173 @@ fn no_solution_when_sums_match_but_nothing_fits() {
     // row 0 and both in column 0 at once.
     let p = puzzle(&["..", ".."], &[2, 0], &[2, 0], &[&["##"]]);
     assert_eq!(solve(&p), None);
-    assert_eq!(count_solutions(&p, 10), Count::Exact(0));
+    assert_eq!(count(&p), 0);
 }
 
 #[test]
 fn locks_count_towards_clues() {
     // The lock fills row 0 and column 0; the monomino must go to (1, 1).
     let p = puzzle(&["#.", ".."], &[1, 1], &[1, 1], &[&["#"]]);
-    let solutions = find_solutions(&p, 10);
-    assert!(!solutions.limit_reached);
-    assert_eq!(solutions.solutions.len(), 1);
-    assert_eq!(
-        render_solution(&p, &solutions.solutions[0]).unwrap(),
-        "#.\n.A\n"
-    );
+    let solutions = all(&p);
+    assert_eq!(solutions.len(), 1);
+    assert_eq!(render_solution(&p, &solutions[0]).unwrap(), "#.\n.A\n");
 }
 
 #[test]
 fn locks_exceeding_a_clue_mean_no_solution() {
     let p = puzzle(&["##", ".."], &[1, 1], &[1, 1], &[]);
-    assert_eq!(count_solutions(&p, 10), Count::Exact(0));
+    assert_eq!(count(&p), 0);
 }
 
 #[test]
-fn counting_respects_the_limit() {
+fn solution_limit_stops_the_search() {
     let p = permutations(4);
-    assert_eq!(count_solutions(&p, 1000), Count::Exact(24));
-    assert_eq!(count_solutions(&p, 25), Count::Exact(24));
-    assert_eq!(count_solutions(&p, 24), Count::LimitReached(24));
-    assert_eq!(count_solutions(&p, 10), Count::LimitReached(10));
-    assert_eq!(count_solutions(&p, 0), Count::LimitReached(0));
-    assert!(!count_solutions(&p, 10).is_exact());
-    assert_eq!(count_solutions(&p, 10).found(), 10);
+    let full = search(&p, 1000, DEFAULT_NODE_BUDGET);
+    assert_eq!(full.stop, StopReason::Exhausted);
+    assert_eq!(full.solutions.len(), 24);
+    let at_24 = search(&p, 24, DEFAULT_NODE_BUDGET);
+    assert_eq!(at_24.stop, StopReason::SolutionLimit);
+    assert_eq!(at_24.solutions, full.solutions);
+    let some = search(&p, 5, DEFAULT_NODE_BUDGET);
+    assert_eq!(some.stop, StopReason::SolutionLimit);
+    assert_eq!(some.solutions[..], full.solutions[..5]);
+    assert!(some.nodes < full.nodes);
+    let none = search(&p, 0, DEFAULT_NODE_BUDGET);
+    assert_eq!(none.stop, StopReason::SolutionLimit);
+    assert_eq!((none.nodes, none.solutions.len()), (0, 0));
 }
 
 #[test]
-fn listing_respects_the_limit_and_is_deterministic() {
+fn small_budget_stops_with_node_budget() {
+    let p = parse(REFERENCE).unwrap();
+    let result = search(&p, 1, 5);
+    assert_eq!(result.stop, StopReason::NodeBudget);
+    assert_eq!(result.nodes, 5);
+    assert_eq!(result.solutions, []);
+}
+
+#[test]
+fn budget_boundary_is_exact() {
     let p = permutations(4);
-    let some = find_solutions(&p, 5);
-    assert!(some.limit_reached);
-    assert_eq!(some.solutions.len(), 5);
-    let all = find_solutions(&p, 100);
-    assert!(!all.limit_reached);
-    assert_eq!(all.solutions.len(), 24);
-    assert_eq!(all.solutions[..5], some.solutions[..]);
-    assert_eq!(find_solutions(&p, 100), all);
-    for solution in &all.solutions {
-        assert_eq!(verify(&p, solution), Ok(()));
+    let full = search(&p, usize::MAX, DEFAULT_NODE_BUDGET);
+    assert_eq!(full.stop, StopReason::Exhausted);
+    let just_enough = search(&p, usize::MAX, full.nodes);
+    assert_eq!(just_enough, full);
+    let one_short = search(&p, usize::MAX, full.nodes - 1);
+    assert_eq!(one_short.stop, StopReason::NodeBudget);
+    assert_eq!(one_short.nodes, full.nodes - 1);
+}
+
+#[test]
+fn search_is_deterministic() {
+    let puzzles = [
+        parse(REFERENCE).unwrap(),
+        permutations(4),
+        sample("wlh9000-1.txt"),
+    ];
+    for puzzle in &puzzles {
+        for (limit, budget) in [
+            (1, DEFAULT_NODE_BUDGET),
+            (usize::MAX, DEFAULT_NODE_BUDGET),
+            (usize::MAX, 7),
+        ] {
+            let a = search(puzzle, limit, budget);
+            let b = search(puzzle, limit, budget);
+            assert_eq!(a, b);
+            assert!(a.nodes <= budget);
+        }
     }
-    let mut boards: Vec<String> = all
-        .solutions
-        .iter()
-        .map(|s| render_solution(&p, s).unwrap())
+}
+
+#[test]
+fn uniqueness_has_four_answers() {
+    let reference = parse(REFERENCE).unwrap();
+    let check = check_uniqueness(&reference, DEFAULT_NODE_BUDGET);
+    let Uniqueness::Unique(solution) = check.uniqueness else {
+        panic!("expected a unique solution, got {:?}", check.uniqueness);
+    };
+    assert_eq!(
+        render_solution(&reference, &solution).unwrap(),
+        REFERENCE_SOLUTION
+    );
+    assert!(check.nodes > 0);
+
+    let none = check_uniqueness(&sample("no-solution.txt"), DEFAULT_NODE_BUDGET);
+    assert_eq!(none.uniqueness, Uniqueness::NoSolution);
+
+    let many = check_uniqueness(&sample("wlh9000-1.txt"), DEFAULT_NODE_BUDGET);
+    assert_eq!(many.uniqueness, Uniqueness::Multiple);
+
+    let unknown = check_uniqueness(&reference, 3);
+    assert_eq!(unknown.uniqueness, Uniqueness::Unknown);
+    assert_eq!(unknown.nodes, 3);
+}
+
+#[test]
+fn wlh9000_1_has_five_solutions() {
+    let p = sample("wlh9000-1.txt");
+    let result = search(&p, usize::MAX, DEFAULT_NODE_BUDGET);
+    assert_eq!(result.stop, StopReason::Exhausted);
+    assert_eq!(result.solutions.len(), 5);
+    for solution in &result.solutions {
+        assert_eq!(verify(&p, solution), Ok(()));
+        let owners = solution.cell_owners(&p).unwrap();
+        assert_eq!(owners[2], None, "top middle cell must stay empty");
+    }
+}
+
+#[test]
+fn zero_clue_keeps_line_empty() {
+    // Row 0 and column 2 have free cells but a clue of 0.
+    let p = puzzle(&["...", "..."], &[0, 2], &[1, 1, 0], &[&["##"]]);
+    let solutions = all(&p);
+    assert_eq!(solutions.len(), 1);
+    assert_eq!(render_solution(&p, &solutions[0]).unwrap(), "...\nAA.\n");
+    // A vertical domino would have to use the zero row: no solution.
+    let p = puzzle(&["...", "..."], &[0, 2], &[2, 0, 0], &[&["#", "#"]]);
+    assert_eq!(count(&p), 0);
+}
+
+#[test]
+fn samples_fit_the_default_budget_a_hundred_times_over() {
+    let dir = format!("{}/../../puzzles", env!("CARGO_MANIFEST_DIR"));
+    let mut names: Vec<String> = std::fs::read_dir(dir)
+        .unwrap()
+        .map(|e| e.unwrap().file_name().into_string().unwrap())
         .collect();
-    boards.sort();
-    boards.dedup();
-    assert_eq!(boards.len(), 24);
+    names.sort();
+    println!(
+        "{:<22} {:>9} {:>11} {:>9}",
+        "sample", "solutions", "first-only", "all"
+    );
+    for name in names {
+        let p = sample(&name);
+        let first = search(&p, 1, DEFAULT_NODE_BUDGET);
+        let full = search(&p, usize::MAX, DEFAULT_NODE_BUDGET);
+        assert_eq!(full.stop, StopReason::Exhausted, "{name}");
+        println!(
+            "{name:<22} {:>9} {:>11} {:>9}",
+            full.solutions.len(),
+            first.nodes,
+            full.nodes
+        );
+        assert!(
+            full.nodes * 100 <= DEFAULT_NODE_BUDGET,
+            "{name}: {} nodes",
+            full.nodes
+        );
+    }
 }
 
 #[test]
 fn identical_pieces_do_not_produce_duplicates() {
     // Two monominoes on a diagonal: two boards, not four.
     let p = puzzle(&["..", ".."], &[1, 1], &[1, 1], &[&["#"], &["#"]]);
-    assert_eq!(count_solutions(&p, 100), Count::Exact(2));
+    assert_eq!(count(&p), 2);
 
     // Two dominoes filling a 2x2 board: both horizontal or both vertical.
     let p = puzzle(&["..", ".."], &[2, 2], &[2, 2], &[&["##"], &["##"]]);
-    assert_eq!(count_solutions(&p, 100), Count::Exact(2));
+    assert_eq!(count(&p), 2);
 
     // The same L tromino given in two different rotations is still one type.
     let p = puzzle(
@@ -152,13 +277,11 @@ fn identical_pieces_do_not_produce_duplicates() {
         &[3, 2, 3],
         &[&["#.", "##"], &["##", "#."], &["#"], &["#"]],
     );
-    let all = find_solutions(&p, 1000);
-    assert!(!all.limit_reached);
-    assert!(all.solutions.len() > 1, "{} solutions", all.solutions.len());
+    let solutions = all(&p);
+    assert!(solutions.len() > 1, "{} solutions", solutions.len());
     // Pieces 0 and 1 are one type, 2 and 3 another. Describe each solution by
     // the sorted cell sets of each type, which ignores piece identity.
-    let mut layouts: Vec<Vec<Vec<usize>>> = all
-        .solutions
+    let mut layouts: Vec<Vec<Vec<usize>>> = solutions
         .iter()
         .map(|s| {
             verify(&p, s).unwrap();
@@ -184,9 +307,9 @@ fn identical_pieces_do_not_produce_duplicates() {
 #[test]
 fn symmetric_orientations_do_not_produce_duplicates() {
     let square = puzzle(&["..", ".."], &[2, 2], &[2, 2], &[&["##", "##"]]);
-    assert_eq!(count_solutions(&square, 100), Count::Exact(1));
+    assert_eq!(count(&square), 1);
     let domino = puzzle(&[".."], &[2], &[1, 1], &[&["##"]]);
-    assert_eq!(count_solutions(&domino, 100), Count::Exact(1));
+    assert_eq!(count(&domino), 1);
 }
 
 #[test]
@@ -195,15 +318,15 @@ fn dead_cells_are_never_covered_or_counted() {
     let p = puzzle(&["x.", ".."], &[1, 2], &[1, 2], &[&["#.", "##"]]);
     let solution = solve(&p).unwrap();
     assert_eq!(render_solution(&p, &solution).unwrap(), "xA\nAA\n");
-    assert_eq!(count_solutions(&p, 100), Count::Exact(1));
+    assert_eq!(count(&p), 1);
 
     // Clues that count the dead cell as filled cannot be met.
     let p = puzzle(&["x.", ".."], &[2, 2], &[2, 2], &[&["#.", "##"]]);
-    assert_eq!(count_solutions(&p, 100), Count::Exact(0));
+    assert_eq!(count(&p), 0);
 
     // A dead cell splits the row; the tromino has nowhere to go.
     let p = puzzle(&[".x.."], &[3], &[1, 0, 1, 1], &[&["###"]]);
-    assert_eq!(count_solutions(&p, 100), Count::Exact(0));
+    assert_eq!(count(&p), 0);
 }
 
 #[test]
@@ -211,7 +334,7 @@ fn empty_puzzle_with_zero_clues_is_solved() {
     let p = puzzle(&[".."], &[0], &[0, 0], &[]);
     let solution = solve(&p).unwrap();
     assert_eq!(solution.placements, []);
-    assert_eq!(count_solutions(&p, 10), Count::Exact(1));
+    assert_eq!(count(&p), 1);
 }
 
 #[test]
@@ -238,7 +361,7 @@ fn colors_are_counted_separately() {
         },
     );
     let p = Puzzle::new(grid.clone(), pieces.clone(), clues).unwrap();
-    assert_eq!(count_solutions(&p, 10), Count::Exact(1));
+    assert_eq!(count(&p), 1);
     let solution = solve(&p).unwrap();
     assert_eq!(solution.placements[0].col, 1);
     assert_eq!(solution.placements[1].col, 0);
@@ -254,7 +377,7 @@ fn colors_are_counted_separately() {
         },
     );
     let p = Puzzle::new(grid, pieces, clues).unwrap();
-    assert_eq!(count_solutions(&p, 10), Count::Exact(0));
+    assert_eq!(count(&p), 0);
 }
 
 #[test]

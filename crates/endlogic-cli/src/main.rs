@@ -4,7 +4,7 @@
 use std::process::ExitCode;
 
 use endlogic_core::format::{parse, render_solution};
-use endlogic_core::solver::{Count, count_solutions, solve};
+use endlogic_core::solver::{DEFAULT_NODE_BUDGET, StopReason, search};
 
 const USAGE: &str = "\
 endlogic - solver for Arknights: Endfield mechanism repair puzzles
@@ -14,10 +14,14 @@ Usage:
   endlogic solve <FILE> --count [N]  Count solutions, stopping at N (default 1000)
   endlogic --help                    Show this help
 
+Options for solve:
+  --budget N   Give up after trying N piece placements (default 200000)
+
 In a printed solution, pieces are letters in file order (A, B, ...),
 `#` is a locked cell, `x` a dead cell and `.` an empty free cell.
 
-Exit codes: 0 success, 1 no solution, 2 usage, file or parse error.
+Exit codes: 0 success, 1 no solution, 2 usage, file or parse error,
+3 search budget exhausted.
 ";
 
 const DEFAULT_COUNT_LIMIT: usize = 1000;
@@ -26,6 +30,8 @@ const DEFAULT_COUNT_LIMIT: usize = 1000;
 const EXIT_NO_SOLUTION: u8 = 1;
 /// Exit code for usage, file and parse errors.
 const EXIT_ERROR: u8 = 2;
+/// Exit code when the node budget runs out.
+const EXIT_BUDGET: u8 = 3;
 
 #[derive(Debug, PartialEq, Eq)]
 enum Command {
@@ -33,6 +39,7 @@ enum Command {
     Solve {
         path: String,
         count_limit: Option<usize>,
+        budget: u64,
     },
 }
 
@@ -47,27 +54,38 @@ fn parse_args(args: &[String]) -> Result<Command, String> {
     }
 }
 
+/// Parses a positive integer option value.
+fn positive<T: std::str::FromStr + PartialOrd + Default>(
+    option: &str,
+    value: Option<&String>,
+) -> Result<T, String> {
+    let value = value.ok_or_else(|| format!("`{option}` needs a value"))?;
+    value
+        .parse::<T>()
+        .ok()
+        .filter(|n| *n > T::default())
+        .ok_or_else(|| format!("invalid value `{value}` for `{option}`"))
+}
+
 fn parse_solve_args(args: &[String]) -> Result<Command, String> {
     let mut path = None;
     let mut count_limit = None;
+    let mut budget = DEFAULT_NODE_BUDGET;
     let mut iter = args.iter().peekable();
     while let Some(arg) = iter.next() {
         match arg.as_str() {
             "-h" | "--help" => return Ok(Command::Help),
             "--count" => {
                 let mut limit = DEFAULT_COUNT_LIMIT;
-                if let Some(next) = iter.peek()
-                    && next.starts_with(|c: char| c.is_ascii_digit())
+                if iter
+                    .peek()
+                    .is_some_and(|next| next.starts_with(|c: char| c.is_ascii_digit()))
                 {
-                    limit = next
-                        .parse()
-                        .ok()
-                        .filter(|&n| n > 0)
-                        .ok_or_else(|| format!("invalid count limit `{next}`"))?;
-                    iter.next();
+                    limit = positive("--count", iter.next())?;
                 }
                 count_limit = Some(limit);
             }
+            "--budget" => budget = positive("--budget", iter.next())?,
             flag if flag.starts_with('-') && flag.len() > 1 => {
                 return Err(format!("unknown option `{flag}`"));
             }
@@ -80,10 +98,14 @@ fn parse_solve_args(args: &[String]) -> Result<Command, String> {
         }
     }
     let path = path.ok_or_else(|| "missing puzzle file".to_owned())?;
-    Ok(Command::Solve { path, count_limit })
+    Ok(Command::Solve {
+        path,
+        count_limit,
+        budget,
+    })
 }
 
-fn run_solve(path: &str, count_limit: Option<usize>) -> ExitCode {
+fn run_solve(path: &str, count_limit: Option<usize>, budget: u64) -> ExitCode {
     let text = match std::fs::read_to_string(path) {
         Ok(text) => text,
         Err(err) => {
@@ -99,21 +121,27 @@ fn run_solve(path: &str, count_limit: Option<usize>) -> ExitCode {
         }
     };
 
+    let result = search(&puzzle, count_limit.unwrap_or(1), budget);
+    let found = result.solutions.len();
+    if result.stop == StopReason::NodeBudget {
+        println!("search budget of {budget} nodes exhausted after {found} solution(s)");
+        return ExitCode::from(EXIT_BUDGET);
+    }
+
     if let Some(limit) = count_limit {
-        match count_solutions(&puzzle, limit) {
-            Count::Exact(n) => println!("solutions: {n}"),
-            Count::LimitReached(n) => {
-                println!("solutions: at least {n} (stopped at limit {limit})");
-            }
+        if result.stop == StopReason::SolutionLimit {
+            println!("solutions: at least {found} (stopped at limit {limit})");
+        } else {
+            println!("solutions: {found}");
         }
         return ExitCode::SUCCESS;
     }
 
-    let Some(solution) = solve(&puzzle) else {
+    let Some(solution) = result.solutions.first() else {
         println!("no solution");
         return ExitCode::from(EXIT_NO_SOLUTION);
     };
-    let board = render_solution(&puzzle, &solution)
+    let board = render_solution(&puzzle, solution)
         .expect("solver returned a geometrically invalid solution");
     print!("{board}");
     ExitCode::SUCCESS
@@ -126,7 +154,11 @@ fn main() -> ExitCode {
             print!("{USAGE}");
             ExitCode::SUCCESS
         }
-        Ok(Command::Solve { path, count_limit }) => run_solve(&path, count_limit),
+        Ok(Command::Solve {
+            path,
+            count_limit,
+            budget,
+        }) => run_solve(&path, count_limit, budget),
         Err(message) => {
             eprintln!("error: {message}\n\n{USAGE}");
             ExitCode::from(EXIT_ERROR)
@@ -142,43 +174,56 @@ mod tests {
         list.iter().map(|s| (*s).to_owned()).collect()
     }
 
-    fn solve_cmd(path: &str, count_limit: Option<usize>) -> Command {
+    fn solve_cmd(path: &str, count_limit: Option<usize>, budget: u64) -> Command {
         Command::Solve {
             path: path.to_owned(),
             count_limit,
+            budget,
         }
     }
 
     #[test]
     fn parses_commands() {
+        let budget = DEFAULT_NODE_BUDGET;
         assert_eq!(parse_args(&args(&["--help"])), Ok(Command::Help));
         assert_eq!(parse_args(&args(&["solve", "-h"])), Ok(Command::Help));
         assert_eq!(
             parse_args(&args(&["solve", "p.txt"])),
-            Ok(solve_cmd("p.txt", None))
+            Ok(solve_cmd("p.txt", None, budget))
         );
         assert_eq!(
             parse_args(&args(&["solve", "p.txt", "--count"])),
-            Ok(solve_cmd("p.txt", Some(DEFAULT_COUNT_LIMIT)))
+            Ok(solve_cmd("p.txt", Some(DEFAULT_COUNT_LIMIT), budget))
         );
         assert_eq!(
             parse_args(&args(&["solve", "p.txt", "--count", "7"])),
-            Ok(solve_cmd("p.txt", Some(7)))
+            Ok(solve_cmd("p.txt", Some(7), budget))
         );
         assert_eq!(
             parse_args(&args(&["solve", "--count", "7", "p.txt"])),
-            Ok(solve_cmd("p.txt", Some(7)))
+            Ok(solve_cmd("p.txt", Some(7), budget))
+        );
+        assert_eq!(
+            parse_args(&args(&["solve", "p.txt", "--budget", "42"])),
+            Ok(solve_cmd("p.txt", None, 42))
         );
     }
 
     #[test]
     fn rejects_bad_usage() {
-        assert!(parse_args(&args(&[])).is_err());
-        assert!(parse_args(&args(&["frobnicate"])).is_err());
-        assert!(parse_args(&args(&["solve"])).is_err());
-        assert!(parse_args(&args(&["solve", "a", "b"])).is_err());
-        assert!(parse_args(&args(&["solve", "a", "--verbose"])).is_err());
-        assert!(parse_args(&args(&["solve", "a", "--count", "0"])).is_err());
-        assert!(parse_args(&args(&["solve", "a", "--count", "9x"])).is_err());
+        for bad in [
+            &[][..],
+            &["frobnicate"],
+            &["solve"],
+            &["solve", "a", "b"],
+            &["solve", "a", "--verbose"],
+            &["solve", "a", "--count", "0"],
+            &["solve", "a", "--count", "9x"],
+            &["solve", "a", "--budget"],
+            &["solve", "a", "--budget", "0"],
+            &["solve", "a", "--budget", "many"],
+        ] {
+            assert!(parse_args(&args(bad)).is_err(), "{bad:?} accepted");
+        }
     }
 }

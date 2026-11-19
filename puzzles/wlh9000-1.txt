@@ -1,0 +1,21 @@
+endlogic 1
+grid
+xx.xx
+.....
+.....
+.....
+.....
+rows 0 4 5 3 1
+cols 2 3 3 3 2
+piece
+##
+#.
+piece
+##
+#.
+piece
+##
+#.
+piece
+###
+..#
