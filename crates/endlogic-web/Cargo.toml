@@ -1,0 +1,44 @@
+[package]
+name = "endlogic-web"
+description = "Browser shell for the endlogic trainer: canvas, events, effects"
+version.workspace = true
+edition.workspace = true
+publish.workspace = true
+
+[lib]
+crate-type = ["cdylib"]
+
+[dependencies]
+endlogic-ui.workspace = true
+js-sys = "0.3.107"
+wasm-bindgen = "0.2.130"
+
+[dependencies.web-sys]
+version = "0.3.107"
+features = [
+    "CanvasRenderingContext2d",
+    "Clipboard",
+    "CssStyleDeclaration",
+    "Crypto",
+    "Document",
+    "DomRect",
+    "Element",
+    "Event",
+    "EventTarget",
+    "History",
+    "HtmlCanvasElement",
+    "HtmlElement",
+    "KeyboardEvent",
+    "Location",
+    "MediaQueryList",
+    "MouseEvent",
+    "Navigator",
+    "PointerEvent",
+    "Storage",
+    "TextMetrics",
+    "Window",
+    "console",
+]
+
+[lints]
+workspace = true

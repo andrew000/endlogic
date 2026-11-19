@@ -1,6 +1,6 @@
 [workspace]
 resolver = "3"
-members = ["crates/endlogic-core", "crates/endlogic-cli", "crates/endlogic-ui"]
+members = ["crates/endlogic-core", "crates/endlogic-cli", "crates/endlogic-ui", "crates/endlogic-web"]
 
 [workspace.package]
 version = "0.1.0"
@@ -9,6 +9,7 @@ publish = false
 
 [workspace.dependencies]
 endlogic-core = { path = "crates/endlogic-core" }
+endlogic-ui = { path = "crates/endlogic-ui" }
 
 [workspace.lints.rust]
 missing_docs = "warn"
