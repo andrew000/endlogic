@@ -97,6 +97,12 @@ pub enum Text {
     Share,
     /// Share button where space is short.
     ShareShort,
+    /// Hint button.
+    Hint,
+    /// Line on the win banner, followed by the number of hints.
+    HintsUsed,
+    /// Toast when no hint could be computed.
+    HintFailed,
 }
 
 /// The text for `key` in `lang`.
@@ -120,6 +126,9 @@ pub const fn text(lang: Lang, key: Text) -> &'static str {
             Text::InvalidLink => "Invalid puzzle link",
             Text::Share => "Share",
             Text::ShareShort => "Link",
+            Text::Hint => "Hint",
+            Text::HintsUsed => "Hints:",
+            Text::HintFailed => "Couldn't compute a hint",
         },
         Lang::Ua => match key {
             Text::Subtitle => "Розмістіть компоненти на платі, щоб відремонтувати",
@@ -138,6 +147,9 @@ pub const fn text(lang: Lang, key: Text) -> &'static str {
             Text::InvalidLink => "Некоректне посилання",
             Text::Share => "Поділитися",
             Text::ShareShort => "Лінк",
+            Text::Hint => "Підказка",
+            Text::HintsUsed => "Підказок:",
+            Text::HintFailed => "Не вдалося порахувати підказку",
         },
     }
 }

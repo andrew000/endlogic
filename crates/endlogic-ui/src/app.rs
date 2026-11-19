@@ -7,10 +7,11 @@ use endlogic_core::rng::Rng;
 
 use crate::board::{Board, PieceState, Turned};
 use crate::draw;
+use crate::hint::Hints;
 use crate::layout::{Layout, LayoutInput, to_f32};
 use crate::painter::{Painter, Point, Rect};
 use crate::shell::{
-    Config, Cursor, Effect, Event, Insets, Key, Pointer, PointerKind, SETTING_COUNTERS,
+    Budgets, Config, Cursor, Effect, Event, Insets, Key, Pointer, PointerKind, SETTING_COUNTERS,
     SETTING_DIFFICULTY, SETTING_LANG,
 };
 use crate::text::{Lang, Text};
@@ -85,6 +86,8 @@ pub enum Control {
     New,
     /// The next button on the win banner.
     Next,
+    /// The hint button.
+    Hint,
     /// The previous tray page.
     PagePrev,
     /// The next tray page.
@@ -124,10 +127,12 @@ pub(crate) struct PieceAnim {
     pub grow: Option<(f32, f32)>,
     /// Seconds into the shake of a turn that did not fit.
     pub wobble: Option<f32>,
+    /// Seconds since a hint pointed this piece out as misplaced.
+    pub blame: Option<f32>,
 }
 
 /// The puzzle being played.
-#[derive(Debug, Clone, PartialEq)]
+#[derive(Debug, Clone)]
 pub(crate) struct Game {
     pub board: Board,
     pub code: String,
@@ -137,6 +142,7 @@ pub(crate) struct Game {
     /// Seconds since the win.
     pub win_elapsed: f32,
     pub anims: Vec<PieceAnim>,
+    pub hints: Hints,
 }
 
 /// A piece being dragged.
@@ -198,6 +204,7 @@ pub struct App {
     insets: Insets,
     pub(crate) touch: bool,
     share_prefix: String,
+    pub(crate) budgets: Budgets,
     entropy: u64,
     puzzles_started: u64,
     pub(crate) lang: Lang,
@@ -244,6 +251,7 @@ impl App {
             insets: config.insets,
             touch: config.touch,
             share_prefix: config.share_prefix,
+            budgets: config.budgets,
             entropy: config.entropy,
             puzzles_started: 0,
             lang,
@@ -332,6 +340,7 @@ impl App {
             0.0
         };
         self.step_generator();
+        self.step_hint();
         self.animate(dt);
         draw::draw(self, painter);
         self.busy()
@@ -583,8 +592,14 @@ impl App {
         over.then_some((row, col))
     }
 
-    fn can_move(&self) -> bool {
-        self.generator.is_none() && self.game.as_ref().is_some_and(|g| !g.won)
+    /// Whether pieces may be moved: a puzzle is in play and nothing is
+    /// being computed for it.
+    pub(crate) fn can_move(&self) -> bool {
+        self.generator.is_none()
+            && self
+                .game
+                .as_ref()
+                .is_some_and(|g| !g.won && g.hints.job.is_none())
     }
 
     fn busy(&self) -> bool {
@@ -592,11 +607,13 @@ impl App {
             || self.toast.is_some()
             || self.game.as_ref().is_some_and(|g| {
                 (g.won && g.win_elapsed < theme::WIN_TIME)
+                    || g.hints.job.is_some()
                     || g.anims.iter().any(|a| {
                         a.fly.is_some()
                             || a.spin.is_some()
                             || a.grow.is_some()
                             || a.wobble.is_some()
+                            || a.blame.is_some()
                     })
             })
     }
@@ -631,7 +648,7 @@ impl App {
         self.tray_page = self.tray_page.min(self.tray_pages() - 1);
     }
 
-    fn show_toast(&mut self, text: Text, error: bool) {
+    pub(crate) fn show_toast(&mut self, text: Text, error: bool) {
         self.toast = Some(Toast {
             text,
             error,
@@ -684,6 +701,7 @@ impl App {
             won: false,
             win_elapsed: 0.0,
             anims: vec![PieceAnim::default(); pieces],
+            hints: Hints::default(),
         });
         self.gesture = Gesture::Idle;
         self.tray_page = 0;
@@ -705,7 +723,7 @@ impl App {
         let Some(generator) = &mut self.generator else {
             return;
         };
-        match generator.step(NODES_PER_FRAME) {
+        match generator.step(self.budgets.per_frame) {
             Step::Working => {}
             Step::Done(generated) => {
                 self.generator = None;
@@ -753,6 +771,12 @@ impl App {
                     anim.wobble = None;
                 }
             }
+            if let Some(elapsed) = &mut anim.blame {
+                *elapsed += dt;
+                if *elapsed >= theme::BLAME_TIME {
+                    anim.blame = None;
+                }
+            }
         }
     }
 
@@ -774,7 +798,7 @@ impl App {
         }
     }
 
-    fn check_win(&mut self) {
+    pub(crate) fn check_win(&mut self) {
         if let Some(game) = &mut self.game
             && !game.won
             && game.board.is_solved()
@@ -816,6 +840,7 @@ impl App {
         controls.extend([
             (Control::Share, l.share, has_game),
             (Control::Reset, l.reset, self.can_move()),
+            (Control::Hint, l.hint, self.can_move()),
             (Control::New, l.new, true),
         ]);
         if let Some(pager) = l.pager {
@@ -1006,6 +1031,7 @@ impl App {
                 }
             },
             Key::Tab => self.set_counters(self.counters.toggled()),
+            Key::H => self.request_hint(),
             Key::Escape => {
                 if let Gesture::Dragging(drag) = self.gesture {
                     self.cancel_drag(drag);
@@ -1058,6 +1084,7 @@ impl App {
             Control::Reset => self.reset(),
             Control::Counters(mode) => self.set_counters(mode),
             Control::New | Control::Next => self.start_generation(),
+            Control::Hint => self.request_hint(),
             Control::PagePrev => self.turn_page(false),
             Control::PageNext => self.turn_page(true),
         }

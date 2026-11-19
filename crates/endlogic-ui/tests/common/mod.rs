@@ -6,7 +6,8 @@ use endlogic_core::code::encode;
 use endlogic_core::format::parse;
 use endlogic_core::{Puzzle, Solution};
 use endlogic_ui::{
-    Align, App, Config, Event, Font, Insets, Key, Painter, Point, Pointer, PointerKind, Rect, Rgba,
+    Align, App, Budgets, Config, Event, Font, Insets, Key, Painter, Point, Pointer, PointerKind,
+    Rect, Rgba,
 };
 
 // ---- recording painter ----
@@ -87,6 +88,7 @@ pub fn config(width: f32, height: f32) -> Config {
         code: None,
         touch: false,
         share_prefix: SHARE.to_owned(),
+        budgets: Budgets::default(),
     }
 }
 

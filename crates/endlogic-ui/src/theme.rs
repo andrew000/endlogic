@@ -28,6 +28,8 @@ pub const LOCK: Rgba = Rgba::hex(0x12_A88E);
 pub const DEAD: Rgba = Rgba::hex(0x4A_4D4C);
 /// Dead cell hatching.
 pub const DEAD_HATCH: Rgba = Rgba::hex(0x5E_6160);
+/// Hint silhouette: cells the pieces cover in the solution.
+pub const SILHOUETTE: Rgba = Rgba::hex(0x19_E3C0);
 /// Dead cell icon.
 pub const DEAD_ICON: Rgba = Rgba::hex(0x7A_7D7C);
 /// Errors and over-filled lines.
@@ -47,6 +49,10 @@ pub const RETURN_TIME: f32 = 0.18;
 pub const GROW_TIME: f32 = 0.08;
 /// Seconds a piece shakes when a turn does not fit.
 pub const WOBBLE_TIME: f32 = 0.2;
+/// Seconds for a piece placed by a hint to travel to its cells.
+pub const HINT_FLY_TIME: f32 = 0.45;
+/// Seconds a piece pointed out by a hint stays red.
+pub const BLAME_TIME: f32 = 1.5;
 /// Seconds for a quarter turn.
 pub const ROTATE_TIME: f32 = 0.10;
 /// Seconds for the win highlight to fade in.

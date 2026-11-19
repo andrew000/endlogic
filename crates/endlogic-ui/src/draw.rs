@@ -294,6 +294,15 @@ fn draw_bottom_controls(app: &App, p: &mut dyn Painter) {
         Style::Disabled
     };
     button(p, l.reset, text(app.lang, Text::Reset), style, l.font);
+    let used = app.hints_used();
+    let mut label = text(app.lang, Text::Hint).to_owned();
+    if used > 0 {
+        label = format!("{label} · {used}");
+    }
+    if app.is_hinting() {
+        label.push('…');
+    }
+    button(p, l.hint, &label, style, l.font);
     if let Some(hint) = l.tab_hint {
         keycap(p, hint, "TAB", l.font * 0.7);
     }
@@ -447,6 +456,7 @@ fn draw_board(app: &App, game: &Game, p: &mut dyn Painter) {
             }
         }
     }
+    draw_silhouette(app, game, p);
     if win > 0.0 {
         p.fill_rect(l.frame, 4.0, theme::BRIGHT.alpha(0.06 * win));
         p.stroke_rect(l.frame, 4.0, 2.0, theme::BRIGHT.alpha(win));
@@ -471,6 +481,32 @@ fn draw_board(app: &App, game: &Game, p: &mut dyn Painter) {
                 p.stroke_rect(rect.inset(1.0), 2.0, 1.5, color.alpha(0.8));
             }
         }
+    }
+}
+
+/// The hint silhouette: a faint hatched fill on every cell the solution
+/// covers, with no borders between pieces.
+fn draw_silhouette(app: &App, game: &Game, p: &mut dyn Painter) {
+    let l = &app.layout;
+    let width = game.board.width();
+    let fill = theme::SILHOUETTE.alpha(0.16);
+    let hatch = theme::SILHOUETTE.alpha(0.3);
+    let stroke = (l.cell * 0.03).max(1.0);
+    for (k, _) in app.silhouette().iter().enumerate().filter(|(_, on)| **on) {
+        let r = l.cell_rect(k / width, k % width);
+        p.fill_rect(r, 0.0, fill);
+        p.push_clip(r);
+        let step = r.w / 4.0;
+        for j in -4..=4 {
+            let x = r.x + step * f32::from(i8::try_from(j).unwrap_or(0));
+            p.line(
+                Point::new(x, r.bottom()),
+                Point::new(x + r.w, r.y),
+                stroke,
+                hatch,
+            );
+        }
+        p.pop_clip();
     }
 }
 
@@ -653,7 +689,12 @@ fn draw_pieces(app: &App, game: &Game, p: &mut dyn Painter) {
             0.14 * left * (t / theme::WOBBLE_TIME * 3.0 * TAU).sin()
         });
         let spin = spin + wobble;
-        let fill = theme::PIECE.mix(theme::BRIGHT, win * 0.35);
+        let blamed = anim.and_then(|a| a.blame).map_or(0.0, |t| {
+            1.0 - (t / theme::BLAME_TIME - 0.8).clamp(0.0, 0.2) * 5.0
+        });
+        let fill = theme::PIECE
+            .mix(theme::BRIGHT, win * 0.35)
+            .mix(theme::ERROR, blamed);
         let alpha = if Some(i) == dragged { 0.92 } else { 1.0 };
         piece(
             p,
@@ -772,13 +813,31 @@ fn draw_overlays(app: &App, p: &mut dyn Painter) {
         };
         let label = text(app.lang, Text::Complete);
         let font = fit(p, label, mono(l.font * 1.2, true), title_area.w - 16.0);
+        let used = game.hints.used;
+        let center = title_area.center();
+        let (title_y, hints_y) = if used > 0 {
+            (center.y - l.font * 0.6, center.y + l.font * 0.75)
+        } else {
+            (center.y, center.y)
+        };
         p.text(
             label,
-            title_area.center(),
+            Point::new(center.x, title_y),
             font,
             Align::Center,
             theme::BRIGHT.alpha(t),
         );
+        if used > 0 {
+            let line = format!("{} {used}", text(app.lang, Text::HintsUsed));
+            let font = fit(p, &line, sans(l.font * 0.85, false), title_area.w - 16.0);
+            p.text(
+                &line,
+                Point::new(center.x, hints_y),
+                font,
+                Align::Center,
+                theme::MUTED.alpha(t),
+            );
+        }
         button(
             p,
             l.next,

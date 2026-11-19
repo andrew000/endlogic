@@ -37,6 +37,28 @@ pub struct Config {
     /// Text put in front of a puzzle code to make a shareable link, e.g.
     /// `https://example.org/endlogic/#p=`. Empty to share the bare code.
     pub share_prefix: String,
+    /// How much solver work the UI may do.
+    pub budgets: Budgets,
+}
+
+/// Solver work, in nodes (piece placements tried). The UI cannot measure
+/// time, so a shell on a slow device may lower these.
+#[derive(Debug, Clone, Copy, PartialEq, Eq, Hash)]
+pub struct Budgets {
+    /// Nodes per frame for anything that searches: the generator, hints and
+    /// the solver of the custom tab.
+    pub per_frame: u64,
+    /// Nodes one hint may use in total.
+    pub hint: u64,
+}
+
+impl Default for Budgets {
+    fn default() -> Budgets {
+        Budgets {
+            per_frame: crate::app::NODES_PER_FRAME,
+            hint: 1_000_000,
+        }
+    }
 }
 
 /// Safe-area insets: how far in from each edge the area is fully usable,
@@ -86,6 +108,8 @@ pub enum Key {
     Tab,
     /// Cancel a drag.
     Escape,
+    /// Ask for a hint.
+    H,
 }
 
 /// Input from the shell.

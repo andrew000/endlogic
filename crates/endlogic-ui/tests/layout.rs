@@ -211,6 +211,16 @@ fn check_banner(layout: &Layout, rects: &[(&str, Rect)], what: &str) {
 }
 
 fn check_wide(layout: &Layout, w: f32, what: &str) {
+    // Hint next to reset, bottom left.
+    assert_close(layout.hint.y, layout.reset.y, what);
+    assert!(
+        layout.hint.x > layout.reset.right(),
+        "{what}: hint after reset"
+    );
+    assert!(
+        layout.hint.right() < layout.axis,
+        "{what}: hint on the left"
+    );
     assert!(
         layout.tray.w <= w * 0.24 + 0.01,
         "{what}: tray {} of {w}",
@@ -251,7 +261,10 @@ fn check_tall(layout: &Layout, safe: Rect, what: &str) {
             "{what}: header"
         );
     }
-    for button in [layout.reset, layout.new] {
+    // Bottom row: reset, hint, new.
+    assert!(layout.reset.right() < layout.hint.x, "{what}: bottom order");
+    assert!(layout.hint.right() < layout.new.x, "{what}: bottom order");
+    for button in [layout.reset, layout.hint, layout.new] {
         assert!((38.0..=42.0).contains(&button.h), "{what}: bottom button");
         assert!(
             button.bottom() <= safe.bottom() - 12.0 + 0.01,
@@ -277,12 +290,24 @@ fn check_tall(layout: &Layout, safe: Rect, what: &str) {
 }
 
 fn check_low_wide(layout: &Layout, what: &str) {
+    // Hint in the left column, above reset when the column is tall enough.
+    assert!(
+        layout.hint.right() <= layout.board_block().x,
+        "{what}: hint left"
+    );
+    if layout.safe.h >= 340.0 {
+        assert!(
+            layout.hint.bottom() <= layout.reset.y,
+            "{what}: hint above reset"
+        );
+    }
     // No top or bottom row: every control is beside the board.
     let block = layout.board_block();
     let mut controls = vec![
         layout.lang,
         layout.share,
         layout.reset,
+        layout.hint,
         layout.counters,
         layout.new,
         layout.tray,

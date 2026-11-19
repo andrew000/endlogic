@@ -12,6 +12,7 @@ mod app;
 mod board;
 mod counters;
 mod draw;
+mod hint;
 mod layout;
 mod painter;
 mod shell;
@@ -30,7 +31,7 @@ pub use layout::{
 };
 pub use painter::{Align, Font, FontFamily, Painter, Point, Rect, Rgba};
 pub use shell::{
-    Config, Cursor, Effect, Event, Insets, Key, Pointer, PointerKind, SETTING_COUNTERS,
+    Budgets, Config, Cursor, Effect, Event, Insets, Key, Pointer, PointerKind, SETTING_COUNTERS,
     SETTING_DIFFICULTY, SETTING_KEYS, SETTING_LANG,
 };
 pub use text::{Lang, Text, difficulty_label, text};

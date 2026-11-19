@@ -10,8 +10,8 @@ use std::f64::consts::TAU;
 use std::rc::{Rc, Weak};
 
 use endlogic_ui::{
-    Align, App, Config, Cursor, Effect, Event, Font, FontFamily, Insets, Key, Painter, Point,
-    Pointer, PointerKind, Rect, Rgba, SETTING_KEYS,
+    Align, App, Budgets, Config, Cursor, Effect, Event, Font, FontFamily, Insets, Key, Painter,
+    Point, Pointer, PointerKind, Rect, Rgba, SETTING_KEYS,
 };
 use wasm_bindgen::JsCast;
 use wasm_bindgen::prelude::*;
@@ -73,6 +73,7 @@ pub fn start() -> Result<(), JsValue> {
             .flatten()
             .is_some_and(|m| m.matches()),
         share_prefix: share_prefix(&window),
+        budgets: Budgets::default(),
     };
 
     let shell = Rc::new(RefCell::new(Shell {
@@ -431,6 +432,7 @@ fn listen(shell: &SharedShell) -> Result<(), JsValue> {
         // Physical keys, so `R` works in every keyboard layout.
         let key = match e.code().as_str() {
             "KeyR" if !e.repeat() => Key::R,
+            "KeyH" if !e.repeat() => Key::H,
             "Tab" => {
                 e.prevent_default();
                 if e.repeat() {

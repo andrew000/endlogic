@@ -1,6 +1,6 @@
 //! The player's board: where each piece is, line counts and the win test.
 
-use endlogic_core::{Cell, Puzzle, Rotation, Shape};
+use endlogic_core::{Cell, Placement, Puzzle, Rotation, Shape};
 
 /// Where a piece is and how it is turned.
 #[derive(Debug, Clone, Copy, PartialEq, Eq, Hash, Default)]
@@ -233,6 +233,34 @@ impl Board {
         self.place(i, r, c);
         let (r, c) = self.pieces[i].at.unwrap_or_default();
         Turned::Stays(r, c)
+    }
+
+    /// Where each piece stands, as solver placements; `None` in the tray.
+    #[must_use]
+    pub fn placements(&self) -> Vec<Option<Placement>> {
+        self.pieces
+            .iter()
+            .map(|p| {
+                p.at.map(|(row, col)| Placement {
+                    rotation: Rotation::ALL[usize::from(p.turns % 4)],
+                    row,
+                    col,
+                })
+            })
+            .collect()
+    }
+
+    /// The cells piece `i` covers, sorted; empty in the tray.
+    #[must_use]
+    pub fn cells_of(&self, i: usize) -> Vec<(usize, usize)> {
+        let Some((row, col)) = self.pieces[i].at else {
+            return Vec::new();
+        };
+        self.shape(i)
+            .cells()
+            .iter()
+            .map(|&(r, c)| (row + r, col + c))
+            .collect()
     }
 
     /// Moves every piece to the tray, keeping orientations.

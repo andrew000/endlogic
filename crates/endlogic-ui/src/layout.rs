@@ -43,6 +43,8 @@ pub const TRAY_SCALE: f32 = 0.5;
 pub const TRAY_MIN_SCALE: f32 = 1.0 / 3.0;
 /// Space between tray cards in the low wide arrangement.
 const LOW_TRAY_GAP: f32 = 4.0;
+/// Height of a difficulty tab in the low wide arrangement.
+const LOW_TAB: f32 = 40.0;
 /// Share of a card a piece may span.
 const TRAY_FILL: f32 = 0.88;
 /// Smallest piece cell in the tray before the tray is split into pages.
@@ -188,6 +190,8 @@ pub struct Layout {
     pub tray_cell: f32,
     /// Reset button.
     pub reset: Rect,
+    /// Hint button.
+    pub hint: Rect,
     /// Counter display switch: `Grid | Numbers`, or with
     /// [`compact`](Layout::compact) one button in the header.
     pub counters: Rect,
@@ -308,6 +312,7 @@ impl Layout {
             ("board", self.board_block()),
             ("tray", self.tray),
             ("reset", self.reset),
+            ("hint", self.hint),
             ("counters", self.counters),
             ("new", self.new),
         ]);
@@ -341,6 +346,7 @@ impl Layout {
         targets.extend([
             ("share", self.share),
             ("reset", self.reset),
+            ("hint", self.hint),
             ("new", self.new),
         ]);
         targets.extend(self.cards.iter().map(|&card| ("card", card)));
@@ -415,6 +421,11 @@ fn squeeze(ideal: &[f32], available: f32) -> Vec<f32> {
 /// Width of a button labelled `label` in `font`.
 fn button_width(label: &str, font: f32) -> f32 {
     (estimate_width(label, font) + 1.8 * font).max(MIN_TARGET)
+}
+
+/// Width of the hint button: room for the label and a two-digit count.
+fn hint_width(lang: Lang, font: f32) -> f32 {
+    button_width(&format!("{} · 88", text(lang, Text::Hint)), font)
 }
 
 /// Width of a two-way switch: both halves as wide as the wider label.
@@ -646,12 +657,13 @@ fn tab_row(lang: Lang, font: f32, pad: f32, axis: f32, half: f32, y: f32, h: f32
     core::array::from_fn(|k| Rect::new(start + tab * to_f32(k), y, tab, h))
 }
 
-/// The bottom row: reset on the left, the counter switch centered on the
-/// axis (with its key hint to its left), new on the right.
+/// The bottom row: reset and hint on the left, the counter switch centered
+/// on the axis (with its key hint to its left), new on the right.
 struct BottomRow {
     reset: Rect,
+    hint: Rect,
     counters: Rect,
-    hint: Option<Rect>,
+    key_hint: Option<Rect>,
     new: Rect,
 }
 
@@ -670,21 +682,23 @@ fn bottom_row(
     let reset_w = button_width(t(Text::Reset), font);
     let new_w = button_width(t(Text::New), font);
     let ideal = switch_width(t(Text::Grid), t(Text::Numbers), font);
+    let reset = Rect::new(x0, y, reset_w, h);
+    let hint = Rect::new(reset.right() + gap, y, hint_width(input.lang, font), h);
     // The switch is centered on the axis, so it may use twice the room left
     // on its narrower side.
-    let room = 2.0 * ((axis - (x0 + reset_w + gap)).min(x1 - new_w - gap - axis));
+    let room = 2.0 * ((axis - (hint.right() + gap)).min(x1 - new_w - gap - axis));
     let counters_w = ideal.min(room).max(2.0 * MIN_TARGET);
-    let reset = Rect::new(x0, y, reset_w, h);
     let new = Rect::new(x1 - new_w, y, new_w, h);
     let counters = Rect::new(axis - counters_w / 2.0, y, counters_w, h);
     let hint_w = estimate_width("TAB", font * 0.75) + font;
     let hint_x = counters.x - gap * 0.5 - hint_w;
-    let hint = (!input.touch && hint_x >= reset.right() + gap)
+    let key_hint = (!input.touch && hint_x >= hint.right() + gap)
         .then(|| Rect::new(hint_x, y + h * 0.2, hint_w, h * 0.6));
     BottomRow {
         reset,
-        counters,
         hint,
+        counters,
+        key_hint,
         new,
     }
 }
@@ -868,8 +882,9 @@ fn wide(input: &LayoutInput) -> Layout {
         tray,
         tray_cell: tray_cell(input, card, cell),
         reset: bottom.reset,
+        hint: bottom.hint,
         counters: bottom.counters,
-        tab_hint: bottom.hint,
+        tab_hint: bottom.key_hint,
         new: bottom.new,
         banner,
         next,
@@ -927,7 +942,7 @@ fn tall(input: &LayoutInput) -> Layout {
     let tabs =
         core::array::from_fn(|k| Rect::new(x0 + tab_w * to_f32(k), tabs_y, tab_w, TALL_TABS));
 
-    // Bottom row: reset on the left, new on the right.
+    // Bottom row: reset on the left, hint in the middle, new on the right.
     let bottom_y = safe.bottom() - TALL_BOTTOM - TALL_BUTTON;
     let reset = Rect::new(
         x0,
@@ -937,6 +952,12 @@ fn tall(input: &LayoutInput) -> Layout {
     );
     let new_w = button_width(text(input.lang, Text::New), font);
     let new = Rect::new(x1 - new_w, bottom_y, new_w, TALL_BUTTON);
+    let hint_w = hint_width(input.lang, font).min(new.x - reset.right() - 2.0 * gap);
+    // Centered on the axis when there is room, else between the two.
+    let hint_x = (axis - hint_w / 2.0)
+        .max(reset.right() + gap)
+        .min(new.x - gap - hint_w);
+    let hint = Rect::new(hint_x, bottom_y, hint_w, TALL_BUTTON);
 
     // Board and tray share the height between tabs and the bottom row.
     let region_top = tabs_y + TALL_TABS + gap;
@@ -988,6 +1009,7 @@ fn tall(input: &LayoutInput) -> Layout {
         tray,
         tray_cell: tray_cell(input, card, cell),
         reset,
+        hint,
         counters,
         tab_hint: None,
         new,
@@ -1116,12 +1138,84 @@ fn right_column(
     }
 }
 
+/// The left column of the low wide arrangement.
+struct LeftColumn {
+    title: Rect,
+    puzzle_id: Rect,
+    tabs: [Rect; 4],
+    lang: Rect,
+    share: Rect,
+    hint: Rect,
+    reset: Rect,
+}
+
+fn left_column(
+    input: &LayoutInput,
+    x0: f32,
+    side: f32,
+    y0: f32,
+    y1: f32,
+    gap: f32,
+    font: f32,
+) -> LeftColumn {
+    // Left column: name, difficulty 2×2, language and link; hint and reset
+    // at the bottom, side by side when the column is too short to stack.
+    let lx = x0;
+    let button = MIN_TARGET;
+    let t = |key| text(input.lang, key);
+    let title = Rect::new(lx, y0, side, 22.0);
+    let puzzle_id = Rect::new(lx, title.bottom(), side, 16.0);
+    let tab_w = (side - gap) / 2.0;
+    let tabs_y = puzzle_id.bottom() + gap;
+    // Tabs a full target apart, so their zones just touch.
+    let tabs = core::array::from_fn(|k| {
+        Rect::new(
+            lx + to_f32(k % 2) * (tab_w + gap),
+            tabs_y + to_f32(k / 2) * MIN_TARGET,
+            tab_w,
+            LOW_TAB,
+        )
+    });
+    let row_y = tabs_y + 2.0 * MIN_TARGET - (MIN_TARGET - LOW_TAB) + gap;
+    let lang_w = switch_width("EN", "UA", font);
+    let lang = Rect::new(lx, row_y, lang_w, button);
+    let share_w = button_width(share_label(input.lang, true), font).min(side - lang_w - gap);
+    let share = Rect::new(lx + side - share_w, row_y, share_w, button);
+    let reset_w = button_width(t(Text::Reset), font);
+    let stacked = lang.bottom() + gap + 2.0 * button + gap <= y1;
+    let (hint, reset) = if stacked {
+        (
+            Rect::new(
+                lx,
+                y1 - 2.0 * button - gap,
+                hint_width(input.lang, font).min(side),
+                button,
+            ),
+            Rect::new(lx, y1 - button, reset_w, button),
+        )
+    } else {
+        let half = (side - gap) / 2.0;
+        (
+            Rect::new(lx + half + gap, y1 - button, half, button),
+            Rect::new(lx, y1 - button, half, button),
+        )
+    };
+
+    LeftColumn {
+        title,
+        puzzle_id,
+        tabs,
+        lang,
+        share,
+        hint,
+        reset,
+    }
+}
+
 fn low_wide(input: &LayoutInput) -> Layout {
     let safe = safe_rect(input);
     let gap = 8.0;
     let font = 14.0;
-    let button = MIN_TARGET;
-    let t = |key| text(input.lang, key);
     let x0 = safe.x + gap;
     let x1 = safe.right() - gap;
     let y0 = safe.y + gap;
@@ -1129,26 +1223,16 @@ fn low_wide(input: &LayoutInput) -> Layout {
     let axis = safe.center().x;
     let side = ((x1 - x0) * 0.27).clamp(150.0, 260.0);
 
-    // Left column: name, difficulty 2×2, language and link, reset.
-    let lx = x0;
-    let title = Rect::new(lx, y0, side, 22.0);
-    let puzzle_id = Rect::new(lx, title.bottom(), side, 16.0);
-    let tab_w = (side - gap) / 2.0;
-    let tabs_y = puzzle_id.bottom() + gap;
-    let tabs = core::array::from_fn(|k| {
-        Rect::new(
-            lx + to_f32(k % 2) * (tab_w + gap),
-            tabs_y + to_f32(k / 2) * (button + 6.0),
-            tab_w,
-            button,
-        )
-    });
-    let row_y = tabs_y + 2.0 * button + 6.0 + gap;
-    let lang_w = switch_width("EN", "UA", font);
-    let lang = Rect::new(lx, row_y, lang_w, button);
-    let share_w = button_width(share_label(input.lang, true), font).min(side - lang_w - gap);
-    let share = Rect::new(lx + side - share_w, row_y, share_w, button);
-    let reset = Rect::new(lx, y1 - button, button_width(t(Text::Reset), font), button);
+    let left = left_column(input, x0, side, y0, y1, gap, font);
+    let (title, puzzle_id, tabs, lang, share, hint, reset) = (
+        left.title,
+        left.puzzle_id,
+        left.tabs,
+        left.lang,
+        left.share,
+        left.hint,
+        left.reset,
+    );
 
     // Right column: tray, then the counter switch, then new at the bottom.
     let right = right_column(input, x1 - side, side, y0, y1, gap, font);
@@ -1215,6 +1299,7 @@ fn low_wide(input: &LayoutInput) -> Layout {
         tray,
         tray_cell: tray_cell(input, card, cell),
         reset,
+        hint,
         counters,
         tab_hint: None,
         new,
