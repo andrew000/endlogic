@@ -94,6 +94,7 @@ pub enum Progress {
 /// gives with a large enough budget: the same solutions in the same order,
 /// the same node count and the same [`StopReason`]. A front end can call
 /// [`step`](Search::step) once per frame so a long search never blocks.
+#[derive(Debug, Clone)]
 pub struct Search {
     board: Option<Board>,
     stack: Vec<Frame>,
@@ -230,6 +231,7 @@ impl Search {
 
 /// One level of the depth-first search: the type placed at this level and
 /// the candidates still valid on the board when the level was entered.
+#[derive(Debug, Clone)]
 struct Frame {
     candidates: Vec<Vec<usize>>,
     t: usize,
@@ -282,6 +284,7 @@ pub fn check_uniqueness(puzzle: &Puzzle, max_nodes: u64) -> UniquenessCheck {
 }
 
 /// One way to put a piece type on the board.
+#[derive(Debug, Clone)]
 struct Candidate {
     /// Index into the type's orientations.
     orientation: usize,
@@ -293,6 +296,7 @@ struct Candidate {
     cols: Vec<(usize, usize)>,
 }
 
+#[derive(Debug, Clone)]
 struct PieceType {
     /// Index into `Search::colors`.
     color: usize,
@@ -309,6 +313,7 @@ struct PieceType {
 type Lines = [usize; MAX_GRID_SIZE];
 
 /// The board during a search: what is placed and what each line holds.
+#[derive(Debug, Clone)]
 struct Board {
     width: usize,
     height: usize,

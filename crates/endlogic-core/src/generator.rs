@@ -16,8 +16,9 @@
 //!
 //! Every attempt draws from its own random stream derived from the seed and
 //! the attempt number, so the same parameters and seed always give the same
-//! puzzle. [`Generator::step`] runs one attempt at a time, which lets an
-//! interactive front end spread the work over several frames.
+//! puzzle. [`Generator::step`] spends at most a given number of solver
+//! nodes per call, which lets an interactive front end spread even one
+//! attempt over several frames; the result does not depend on the step size.
 
 use alloc::vec;
 use alloc::vec::Vec;
@@ -28,7 +29,7 @@ use crate::puzzle::{MAX_PIECES, Piece, Puzzle};
 use crate::rng::Rng;
 use crate::shape::{Rotation, Shape};
 use crate::solution::{Placement, Solution};
-use crate::solver::{Uniqueness, check_uniqueness, search};
+use crate::solver::{Progress, Search, StopReason};
 use crate::{Color, verify};
 
 /// An inclusive range of counts, `min..=max`.
@@ -237,14 +238,29 @@ pub enum Step {
     },
 }
 
-/// A generator that runs one attempt per [`step`](Generator::step).
+/// A generator that works in small steps: each [`step`](Generator::step)
+/// spends at most a given number of solver nodes and never goes past the end
+/// of the current attempt.
+///
+/// The puzzle produced depends only on the parameters and the seed, not on
+/// how the work is split into steps.
 #[derive(Debug, Clone)]
 pub struct Generator {
     params: GeneratorParams,
     seed: u64,
     attempts: u32,
     total_nodes: u64,
+    /// The attempt whose solver check is in progress.
+    pending: Option<Pending>,
     finished: Option<Step>,
+}
+
+/// A built attempt waiting for its solver check.
+#[derive(Debug, Clone)]
+struct Pending {
+    puzzle: Puzzle,
+    solution: Solution,
+    search: Search,
 }
 
 impl Generator {
@@ -260,6 +276,7 @@ impl Generator {
             seed,
             attempts: 0,
             total_nodes: 0,
+            pending: None,
             finished: None,
         })
     }
@@ -276,30 +293,77 @@ impl Generator {
         self.total_nodes
     }
 
-    /// Runs one attempt, unless the generator has already finished.
-    pub fn step(&mut self) -> Step {
+    /// Continues generation, trying at most `max_nodes` solver placements.
+    ///
+    /// A step starts a new attempt if none is in progress, then advances
+    /// that attempt's solver check. It returns [`Step::Working`] when the
+    /// node allowance runs out or the attempt is rejected, and stops there:
+    /// one step never finishes more than one attempt. Once the generator has
+    /// finished, every call returns the same result.
+    pub fn step(&mut self, max_nodes: u64) -> Step {
         if let Some(step) = &self.finished {
             return step.clone();
         }
-        self.attempts += 1;
-        let attempt = self.attempts;
-        let mut rng = Rng::for_stream(self.seed, u64::from(attempt));
-        let outcome = try_attempt(&self.params, &mut rng);
-        self.total_nodes += outcome.nodes;
-        let step = match outcome.accepted {
-            Some((puzzle, solution)) => Step::Done(Generated {
+        if self.pending.is_none() {
+            self.attempts += 1;
+            let mut rng = Rng::for_stream(self.seed, u64::from(self.attempts));
+            let Some((puzzle, solution)) = build_attempt(&self.params, &mut rng) else {
+                return self.reject();
+            };
+            let wanted = if self.params.require_unique { 2 } else { 1 };
+            self.pending = Some(Pending {
+                search: Search::new(&puzzle, wanted),
                 puzzle,
                 solution,
-                seed: self.seed,
-                attempt,
-                nodes: outcome.nodes,
-                total_nodes: self.total_nodes,
-            }),
-            None if attempt >= self.params.max_attempts => Step::GaveUp {
-                attempts: attempt,
-                total_nodes: self.total_nodes,
-            },
-            None => return Step::Working,
+            });
+        }
+        let budget = self.params.node_budget;
+        let Some(pending) = &mut self.pending else {
+            return Step::Working;
+        };
+        let before = pending.search.nodes();
+        let progress = pending.search.step(max_nodes.min(budget - before));
+        let nodes = pending.search.nodes();
+        self.total_nodes += nodes - before;
+        let accepted = match progress {
+            Progress::Done(result) if self.params.require_unique => {
+                result.stop == StopReason::Exhausted && result.solutions.len() == 1
+            }
+            Progress::Done(result) => !result.solutions.is_empty(),
+            // The attempt's own budget is spent: the answer is unknown.
+            Progress::Working if nodes >= budget => false,
+            Progress::Working => return Step::Working,
+        };
+        if !accepted {
+            return self.reject();
+        }
+        let Some(Pending {
+            puzzle, solution, ..
+        }) = self.pending.take()
+        else {
+            return Step::Working;
+        };
+        let step = Step::Done(Generated {
+            puzzle,
+            solution,
+            seed: self.seed,
+            attempt: self.attempts,
+            nodes,
+            total_nodes: self.total_nodes,
+        });
+        self.finished = Some(step.clone());
+        step
+    }
+
+    /// Drops the current attempt; gives up if it was the last one.
+    fn reject(&mut self) -> Step {
+        self.pending = None;
+        if self.attempts < self.params.max_attempts {
+            return Step::Working;
+        }
+        let step = Step::GaveUp {
+            attempts: self.attempts,
+            total_nodes: self.total_nodes,
         };
         self.finished = Some(step.clone());
         step
@@ -312,7 +376,7 @@ impl Generator {
     /// [`GenerateError::GaveUp`] if every attempt was rejected.
     pub fn run(&mut self) -> Result<Generated, GenerateError> {
         loop {
-            match self.step() {
+            match self.step(u64::MAX) {
                 Step::Working => {}
                 Step::Done(generated) => return Ok(generated),
                 Step::GaveUp {
@@ -377,30 +441,16 @@ const START_TRIES: usize = 8;
 /// Lock runs tried before an attempt is abandoned.
 const LOCK_TRIES: usize = 64;
 
-/// What one attempt produced.
-struct Outcome {
-    /// The puzzle and its solution, if the attempt was accepted.
-    accepted: Option<(Puzzle, Solution)>,
-    /// Solver nodes spent checking the attempt.
-    nodes: u64,
-}
-
-impl Outcome {
-    const REJECTED: Outcome = Outcome {
-        accepted: None,
-        nodes: 0,
-    };
-}
-
-/// Runs one attempt.
-fn try_attempt(params: &GeneratorParams, rng: &mut Rng) -> Outcome {
+/// Builds one attempt: the puzzle and the solution it was built from, or
+/// `None` if the random choices led nowhere.
+fn build_attempt(params: &GeneratorParams, rng: &mut Rng) -> Option<(Puzzle, Solution)> {
     let (width, height) = (params.width, params.height);
     let area = width * height;
     let dead = rng.usize_inclusive(params.dead.min, params.dead.max);
     let locks = rng.usize_inclusive(params.locks.min, params.locks.max);
     let piece_count = rng.usize_inclusive(params.pieces.min, params.pieces.max);
     if dead + locks > area {
-        return Outcome::REJECTED;
+        return None;
     }
 
     let mut cells = vec![Cell::Free; area];
@@ -410,18 +460,15 @@ fn try_attempt(params: &GeneratorParams, rng: &mut Rng) -> Outcome {
         cells[i] = Cell::Dead;
     }
     if !place_locks(&mut cells, width, height, locks, rng) {
-        return Outcome::REJECTED;
+        return None;
     }
 
     let mut owner: Vec<Option<usize>> = vec![None; area];
     let mut grown_pieces: Vec<Vec<usize>> = Vec::with_capacity(piece_count);
     for piece in 0..piece_count {
         let size = rng.usize_inclusive(params.piece_size.min, params.piece_size.max);
-        let Some(grown) =
-            (0..START_TRIES).find_map(|_| grow_piece(&cells, &owner, width, height, size, rng))
-        else {
-            return Outcome::REJECTED;
-        };
+        let grown =
+            (0..START_TRIES).find_map(|_| grow_piece(&cells, &owner, width, height, size, rng))?;
         for &i in &grown {
             owner[i] = Some(piece);
         }
@@ -451,20 +498,7 @@ fn try_attempt(params: &GeneratorParams, rng: &mut Rng) -> Outcome {
     let solution = Solution { placements };
     debug_assert_eq!(verify(&puzzle, &solution), Ok(()));
 
-    let (accepted, nodes) = if params.require_unique {
-        let check = check_uniqueness(&puzzle, params.node_budget);
-        (
-            matches!(check.uniqueness, Uniqueness::Unique(_)),
-            check.nodes,
-        )
-    } else {
-        let result = search(&puzzle, 1, params.node_budget);
-        (!result.solutions.is_empty(), result.nodes)
-    };
-    Outcome {
-        accepted: accepted.then_some((puzzle, solution)),
-        nodes,
-    }
+    Some((puzzle, solution))
 }
 
 /// Lays `count` locks on free cells as straight runs along rows or columns.

@@ -20,6 +20,9 @@ use crate::theme;
 pub const DRAG_THRESHOLD: f32 = 8.0;
 /// How far above the finger a piece dragged by touch floats, in cells.
 pub const TOUCH_LIFT: f32 = 1.5;
+/// Solver nodes the generator may spend in one frame. Time cannot be
+/// measured here, so this is a cautious fixed number.
+pub const NODES_PER_FRAME: u64 = 20_000;
 /// Longest frame step fed to animations, in seconds.
 const MAX_FRAME_STEP: f32 = 0.1;
 
@@ -609,7 +612,7 @@ impl App {
         let Some(generator) = &mut self.generator else {
             return;
         };
-        match generator.step() {
+        match generator.step(NODES_PER_FRAME) {
             Step::Working => {}
             Step::Done(generated) => {
                 self.generator = None;

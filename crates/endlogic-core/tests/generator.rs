@@ -1,7 +1,8 @@
 //! Generator tests. Boards stay at 8×8 or smaller.
 
 use endlogic_core::generator::{
-    Difficulty, GenerateError, Generator, GeneratorParams, ParamsError, SizeRange, Step, generate,
+    Difficulty, GenerateError, Generated, Generator, GeneratorParams, ParamsError, SizeRange, Step,
+    generate,
 };
 use endlogic_core::solver::{Uniqueness, check_uniqueness};
 use endlogic_core::{Cell, verify};
@@ -26,7 +27,7 @@ fn stepwise_and_convenience_agree() {
         let mut steps = 0;
         let generated = loop {
             steps += 1;
-            match generator.step() {
+            match generator.step(u64::MAX) {
                 Step::Working => assert_eq!(generator.attempts(), steps),
                 Step::Done(generated) => break generated,
                 Step::GaveUp { .. } => panic!("{} gave up", difficulty.name()),
@@ -36,7 +37,7 @@ fn stepwise_and_convenience_agree() {
         assert_eq!(generated.total_nodes, generator.total_nodes());
         assert_eq!(generate(params, 3).unwrap(), generated);
         // Finished generators keep returning their result.
-        assert_eq!(generator.step(), Step::Done(generated));
+        assert_eq!(generator.step(u64::MAX), Step::Done(generated));
         assert_eq!(generator.attempts(), steps);
     }
 }
@@ -144,14 +145,14 @@ fn gives_up_after_max_attempts() {
         ..Difficulty::Easy.params()
     };
     let mut generator = Generator::new(params, 1).unwrap();
-    assert_eq!(generator.step(), Step::Working);
-    assert_eq!(generator.step(), Step::Working);
+    assert_eq!(generator.step(u64::MAX), Step::Working);
+    assert_eq!(generator.step(u64::MAX), Step::Working);
     let gave_up = Step::GaveUp {
         attempts: 3,
         total_nodes: 0,
     };
-    assert_eq!(generator.step(), gave_up);
-    assert_eq!(generator.step(), gave_up);
+    assert_eq!(generator.step(u64::MAX), gave_up);
+    assert_eq!(generator.step(u64::MAX), gave_up);
     assert_eq!(
         generate(params, 1),
         Err(GenerateError::GaveUp {
@@ -211,4 +212,58 @@ fn difficulty_names_round_trip() {
         assert_eq!(Difficulty::from_name(difficulty.name()), Some(difficulty));
     }
     assert_eq!(Difficulty::from_name("impossible"), None);
+}
+
+/// Runs a generator to the end, `budget` nodes per step.
+fn run_in_steps(params: GeneratorParams, seed: u64, budget: u64) -> (Generated, u64) {
+    let mut generator = Generator::new(params, seed).unwrap();
+    let mut calls = 0;
+    loop {
+        calls += 1;
+        let before = generator.total_nodes();
+        match generator.step(budget) {
+            Step::Working => assert!(generator.total_nodes() - before <= budget),
+            Step::Done(generated) => return (generated, calls),
+            Step::GaveUp { .. } => panic!("gave up"),
+        }
+    }
+}
+
+#[test]
+fn the_step_budget_does_not_change_the_result() {
+    for difficulty in Difficulty::ALL {
+        let params = difficulty.params();
+        for seed in 0..3 {
+            let expected = generate(params, seed).unwrap();
+            for budget in [1, 7, 100, 20_000, u64::MAX] {
+                let (generated, calls) = run_in_steps(params, seed, budget);
+                assert_eq!(
+                    generated, expected,
+                    "{difficulty:?} seed {seed} budget {budget}"
+                );
+                if budget == 1 {
+                    // About one call per node, plus one per attempt.
+                    assert!(calls >= expected.total_nodes, "{calls} calls");
+                }
+            }
+        }
+    }
+}
+
+#[test]
+fn a_small_step_budget_keeps_working() {
+    let params = Difficulty::Hard.params();
+    let mut generator = Generator::new(params, 1).unwrap();
+    assert_eq!(generator.step(1), Step::Working);
+    assert_eq!(generator.attempts(), 1);
+    assert_eq!(generator.total_nodes(), 1);
+    assert_eq!(generator.step(10), Step::Working);
+    assert_eq!(generator.total_nodes(), 11);
+    // The CLI's reference puzzle is unchanged.
+    let generated = generate(params, 1).unwrap();
+    assert_eq!(
+        endlogic_core::code::encode(&generated.puzzle).unwrap(),
+        "AWYAGPbauz28AgIAAEAABiH4SuItyQvoTGfEl628"
+    );
+    assert_eq!((generated.attempt, generated.nodes), (1, 323));
 }
