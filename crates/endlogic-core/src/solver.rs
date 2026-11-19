@@ -13,6 +13,8 @@
 //! because too few of its cells are still coverable or because the remaining
 //! pieces are too small to supply the missing cells.
 
+use alloc::vec;
+use alloc::vec::Vec;
 use core::ops::ControlFlow;
 
 use crate::color::Color;

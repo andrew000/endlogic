@@ -1,6 +1,7 @@
 //! Pieces, clues and the puzzle itself.
 
-use std::collections::BTreeMap;
+use alloc::collections::BTreeMap;
+use alloc::vec::Vec;
 
 use crate::color::Color;
 use crate::error::{Axis, ModelError};

@@ -1,5 +1,8 @@
 //! Polyomino shapes and rotations.
 
+use alloc::vec;
+use alloc::vec::Vec;
+
 use crate::error::ModelError;
 
 /// A clockwise rotation by a multiple of 90°.

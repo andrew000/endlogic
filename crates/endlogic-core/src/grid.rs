@@ -1,5 +1,8 @@
 //! The puzzle board.
 
+use alloc::vec;
+use alloc::vec::Vec;
+
 use crate::color::Color;
 use crate::error::ModelError;
 

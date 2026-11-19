@@ -1,5 +1,7 @@
 //! Solutions and their independent verification.
 
+use alloc::vec;
+use alloc::vec::Vec;
 use core::fmt;
 
 use crate::color::Color;

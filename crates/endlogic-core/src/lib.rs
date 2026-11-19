@@ -7,7 +7,10 @@
 //! of [`Piece`]s and per-color [`LineClues`]. A [`Solution`] gives each piece
 //! a [`Rotation`] and a position; [`verify`] checks it independently of the
 //! solver.
+#![no_std]
 #![forbid(unsafe_code)]
+
+extern crate alloc;
 
 mod color;
 mod error;
