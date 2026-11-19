@@ -1,0 +1,454 @@
+//! Drawing the editor of the custom tab.
+
+use endlogic_core::Cell;
+
+use super::{
+    Style, brackets, button, centered_text, dead_cell, draw_pager, fit, free_cell, lock_cell, mono,
+    piece, sans,
+};
+use crate::app::App;
+use crate::editor::{ClueRef, Draft, DraftError, Editor, SolveState};
+use crate::layout::{EditLayout, Stepper, to_f32};
+use crate::painter::{Align, Painter, Point, Rect, Rgba};
+use crate::text::{Text, problem_text, solution_of, text};
+use crate::theme;
+
+pub(super) fn draw(app: &App, p: &mut dyn Painter) {
+    let l = &app.layout;
+    let (Some(e), Some(editor)) = (l.edit, app.editor()) else {
+        return;
+    };
+    draw_board(app, editor, p);
+    draw_clues(app, editor, p);
+    draw_solution(app, p);
+    draw_status(app, &e, p);
+    let overlay = if app.draft().is_some() {
+        Some(e.piece)
+    } else if app.selected_clue().is_some() {
+        Some(e.strip)
+    } else {
+        None
+    };
+    let answer = app.solve_state().is_some();
+    let answer_on_tray = answer && e.result.intersects(l.tray);
+    if overlay.is_none_or(|o| !o.intersects(l.tray)) && !answer_on_tray {
+        draw_tray(app, editor, p);
+    }
+    if answer && overlay.is_none_or(|o| !o.intersects(e.result)) {
+        draw_answer(app, &e, p);
+    }
+    draw_controls(app, &e, editor, p);
+    if let Some(draft) = app.draft() {
+        draw_piece_editor(app, &e, draft, p);
+    } else if let Some(clue) = app.selected_clue() {
+        draw_strip(app, &e, editor, clue, p);
+    }
+}
+
+fn panel(p: &mut dyn Painter, rect: Rect) {
+    p.fill_rect(rect, 12.0, theme::PANEL);
+    p.stroke_rect(rect.inset(0.5), 12.0, 1.0, theme::CELL_MARK);
+}
+
+fn draw_board(app: &App, editor: &Editor, p: &mut dyn Painter) {
+    let l = &app.layout;
+    brackets(p, l.frame, l.cell * 0.25, theme::ACCENT);
+    p.fill_rect(l.cells, 0.0, theme::GRID_LINE);
+    let seam = (l.cell * 0.03).max(1.0);
+    for row in 0..editor.height() {
+        for col in 0..editor.width() {
+            let r = l.cell_rect(row, col).inset(seam / 2.0);
+            match editor.cell(row, col) {
+                Cell::Free => free_cell(p, r),
+                Cell::Lock(_) => lock_cell(p, r),
+                Cell::Dead => dead_cell(p, r),
+            }
+        }
+    }
+}
+
+/// The clues as plain numbers; the one being edited is highlighted.
+fn draw_clues(app: &App, editor: &Editor, p: &mut dyn Painter) {
+    let l = &app.layout;
+    let selected = app.selected_clue();
+    let mut one = |area: Rect, clue: ClueRef| {
+        let value = editor.clue(clue.row, clue.index);
+        let label = value.to_string();
+        let size = (area.w.min(area.h) * 0.6).min(l.font * 1.1).max(6.0);
+        let mark = Rect::centered(area.center(), area.w * 0.9, area.h * 0.9);
+        let color = if selected == Some(clue) {
+            p.fill_rect(mark, 4.0, theme::ACCENT);
+            theme::BACKGROUND
+        } else {
+            p.stroke_rect(mark.inset(0.5), 4.0, 1.0, theme::CELL_MARK);
+            if value == 0 {
+                theme::MUTED
+            } else {
+                theme::ACCENT
+            }
+        };
+        centered_text(p, &label, area, mono(size, true), color);
+    };
+    for row in 0..editor.height() {
+        let cell = l.cell_rect(row, 0);
+        let area = Rect::new(l.row_counters.x, cell.y, l.row_counters.w, cell.h);
+        one(
+            area,
+            ClueRef {
+                row: true,
+                index: row,
+            },
+        );
+    }
+    for col in 0..editor.width() {
+        let cell = l.cell_rect(0, col);
+        let area = Rect::new(cell.x, l.col_counters.y, cell.w, l.col_counters.h);
+        one(
+            area,
+            ClueRef {
+                row: false,
+                index: col,
+            },
+        );
+    }
+}
+
+/// The solution on view, its pieces laid out on the board.
+fn draw_solution(app: &App, p: &mut dyn Painter) {
+    let (Some(solution), Some(editor)) = (app.shown_solution(), app.editor()) else {
+        return;
+    };
+    let l = &app.layout;
+    for (shape, at) in editor.pieces().iter().zip(&solution.placements) {
+        let shape = shape.rotated(at.rotation);
+        let center = Point::new(
+            l.cells.x + (to_f32(at.col) + to_f32(shape.width()) / 2.0) * l.cell,
+            l.cells.y + (to_f32(at.row) + to_f32(shape.height()) / 2.0) * l.cell,
+        );
+        piece(p, &shape, center, l.cell, 0.0, theme::PIECE);
+    }
+}
+
+/// Breaks `text` into lines no wider than `width` in `font`.
+fn wrap(p: &mut dyn Painter, text: &str, font: crate::painter::Font, width: f32) -> Vec<String> {
+    let mut lines: Vec<String> = Vec::new();
+    let mut line = String::new();
+    for word in text.split(' ') {
+        let candidate = if line.is_empty() {
+            word.to_owned()
+        } else {
+            format!("{line} {word}")
+        };
+        if line.is_empty() || p.text_width(&candidate, font) <= width {
+            line = candidate;
+        } else {
+            lines.push(std::mem::replace(&mut line, word.to_owned()));
+        }
+    }
+    if !line.is_empty() {
+        lines.push(line);
+    }
+    lines
+}
+
+/// Text in `rect`, wrapped, as many lines as fit; the last one shrinks to
+/// fit the width.
+fn block(p: &mut dyn Painter, text: &str, rect: Rect, size: f32, color: Rgba, align: Align) {
+    let font = sans(size, false);
+    let line_h = size * 1.3;
+    let room = (rect.h / line_h).floor().clamp(1.0, 8.0);
+    let lines = wrap(p, text, font, rect.w);
+    let mut y = rect.y + line_h / 2.0;
+    for (k, line) in lines.iter().enumerate() {
+        let last = to_f32(k + 1) >= room || k + 1 == lines.len();
+        let shown = if last && k + 1 < lines.len() {
+            lines[k..].join(" ")
+        } else {
+            line.clone()
+        };
+        let font = fit(p, &shown, font, rect.w);
+        let x = match align {
+            Align::Left => rect.x,
+            Align::Center => rect.center().x,
+            Align::Right => rect.right(),
+        };
+        p.text(&shown, Point::new(x, y), font, align, color);
+        if last {
+            break;
+        }
+        y += line_h;
+    }
+}
+
+fn draw_status(app: &App, e: &EditLayout, p: &mut dyn Painter) {
+    if let Some(problem) = app.first_problem() {
+        let font = app.layout.font * 0.9;
+        block(
+            p,
+            &problem_text(app.lang, &problem),
+            e.status,
+            font,
+            theme::ERROR,
+            Align::Left,
+        );
+    }
+}
+
+fn draw_tray(app: &App, editor: &Editor, p: &mut dyn Painter) {
+    let l = &app.layout;
+    p.fill_rect(l.tray, 12.0, theme::TRAY);
+    let cards = app.editor_cards();
+    draw_pager(app, cards, p);
+    for i in 0..cards {
+        let Some(card) = app.card_of(i) else {
+            continue;
+        };
+        p.fill_rect(card, 8.0, theme::CARD);
+        if let Some(shape) = editor.pieces().get(i) {
+            piece(p, shape, card.center(), l.tray_cell, 0.0, theme::PIECE);
+        } else {
+            p.stroke_rect(card.inset(3.5), 6.0, 1.0, theme::ACCENT.alpha(0.6));
+            centered_text(
+                p,
+                "+",
+                card,
+                mono((card.h * 0.5).min(32.0), true),
+                theme::ACCENT,
+            );
+        }
+    }
+}
+
+fn draw_answer(app: &App, e: &EditLayout, p: &mut dyn Painter) {
+    let Some(state) = app.solve_state() else {
+        return;
+    };
+    let lang = app.lang;
+    let font = app.layout.font;
+    let parts = e.result_panel(lang, font);
+    panel(p, e.result);
+    let (solutions, view) = app.solutions();
+    let found = solutions.len();
+    let which = |more: bool| solution_of(lang, view + 1, found, more);
+    let (title, detail, action) = match state {
+        SolveState::Running => (
+            text(lang, Text::Solving).to_owned(),
+            None,
+            Some(Text::Cancel),
+        ),
+        SolveState::Stopped => (
+            text(lang, Text::Stopped).to_owned(),
+            (found > 0).then(|| which(true)),
+            Some(Text::Continue),
+        ),
+        SolveState::Finished(_) if found == 0 => (
+            text(lang, Text::NoSolution).to_owned(),
+            app.first_problem().map(|pr| problem_text(lang, &pr)),
+            Some(Text::Done),
+        ),
+        SolveState::Finished(stop) => (
+            which(stop == endlogic_core::solver::StopReason::SolutionLimit),
+            None,
+            Some(Text::Done),
+        ),
+    };
+    let title_font = fit(p, &title, sans(font, true), parts.title.w);
+    p.text(
+        &title,
+        Point::new(parts.title.x, parts.title.center().y),
+        title_font,
+        Align::Left,
+        theme::TEXT,
+    );
+    if let Some(detail) = detail {
+        let detail_font = fit(p, &detail, sans(font * 0.85, false), parts.detail.w);
+        p.text(
+            &detail,
+            Point::new(parts.detail.x, parts.detail.center().y),
+            detail_font,
+            Align::Left,
+            theme::MUTED,
+        );
+    }
+    if found > 1 {
+        button(p, parts.prev, "‹", Style::Normal, font * 1.2);
+        button(p, parts.next, "›", Style::Normal, font * 1.2);
+    }
+    if let Some(action) = action {
+        button(p, parts.action, text(lang, action), Style::Normal, font);
+    }
+}
+
+fn stepper(p: &mut dyn Painter, s: &Stepper, label: &str, value: usize, font: f32) {
+    if s.label.w > 0.0 {
+        let f = fit(p, label, sans(font * 0.9, false), s.label.w - 4.0);
+        p.text(
+            label,
+            Point::new(s.label.x, s.label.center().y),
+            f,
+            Align::Left,
+            theme::MUTED,
+        );
+    }
+    let minus = if value > 1 {
+        Style::Normal
+    } else {
+        Style::Disabled
+    };
+    let plus = if value < endlogic_core::MAX_GRID_SIZE {
+        Style::Normal
+    } else {
+        Style::Disabled
+    };
+    button(p, s.minus, "−", minus, font * 1.2);
+    centered_text(
+        p,
+        &value.to_string(),
+        s.value.inset(-4.0),
+        mono(font, true),
+        theme::TEXT,
+    );
+    button(p, s.plus, "+", plus, font * 1.2);
+}
+
+fn draw_controls(app: &App, e: &EditLayout, editor: &Editor, p: &mut dyn Painter) {
+    let lang = app.lang;
+    let font = app.layout.font;
+    stepper(p, &e.width, text(lang, Text::Width), editor.width(), font);
+    stepper(
+        p,
+        &e.height,
+        text(lang, Text::Height),
+        editor.height(),
+        font,
+    );
+    if let Some(times) = e.times {
+        centered_text(p, "×", times.inset(-4.0), sans(font, false), theme::MUTED);
+    }
+    let has_pieces = !editor.pieces().is_empty();
+    let enabled = |on: bool| if on { Style::Normal } else { Style::Disabled };
+    let running = app.solve_state() == Some(SolveState::Running);
+    let clear = if app.clear_armed() {
+        Text::Sure
+    } else {
+        Text::Clear
+    };
+    for (rect, label, style) in [
+        (e.clear, clear, Style::Normal),
+        (e.play, Text::Play, enabled(has_pieces)),
+        (
+            e.solve,
+            Text::Solve,
+            if has_pieces && !running {
+                Style::Primary
+            } else {
+                Style::Disabled
+            },
+        ),
+    ] {
+        if !app.under_overlay(rect) {
+            button(p, rect, text(lang, label), style, font);
+        }
+    }
+}
+
+fn draw_piece_editor(app: &App, e: &EditLayout, draft: &Draft, p: &mut dyn Painter) {
+    let lang = app.lang;
+    let font = app.layout.font;
+    let parts = e.piece_editor(draft.side);
+    panel(p, e.piece);
+    p.fill_rect(parts.grid, 0.0, theme::GRID_LINE);
+    for (k, &on) in draft.cells.iter().enumerate() {
+        let (r, c) = (k / draft.side, k % draft.side);
+        let cell = Rect::new(
+            parts.grid.x + to_f32(c) * parts.cell,
+            parts.grid.y + to_f32(r) * parts.cell,
+            parts.cell,
+            parts.cell,
+        )
+        .inset(1.0);
+        if on {
+            p.fill_rect(cell, 2.0, theme::PIECE);
+            p.stroke_rect(cell.inset(0.5), 2.0, 1.0, theme::BRIGHT);
+        } else {
+            p.fill_rect(cell, 2.0, theme::CELL);
+        }
+    }
+    let shape = draft.shape();
+    if let Err(err) = shape {
+        let reason = match err {
+            DraftError::Empty => Text::EmptyPiece,
+            DraftError::Disconnected => Text::DisconnectedPiece,
+        };
+        block(
+            p,
+            text(lang, reason),
+            parts.reason,
+            font * 0.9,
+            theme::ERROR,
+            Align::Left,
+        );
+    }
+    let valid = shape.is_ok();
+    let done = if valid {
+        Style::Primary
+    } else {
+        Style::Disabled
+    };
+    button(
+        p,
+        parts.cancel,
+        text(lang, Text::Cancel),
+        Style::Normal,
+        font,
+    );
+    button(p, parts.done, text(lang, Text::Done), done, font);
+    if draft.index.is_some() {
+        let room = app
+            .editor()
+            .is_some_and(|ed| ed.pieces().len() < endlogic_core::MAX_PIECES);
+        let duplicate = if valid && room {
+            Style::Normal
+        } else {
+            Style::Disabled
+        };
+        button(
+            p,
+            parts.duplicate,
+            text(lang, Text::Duplicate),
+            duplicate,
+            font,
+        );
+        button(
+            p,
+            parts.delete,
+            text(lang, Text::Delete),
+            Style::Normal,
+            font,
+        );
+    }
+}
+
+fn draw_strip(app: &App, e: &EditLayout, editor: &Editor, clue: ClueRef, p: &mut dyn Painter) {
+    let font = app.layout.font;
+    let len = if clue.row {
+        editor.width()
+    } else {
+        editor.height()
+    };
+    let keys = e.digit_keys(len + 1);
+    panel(p, e.strip);
+    let current = editor.clue(clue.row, clue.index);
+    for (k, &key) in keys.iter().enumerate() {
+        if k <= len {
+            let style = if k == current {
+                Style::Primary
+            } else {
+                Style::Normal
+            };
+            button(p, key, &k.to_string(), style, font);
+        } else {
+            button(p, key, text(app.lang, Text::Done), Style::Normal, font);
+        }
+    }
+}

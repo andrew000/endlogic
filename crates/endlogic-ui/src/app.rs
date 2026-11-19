@@ -7,12 +7,13 @@ use endlogic_core::rng::Rng;
 
 use crate::board::{Board, PieceState, Turned};
 use crate::draw;
+use crate::editor::{EditControl, EditState, Editor};
 use crate::hint::Hints;
-use crate::layout::{Layout, LayoutInput, to_f32};
+use crate::layout::{Layout, LayoutInput, Mode, to_f32};
 use crate::painter::{Painter, Point, Rect};
 use crate::shell::{
-    Budgets, Config, Cursor, Effect, Event, Insets, Key, Pointer, PointerKind, SETTING_COUNTERS,
-    SETTING_DIFFICULTY, SETTING_LANG,
+    Budgets, CodeKind, Config, Cursor, Effect, Event, Insets, Key, Pointer, PointerKind,
+    SETTING_COUNTERS, SETTING_DIFFICULTY, SETTING_EDITOR, SETTING_LANG,
 };
 use crate::text::{Lang, Text};
 use crate::theme;
@@ -74,6 +75,12 @@ impl CounterMode {
 pub enum Control {
     /// A difficulty tab.
     Tab(Difficulty),
+    /// The custom tab.
+    Custom,
+    /// Back from playing a custom puzzle to its editor.
+    Back,
+    /// A control of the editor.
+    Edit(EditControl),
     /// A half of the language switch.
     Lang(Lang),
     /// The share button.
@@ -203,7 +210,6 @@ pub struct App {
     pub(crate) height: f32,
     insets: Insets,
     pub(crate) touch: bool,
-    share_prefix: String,
     pub(crate) budgets: Budgets,
     entropy: u64,
     puzzles_started: u64,
@@ -211,15 +217,20 @@ pub struct App {
     pub(crate) counters: CounterMode,
     pub(crate) difficulty: Difficulty,
     pub(crate) game: Option<Game>,
-    generator: Option<Generator>,
+    pub(crate) generator: Option<Generator>,
     pub(crate) gesture: Gesture,
     /// Last mouse position, for hover, `R` and the cursor.
     pub(crate) hover: Option<Point>,
     pub(crate) toast: Option<Toast>,
     /// The tray page on screen.
     pub(crate) tray_page: usize,
-    effects: Vec<Effect>,
+    pub(crate) effects: Vec<Effect>,
     cursor: Cursor,
+    /// The custom tab is open: editing when there is no game.
+    pub(crate) custom: bool,
+    /// The puzzle in the custom tab's editor.
+    pub(crate) editor: Editor,
+    pub(crate) edit: EditState,
     pub(crate) layout: Layout,
 }
 
@@ -250,7 +261,6 @@ impl App {
             height: config.height,
             insets: config.insets,
             touch: config.touch,
-            share_prefix: config.share_prefix,
             budgets: config.budgets,
             entropy: config.entropy,
             puzzles_started: 0,
@@ -265,6 +275,12 @@ impl App {
             tray_page: 0,
             effects: Vec::new(),
             cursor: Cursor::Default,
+            custom: false,
+            editor: setting(SETTING_EDITOR)
+                .and_then(|code| decode(code).ok())
+                .filter(|p| p.colors().len() <= 1)
+                .map_or_else(Editor::default, |p| Editor::from_puzzle(&p)),
+            edit: EditState::default(),
             layout: Layout::compute(&LayoutInput {
                 width: 1.0,
                 height: 1.0,
@@ -275,14 +291,15 @@ impl App {
                 grid_height: 1,
                 pieces: 1,
                 max_piece_side: 1,
+                mode: Mode::Play,
             }),
         };
-        let opened = config
-            .code
-            .as_deref()
-            .is_some_and(|code| app.open_code(code));
+        let code = config.code;
+        let opened = code
+            .as_ref()
+            .is_some_and(|(kind, code)| app.open_code(*kind, code));
         if !opened {
-            if config.code.is_some() {
+            if code.is_some() {
                 app.show_toast(Text::InvalidLink, true);
             }
             app.start_generation();
@@ -316,7 +333,7 @@ impl App {
                 }
             }
             Event::Key(key) => self.key(key),
-            Event::CodeChanged(code) => self.code_changed(&code),
+            Event::CodeChanged(kind, code) => self.code_changed(kind, &code),
             Event::CopyFinished(ok) => {
                 if ok {
                     self.show_toast(Text::LinkCopied, false);
@@ -341,6 +358,7 @@ impl App {
         };
         self.step_generator();
         self.step_hint();
+        self.step_editor(dt);
         self.animate(dt);
         draw::draw(self, painter);
         self.busy()
@@ -366,6 +384,11 @@ impl App {
     /// The puzzle id shown under the title, e.g. `Δ-H-AWYAGP`.
     #[must_use]
     pub fn puzzle_id(&self) -> Option<String> {
+        if self.is_editing() {
+            let code = encode(&self.editor.puzzle()).unwrap_or_default();
+            let short: String = code.chars().take(6).collect();
+            return Some(format!("Δ-C-{short}"));
+        }
         self.game.as_ref().map(|g| {
             let short: String = g.code.chars().take(6).collect();
             format!("Δ-{}-{short}", g.letter)
@@ -453,7 +476,7 @@ impl App {
     #[must_use]
     pub fn card_of(&self, i: usize) -> Option<Rect> {
         let per_page = self.layout.per_page.max(1);
-        (i / per_page == self.tray_page)
+        (i < self.card_count() && i / per_page == self.tray_page)
             .then(|| self.layout.cards.get(i % per_page).copied())
             .flatten()
     }
@@ -467,8 +490,17 @@ impl App {
     /// Number of tray pages.
     #[must_use]
     pub fn tray_pages(&self) -> usize {
-        self.layout
-            .pages(self.board().map_or(0, Board::piece_count))
+        self.layout.pages(self.card_count())
+    }
+
+    /// Cards in the tray: the pieces, and in the editor the card that adds
+    /// one.
+    fn card_count(&self) -> usize {
+        if self.is_editing() {
+            self.editor_cards()
+        } else {
+            self.board().map_or(0, Board::piece_count)
+        }
     }
 
     /// Shows the tray page that holds piece `i`.
@@ -605,6 +637,7 @@ impl App {
     fn busy(&self) -> bool {
         self.generator.is_some()
             || self.toast.is_some()
+            || self.editor_busy()
             || self.game.as_ref().is_some_and(|g| {
                 (g.won && g.win_elapsed < theme::WIN_TIME)
                     || g.hints.job.is_some()
@@ -619,7 +652,14 @@ impl App {
     }
 
     fn layout_input(&self) -> LayoutInput {
-        let (grid_width, grid_height, pieces, max_piece_side) = if let Some(game) = &self.game {
+        let (grid_width, grid_height, pieces, max_piece_side) = if self.is_editing() {
+            (
+                self.editor.width(),
+                self.editor.height(),
+                self.editor_cards(),
+                self.editor.max_piece_side(),
+            )
+        } else if let Some(game) = &self.game {
             (
                 game.board.width(),
                 game.board.height(),
@@ -640,10 +680,11 @@ impl App {
             grid_height,
             pieces,
             max_piece_side,
+            mode: self.edit_mode(),
         }
     }
 
-    fn relayout(&mut self) {
+    pub(crate) fn relayout(&mut self) {
         self.layout = Layout::compute(&self.layout_input());
         self.tray_page = self.tray_page.min(self.tray_pages() - 1);
     }
@@ -663,14 +704,19 @@ impl App {
         });
     }
 
-    /// Opens a puzzle code. Returns `false`, changing nothing, if the code
-    /// is invalid or the puzzle cannot be played here.
-    fn open_code(&mut self, code: &str) -> bool {
+    /// Opens a puzzle code: to play it, or in the custom tab's editor.
+    /// Returns `false`, changing nothing, if the code is invalid or the
+    /// puzzle cannot be used here.
+    fn open_code(&mut self, kind: CodeKind, code: &str) -> bool {
         let Ok(puzzle) = decode(code) else {
             return false;
         };
         if puzzle.colors().len() > 1 {
             return false;
+        }
+        if kind == CodeKind::Edit {
+            self.open_editor(Editor::from_puzzle(&puzzle));
+            return true;
         }
         let grid = puzzle.grid();
         let matching = Difficulty::ALL.into_iter().find(|d| {
@@ -689,7 +735,8 @@ impl App {
         true
     }
 
-    fn install(&mut self, puzzle: Puzzle, letter: char) {
+    /// Starts playing `puzzle`; `C` as the letter means the custom tab.
+    pub(crate) fn install(&mut self, puzzle: Puzzle, letter: char) {
         let Ok(code) = encode(&puzzle) else {
             return;
         };
@@ -705,7 +752,9 @@ impl App {
         });
         self.gesture = Gesture::Idle;
         self.tray_page = 0;
-        self.effects.push(Effect::SetCode(code));
+        self.custom = letter == 'C';
+        self.edit = EditState::default();
+        self.effects.push(Effect::SetCode(CodeKind::Play, code));
         self.relayout();
     }
 
@@ -714,6 +763,8 @@ impl App {
             self.cancel_drag(drag);
         }
         self.gesture = Gesture::Idle;
+        self.custom = false;
+        self.edit = EditState::default();
         self.puzzles_started += 1;
         let seed = Rng::for_stream(self.entropy, self.puzzles_started).next_u64();
         self.generator = Generator::new(self.difficulty.params(), seed).ok();
@@ -816,10 +867,39 @@ impl App {
         let has_game = self.game.is_some();
         let mut controls = Vec::new();
         if self.is_won() && self.generator.is_none() {
-            controls.push((Control::Next, l.next, true));
+            let next = if self.custom {
+                Control::Back
+            } else {
+                Control::Next
+            };
+            controls.push((next, l.next, true));
         }
         for (d, rect) in Difficulty::ALL.into_iter().zip(l.tabs) {
             controls.push((Control::Tab(d), rect, true));
+        }
+        controls.push((Control::Custom, l.tabs[4], true));
+        if self.is_editing() {
+            if l.compact {
+                controls.push((Control::Lang(self.lang.other()), l.lang, true));
+            } else {
+                let (en, ua) = Layout::halves(l.lang);
+                controls.extend([
+                    (Control::Lang(Lang::En), en, true),
+                    (Control::Lang(Lang::Ua), ua, true),
+                ]);
+            }
+            controls.push((Control::Share, l.share, true));
+            controls.extend(self.edit_controls());
+            if let Some(pager) = l.pager
+                && self.edit.draft.is_none()
+                && self.edit.selected.is_none()
+            {
+                controls.extend([
+                    (Control::PagePrev, pager.prev, true),
+                    (Control::PageNext, pager.next, true),
+                ]);
+            }
+            return controls;
         }
         if l.compact {
             // One button each, switching to the other choice.
@@ -841,7 +921,15 @@ impl App {
             (Control::Share, l.share, has_game),
             (Control::Reset, l.reset, self.can_move()),
             (Control::Hint, l.hint, self.can_move()),
-            (Control::New, l.new, true),
+            (
+                if self.custom {
+                    Control::Back
+                } else {
+                    Control::New
+                },
+                l.new,
+                true,
+            ),
         ]);
         if let Some(pager) = l.pager {
             let paging = self.game.as_ref().is_some_and(|g| !g.won);
@@ -856,7 +944,7 @@ impl App {
     fn control_at(&self, p: Point) -> Option<Control> {
         self.controls()
             .into_iter()
-            .find(|&(_, rect, enabled)| enabled && Layout::zone(rect).contains(p))
+            .find(|&(control, rect, enabled)| enabled && App::zone_of(control, rect).contains(p))
             .map(|(control, _, _)| control)
     }
 
@@ -1033,6 +1121,8 @@ impl App {
             Key::Tab => self.set_counters(self.counters.toggled()),
             Key::H => self.request_hint(),
             Key::Escape => {
+                self.edit.selected = None;
+                self.edit.draft = None;
                 if let Gesture::Dragging(drag) = self.gesture {
                     self.cancel_drag(drag);
                     self.gesture = Gesture::Ignored { id: drag.id };
@@ -1041,26 +1131,49 @@ impl App {
         }
     }
 
-    fn code_changed(&mut self, code: &str) {
+    fn code_changed(&mut self, kind: CodeKind, code: &str) {
         let code = code.trim();
-        if self.code() == Some(code) {
+        let current = self.current_code();
+        if current
+            .as_ref()
+            .is_some_and(|(k, c)| *k == kind && c == code)
+        {
             return;
         }
         if let Gesture::Dragging(drag) = self.gesture {
             self.cancel_drag(drag);
         }
-        if !self.open_code(code) {
+        if !self.open_code(kind, code) {
             self.show_toast(Text::InvalidLink, true);
-            if let Some(current) = self.code() {
-                self.effects.push(Effect::SetCode(current.to_owned()));
+            if let Some((kind, code)) = current {
+                self.effects.push(Effect::SetCode(kind, code));
             }
+        }
+    }
+
+    /// The code in the address: the editor's or the game's.
+    fn current_code(&self) -> Option<(CodeKind, String)> {
+        if self.is_editing() {
+            encode(&self.editor.puzzle())
+                .ok()
+                .map(|code| (CodeKind::Edit, code))
+        } else {
+            self.code().map(|code| (CodeKind::Play, code.to_owned()))
         }
     }
 
     fn activate(&mut self, control: Control) {
         match control {
+            Control::Custom => {
+                if !self.is_editing() {
+                    let editor = self.editor.clone();
+                    self.open_editor(editor);
+                }
+            }
+            Control::Back => self.back_to_editor(),
+            Control::Edit(control) => self.edit_action(control),
             Control::Tab(d) => {
-                if d != self.difficulty || self.game.is_none() {
+                if d != self.difficulty || self.game.is_none() || self.custom {
                     self.difficulty = d;
                     self.save(SETTING_DIFFICULTY, d.name());
                     self.start_generation();
@@ -1075,10 +1188,9 @@ impl App {
                 }
             }
             Control::Share => {
-                if let Some(code) = self.code() {
-                    let link = format!("{}{code}", self.share_prefix);
+                if let Some((kind, code)) = self.current_code() {
                     // The toast waits for the shell's `CopyFinished`.
-                    self.effects.push(Effect::CopyText(link));
+                    self.effects.push(Effect::CopyLink(kind, code));
                 }
             }
             Control::Reset => self.reset(),
@@ -1172,7 +1284,7 @@ impl App {
         self.check_win();
     }
 
-    fn cancel_drag(&mut self, drag: Drag) {
+    pub(crate) fn cancel_drag(&mut self, drag: Drag) {
         let from = self.drag_visual(&drag);
         if let Some(game) = &mut self.game {
             game.board.set_turns(drag.piece, drag.origin.turns);

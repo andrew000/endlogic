@@ -10,8 +10,8 @@ use endlogic_core::code::encode;
 use endlogic_core::format::parse;
 use endlogic_core::generator::Difficulty;
 use endlogic_ui::{
-    App, Arrangement, BAND, COUNTER_GAP, CounterView, Event, Insets, Key, Lang, Layout,
-    LayoutInput, Line, LineState, MIN_SQUARE, MIN_TARGET, Point, PointerKind, Rect, Rgba,
+    App, Arrangement, BAND, COUNTER_GAP, CodeKind, CounterView, Event, Insets, Key, Lang, Layout,
+    LayoutInput, Line, LineState, MIN_SQUARE, MIN_TARGET, Mode, Point, PointerKind, Rect, Rgba,
     TRAY_MIN_SCALE, TRAY_SCALE, counter_view,
 };
 
@@ -90,8 +90,11 @@ fn check_layout(layout: &Layout, input: &LayoutInput, what: &str) {
         }
     }
     // Touch zones: big enough, inside the safe area, never overlapping.
+    let editing = layout.edit.is_some();
     let mut targets = layout.targets();
-    targets.push(("next", Layout::zone(layout.next)));
+    if !editing {
+        targets.push(("next", Layout::zone(layout.next)));
+    }
     for (name, zone) in &targets {
         assert!(
             zone.w >= MIN_TARGET - 0.01 && zone.h >= MIN_TARGET - 0.01,
@@ -102,7 +105,7 @@ fn check_layout(layout: &Layout, input: &LayoutInput, what: &str) {
             "{what}: {name} {zone:?} in an inset"
         );
     }
-    let playing = &targets[..targets.len() - 1];
+    let playing = &targets[..targets.len() - usize::from(!editing)];
     for (k, (a, za)) in playing.iter().enumerate() {
         for (b, zb) in &playing[k + 1..] {
             assert!(
@@ -127,6 +130,10 @@ fn check_layout(layout: &Layout, input: &LayoutInput, what: &str) {
     }
     check_board(layout, what);
     check_tray(layout, input, what);
+    if editing {
+        check_edit(layout, input, safe, what);
+        return;
+    }
     check_banner(layout, &rects, what);
     match layout.kind {
         Arrangement::Wide => check_wide(layout, w, what),
@@ -134,6 +141,69 @@ fn check_layout(layout: &Layout, input: &LayoutInput, what: &str) {
         Arrangement::LowWide => check_low_wide(layout, what),
     }
     assert!(layout.cell >= 12.0, "{what}: cell {}", layout.cell);
+}
+
+/// The editor: its areas on screen and clear of the board, and the
+/// controls of every overlay apart from each other and from what stays
+/// usable while it is open (the header and the tabs).
+fn check_edit(layout: &Layout, input: &LayoutInput, safe: Rect, what: &str) {
+    let e = layout.edit.unwrap();
+    let block = layout.board_block();
+    if let Some(panel) = layout.panel {
+        for rect in [
+            e.width.minus,
+            e.width.plus,
+            e.height.minus,
+            e.height.plus,
+            e.status,
+        ] {
+            assert!(
+                panel.contains_rect(rect),
+                "{what}: {rect:?} outside the panel"
+            );
+        }
+    }
+    for (name, area) in [("strip", e.strip), ("piece", e.piece), ("answer", e.result)] {
+        assert!(
+            safe.contains_rect(area),
+            "{what}: {name} {area:?} off the safe area"
+        );
+        assert!(!area.intersects(block), "{what}: {name} over the board");
+        for tab in layout.tabs {
+            assert!(
+                !area.intersects(Layout::zone(tab)),
+                "{what}: {name} over a tab"
+            );
+        }
+    }
+    let header: Vec<Rect> = layout
+        .targets()
+        .into_iter()
+        .filter(|(name, _)| {
+            [
+                "easy", "normal", "hard", "expert", "custom", "lang", "en", "ua", "share",
+            ]
+            .contains(name)
+        })
+        .map(|(_, zone)| zone)
+        .collect();
+    let apart = |zones: &[(String, Rect)], area: Rect, what: &str| {
+        check_apart(zones, area, &header, safe, what);
+    };
+    // The digit strip for the longest line.
+    let len = input.grid_width.max(input.grid_height);
+    let keys: Vec<(String, Rect)> = e
+        .digit_keys(len + 1)
+        .into_iter()
+        .enumerate()
+        .map(|(k, r)| (format!("key {k}"), Layout::zone(r)))
+        .collect();
+    apart(&keys, e.strip, &format!("{what} strip"));
+    check_overlays(layout, input, &apart, what);
+    assert!(layout.cell >= 8.0, "{what}: cell {}", layout.cell);
+    if input.grid_width.max(input.grid_height) <= 8 {
+        assert!(layout.cell >= 12.0, "{what}: cell {}", layout.cell);
+    }
 }
 
 /// The grid is on the axis, with a counter band on the left and an equal
@@ -337,6 +407,7 @@ fn input_for(w: f32, h: f32, difficulty: Difficulty, side: usize, lang: Lang) ->
         grid_height: params.height,
         pieces: params.pieces.max,
         max_piece_side: side,
+        mode: Mode::Play,
     }
 }
 
@@ -457,7 +528,7 @@ fn sixteen() -> Puzzle {
 fn a_sixteen_by_sixteen_puzzle_fits() {
     for (w, h) in [(390.0, 844.0), (1920.0, 1080.0)] {
         let mut config = config(w, h);
-        config.code = Some(encode(&sixteen()).unwrap());
+        config.code = Some((CodeKind::Play, encode(&sixteen()).unwrap()));
         config.touch = w < h;
         let mut app = App::new(config);
         assert!(!app.is_generating());
@@ -472,6 +543,7 @@ fn a_sixteen_by_sixteen_puzzle_fits() {
             grid_height: board.height(),
             pieces: board.piece_count(),
             max_piece_side: board.max_piece_side(),
+            mode: Mode::Play,
         };
         check_layout(app.layout(), &input, &format!("16x16 at {w}x{h}"));
         let drawing = settle(&mut app);
@@ -505,6 +577,7 @@ fn layout_of_real_puzzles_fits() {
                 grid_height: board.height(),
                 pieces: board.piece_count(),
                 max_piece_side: board.max_piece_side(),
+                mode: Mode::Play,
             };
             check_layout(app.layout(), &input, &format!("{w}x{h} {difficulty:?}"));
             // Everything drawn stays on screen.
@@ -806,7 +879,7 @@ fn dominoes() -> Puzzle {
 fn many_pieces_split_the_tray_into_pages() {
     for (w, h) in SIZES {
         let mut config = config(w, h);
-        config.code = Some(encode(&dominoes()).unwrap());
+        config.code = Some((CodeKind::Play, encode(&dominoes()).unwrap()));
         config.touch = w < h || h < 520.0;
         let mut app = App::new(config);
         settle(&mut app);
@@ -822,6 +895,7 @@ fn many_pieces_split_the_tray_into_pages() {
             grid_height: 16,
             pieces: 32,
             max_piece_side: 2,
+            mode: Mode::Play,
         };
         check_layout(&layout, &input, &what);
         let pages = app.tray_pages();
@@ -849,7 +923,7 @@ fn many_pieces_split_the_tray_into_pages() {
     }
     // At 390×844 the tray of the tall arrangement shows big cards.
     let mut config = config(390.0, 844.0);
-    config.code = Some(encode(&dominoes()).unwrap());
+    config.code = Some((CodeKind::Play, encode(&dominoes()).unwrap()));
     config.touch = true;
     let mut app = App::new(config);
     settle(&mut app);
@@ -880,6 +954,111 @@ fn the_four_levels_need_no_tray_pages() {
                 let layout = Layout::compute(&input_for(w, h, difficulty, side, Lang::Ua));
                 assert!(layout.pager.is_none(), "{w}x{h} {difficulty:?} {side}");
             }
+        }
+    }
+}
+
+#[test]
+fn the_editor_fits_every_size() {
+    let boards = [(5, 5, 1, 1), (7, 7, 6, 4), (8, 6, 9, 6), (16, 16, 33, 3)];
+    for (w, h) in SIZES {
+        for (gw, gh, cards, side) in boards {
+            for lang in [Lang::En, Lang::Ua] {
+                for insets in [Insets::default(), phone_insets(w, h)] {
+                    let input = LayoutInput {
+                        width: w,
+                        height: h,
+                        insets,
+                        touch: true,
+                        lang,
+                        grid_width: gw,
+                        grid_height: gh,
+                        pieces: cards,
+                        max_piece_side: side,
+                        mode: Mode::Edit,
+                    };
+                    let what = format!("edit {w}x{h} {gw}x{gh} {cards} cards {lang:?} {insets:?}");
+                    let layout = Layout::compute(&input);
+                    check_layout(&layout, &input, &what);
+                }
+            }
+        }
+    }
+}
+
+/// Zones that must be big enough, inside the safe area and `area`, apart
+/// from each other and from the header.
+fn check_apart(zones: &[(String, Rect)], area: Rect, header: &[Rect], safe: Rect, what: &str) {
+    for (k, (a, za)) in zones.iter().enumerate() {
+        assert!(
+            za.w >= MIN_TARGET - 0.01 && za.h >= MIN_TARGET - 0.01,
+            "{what}: {a} small"
+        );
+        assert!(safe.contains_rect(*za), "{what}: {a} {za:?} in an inset");
+        assert!(
+            area.inset(-4.0).contains_rect(*za),
+            "{what}: {a} {za:?} outside {area:?}"
+        );
+        for (b, zb) in &zones[k + 1..] {
+            assert!(
+                !za.intersects(*zb),
+                "{what}: zones {a} {za:?} and {b} {zb:?}"
+            );
+        }
+        for zh in header {
+            assert!(!za.intersects(*zh), "{what}: {a} over the header");
+        }
+    }
+}
+
+/// Checks a group of touch zones inside an area.
+type Apart<'a> = dyn Fn(&[(String, Rect)], Rect, &str) + 'a;
+
+/// The piece editor and the solver's answer.
+fn check_overlays(layout: &Layout, input: &LayoutInput, apart: &Apart, what: &str) {
+    let e = layout.edit.unwrap();
+    // The piece editor, at its usual size and its largest.
+    for side in [6, 16] {
+        let parts = e.piece_editor(side);
+        let what = format!("{what} piece editor {side}");
+        assert!(e.piece.contains_rect(parts.grid), "{what}: grid");
+        assert!(parts.grid.w >= 60.0, "{what}: grid {}", parts.grid.w);
+        assert!(
+            !parts.grid.intersects(parts.reason),
+            "{what}: reason over the grid"
+        );
+        let buttons: Vec<(String, Rect)> = [
+            ("done", parts.done),
+            ("cancel", parts.cancel),
+            ("duplicate", parts.duplicate),
+            ("delete", parts.delete),
+        ]
+        .into_iter()
+        .map(|(n, r)| {
+            assert!(!r.intersects(parts.grid), "{what}: {n} over the grid");
+            (n.to_owned(), Layout::zone(r))
+        })
+        .collect();
+        apart(&buttons, e.piece, &what);
+    }
+    // The solver's answer.
+    let panel = e.result_panel(input.lang, layout.font);
+    let buttons: Vec<(String, Rect)> = [
+        ("prev", panel.prev),
+        ("next", panel.next),
+        ("action", panel.action),
+    ]
+    .into_iter()
+    .map(|(n, r)| (n.to_owned(), Layout::zone(r)))
+    .collect();
+    apart(&buttons, e.result, &format!("{what} answer"));
+    for text in [panel.title, panel.detail] {
+        assert!(e.result.contains_rect(text), "{what}: answer text");
+        for (_, zone) in &buttons {
+            assert!(
+                !text.intersects(*zone),
+                "{what}: answer text under a button"
+            );
         }
     }
 }

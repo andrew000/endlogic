@@ -1,7 +1,12 @@
 //! What a shell passes in and gets back: start-up data, events and effects.
 
 /// Keys of the settings the UI saves through [`Effect::SaveSetting`].
-pub const SETTING_KEYS: [&str; 3] = [SETTING_LANG, SETTING_COUNTERS, SETTING_DIFFICULTY];
+pub const SETTING_KEYS: [&str; 4] = [
+    SETTING_LANG,
+    SETTING_COUNTERS,
+    SETTING_DIFFICULTY,
+    SETTING_EDITOR,
+];
 
 /// Setting key for the language: `en` or `ua`.
 pub const SETTING_LANG: &str = "lang";
@@ -9,6 +14,19 @@ pub const SETTING_LANG: &str = "lang";
 pub const SETTING_COUNTERS: &str = "counters";
 /// Setting key for the difficulty: `easy`, `normal`, `hard` or `expert`.
 pub const SETTING_DIFFICULTY: &str = "difficulty";
+/// Setting key for the puzzle in the editor of the custom tab, as a code.
+pub const SETTING_EDITOR: &str = "editor";
+
+/// What a puzzle code in the address stands for. The shell keeps the two
+/// apart (in the browser with different address prefixes); the UI only
+/// sees the kind.
+#[derive(Debug, Clone, Copy, PartialEq, Eq, Hash)]
+pub enum CodeKind {
+    /// A puzzle to play.
+    Play,
+    /// A puzzle open in the editor of the custom tab.
+    Edit,
+}
 
 /// Everything the UI needs at start-up.
 #[derive(Debug, Clone, PartialEq)]
@@ -30,13 +48,10 @@ pub struct Config {
     /// The system language as a BCP 47 tag, e.g. `uk-UA` or `en-US`.
     pub system_language: String,
     /// A puzzle code to open instead of generating a puzzle.
-    pub code: Option<String>,
+    pub code: Option<(CodeKind, String)>,
     /// Whether the main input is a touch screen. This hides the keyboard
     /// help; how each pointer behaves depends on its own [`PointerKind`].
     pub touch: bool,
-    /// Text put in front of a puzzle code to make a shareable link, e.g.
-    /// `https://example.org/endlogic/#p=`. Empty to share the bare code.
-    pub share_prefix: String,
     /// How much solver work the UI may do.
     pub budgets: Budgets,
 }
@@ -50,6 +65,9 @@ pub struct Budgets {
     pub per_frame: u64,
     /// Nodes one hint may use in total.
     pub hint: u64,
+    /// Nodes the solver of the custom tab may use before it stops and
+    /// offers to continue; each continuation adds as many again.
+    pub solve: u64,
 }
 
 impl Default for Budgets {
@@ -57,6 +75,7 @@ impl Default for Budgets {
         Budgets {
             per_frame: crate::app::NODES_PER_FRAME,
             hint: 1_000_000,
+            solve: 2_000_000,
         }
     }
 }
@@ -136,8 +155,8 @@ pub enum Event {
     /// A key was pressed.
     Key(Key),
     /// The puzzle code in the address changed (e.g. a pasted link).
-    CodeChanged(String),
-    /// The result of an [`Effect::CopyText`]: `true` if the text reached
+    CodeChanged(CodeKind, String),
+    /// The result of an [`Effect::CopyLink`]: `true` if the link reached
     /// the clipboard.
     CopyFinished(bool),
 }
@@ -160,10 +179,10 @@ pub enum Cursor {
 #[derive(Debug, Clone, PartialEq, Eq, Hash)]
 pub enum Effect {
     /// Show this puzzle code in the address, without adding history.
-    SetCode(String),
-    /// Copy text to the clipboard, then report the result with
-    /// [`Event::CopyFinished`].
-    CopyText(String),
+    SetCode(CodeKind, String),
+    /// Copy a shareable link to this puzzle code to the clipboard, then
+    /// report the result with [`Event::CopyFinished`].
+    CopyLink(CodeKind, String),
     /// Store a setting so it can be passed back in [`Config::settings`].
     SaveSetting {
         /// One of [`SETTING_KEYS`].

@@ -80,8 +80,16 @@ cargo run --release -p endlogic-cli -- decode AWYAG92sqX2JVQAAAAAAAURshXEtRHzP5E
 ## Web trainer
 
 Drag pieces onto the board until every row and column count matches; `R`
-or a tap rotates, `Tab` switches the counters, `Esc` cancels a drag. A
-puzzle's link (`#p=<code>`) opens the same puzzle.
+or a tap rotates, `Tab` switches the counters, `H` gives a hint, `Esc`
+cancels a drag. The first hint shows the cells the solution covers; each
+next one puts a piece in place or points out a misplaced one.
+
+The custom tab copies a puzzle from the game: set the board size, tap cells
+to cycle free, locked and dead, tap a counter to type the clues, and draw
+the pieces. "Solve" lists up to 50 solutions; "Play" plays the puzzle.
+
+A puzzle's link (`#p=<code>`) opens the same puzzle; an editor link
+(`#e=<code>`) opens it in the custom tab.
 
 Building needs the `wasm32-unknown-unknown` target (installed by
 `rust-toolchain.toml`) and `wasm-bindgen-cli` of the same version as the

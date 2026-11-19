@@ -6,7 +6,7 @@ use common::*;
 use endlogic_core::code::encode;
 use endlogic_core::solver::{DEFAULT_NODE_BUDGET, search};
 use endlogic_core::{Puzzle, Solution};
-use endlogic_ui::{App, Budgets, Event, Key, PointerKind, Text};
+use endlogic_ui::{App, Budgets, CodeKind, Event, Key, PointerKind, Text};
 
 /// Cells covered in `solution`, row-major.
 fn coverage(puzzle: &Puzzle, solution: &Solution) -> Vec<bool> {
@@ -87,6 +87,14 @@ fn later_hints_place_pieces_until_the_puzzle_is_solved() {
     }
     assert!(app.is_won());
     let drawing = settle(&mut app);
+    // The silhouette goes with the win.
+    let faint = endlogic_ui::Rgba::hex(0x19_E3C0).alpha(0.16);
+    assert!(
+        !drawing
+            .calls
+            .iter()
+            .any(|c| matches!(c, Call::FillRect(_, k) if *k == faint))
+    );
     let line = format!("Hints: {}", app.hints_used());
     assert!(texts(&drawing).contains(&line), "{:?}", texts(&drawing));
     // The button shows the count.
@@ -171,10 +179,11 @@ fn reset_keeps_hints_and_a_new_puzzle_clears_them() {
 fn the_hint_button_waits_and_reports_a_spent_budget() {
     let puzzle = sample("wln006-2.txt");
     let mut config = config(1366.0, 768.0);
-    config.code = Some(encode(&puzzle).unwrap());
+    config.code = Some((CodeKind::Play, encode(&puzzle).unwrap()));
     config.budgets = Budgets {
         per_frame: 1,
         hint: 3,
+        ..Budgets::default()
     };
     let mut app = App::new(config);
     settle(&mut app);
@@ -196,10 +205,11 @@ fn the_hint_button_waits_and_reports_a_spent_budget() {
             budgets: Budgets {
                 per_frame: 1,
                 hint: 3,
+                ..Budgets::default()
             },
             ..common::config(1366.0, 768.0)
         };
-        config.code = Some(encode(&puzzle).unwrap());
+        config.code = Some((CodeKind::Play, encode(&puzzle).unwrap()));
         App::new(config)
     };
     settle(&mut app2);

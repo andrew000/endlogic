@@ -53,6 +53,8 @@ pub const WOBBLE_TIME: f32 = 0.2;
 pub const HINT_FLY_TIME: f32 = 0.45;
 /// Seconds a piece pointed out by a hint stays red.
 pub const BLAME_TIME: f32 = 1.5;
+/// Seconds the clear button waits for its second tap.
+pub const CLEAR_TIME: f32 = 3.0;
 /// Seconds for a quarter turn.
 pub const ROTATE_TIME: f32 = 0.10;
 /// Seconds for the win highlight to fade in.

@@ -10,8 +10,8 @@ use std::f64::consts::TAU;
 use std::rc::{Rc, Weak};
 
 use endlogic_ui::{
-    Align, App, Budgets, Config, Cursor, Effect, Event, Font, FontFamily, Insets, Key, Painter,
-    Point, Pointer, PointerKind, Rect, Rgba, SETTING_KEYS,
+    Align, App, Budgets, CodeKind, Config, Cursor, Effect, Event, Font, FontFamily, Insets, Key,
+    Painter, Point, Pointer, PointerKind, Rect, Rgba, SETTING_KEYS,
 };
 use wasm_bindgen::JsCast;
 use wasm_bindgen::prelude::*;
@@ -23,8 +23,18 @@ use web_sys::{
 const CANVAS_ID: &str = "endlogic";
 /// Prefix of the settings keys in `localStorage`.
 const STORAGE_PREFIX: &str = "endlogic.";
-/// Prefix of the puzzle code in the address fragment.
-const CODE_FRAGMENT: &str = "#p=";
+/// Prefix of a puzzle code to play in the address fragment.
+const PLAY_FRAGMENT: &str = "#p=";
+/// Prefix of a puzzle code open in the editor.
+const EDIT_FRAGMENT: &str = "#e=";
+
+/// The address fragment prefix for a kind of code.
+fn fragment(kind: CodeKind) -> &'static str {
+    match kind {
+        CodeKind::Play => PLAY_FRAGMENT,
+        CodeKind::Edit => EDIT_FRAGMENT,
+    }
+}
 
 const SANS: &str =
     "system-ui, -apple-system, \"Segoe UI\", Roboto, \"Helvetica Neue\", Arial, sans-serif";
@@ -72,7 +82,6 @@ pub fn start() -> Result<(), JsValue> {
             .ok()
             .flatten()
             .is_some_and(|m| m.matches()),
-        share_prefix: share_prefix(&window),
         budgets: Budgets::default(),
     };
 
@@ -169,18 +178,22 @@ fn load_settings(storage: Option<&Storage>) -> Vec<(String, String)> {
         .collect()
 }
 
-fn code_from_address(window: &Window) -> Option<String> {
+fn code_from_address(window: &Window) -> Option<(CodeKind, String)> {
     let hash = window.location().hash().ok()?;
-    hash.strip_prefix(CODE_FRAGMENT)
-        .filter(|code| !code.is_empty())
-        .map(str::to_owned)
+    [CodeKind::Play, CodeKind::Edit]
+        .into_iter()
+        .find_map(|kind| {
+            let code = hash.strip_prefix(fragment(kind))?;
+            (!code.is_empty()).then(|| (kind, code.to_owned()))
+        })
 }
 
-fn share_prefix(window: &Window) -> String {
+/// The page address without its fragment, for shareable links.
+fn page_address(window: &Window) -> String {
     let location = window.location();
     let part = |r: Result<String, JsValue>| r.unwrap_or_default();
     format!(
-        "{}{}{}{CODE_FRAGMENT}",
+        "{}{}{}",
         part(location.origin()),
         part(location.pathname()),
         part(location.search())
@@ -323,13 +336,16 @@ impl Shell {
     fn run_effects(&mut self) {
         for effect in self.app.take_effects() {
             match effect {
-                Effect::SetCode(code) => {
-                    let url = format!("{CODE_FRAGMENT}{code}");
+                Effect::SetCode(kind, code) => {
+                    let url = format!("{}{code}", fragment(kind));
                     if let Ok(history) = self.window.history() {
                         let _ = history.replace_state_with_url(&JsValue::NULL, "", Some(&url));
                     }
                 }
-                Effect::CopyText(text) => self.copy(&text),
+                Effect::CopyLink(kind, code) => {
+                    let link = format!("{}{}{code}", page_address(&self.window), fragment(kind));
+                    self.copy(&link);
+                }
                 Effect::SaveSetting { key, value } => {
                     if let Some(storage) = &self.storage {
                         let _ = storage.set_item(&format!("{STORAGE_PREFIX}{key}"), &value);
@@ -455,8 +471,8 @@ fn listen(shell: &SharedShell) -> Result<(), JsValue> {
             let shell = s.borrow();
             code_from_address(&shell.window)
         };
-        if let Some(code) = code {
-            Shell::dispatch(&s, Event::CodeChanged(code));
+        if let Some((kind, code)) = code {
+            Shell::dispatch(&s, Event::CodeChanged(kind, code));
         }
     })?;
     Ok(())

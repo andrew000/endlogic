@@ -6,8 +6,8 @@ use endlogic_core::code::encode;
 use endlogic_core::format::parse;
 use endlogic_core::{Puzzle, Solution};
 use endlogic_ui::{
-    Align, App, Budgets, Config, Event, Font, Insets, Key, Painter, Point, Pointer, PointerKind,
-    Rect, Rgba,
+    Align, App, Budgets, CodeKind, Config, Event, Font, Insets, Key, Painter, Point, Pointer,
+    PointerKind, Rect, Rgba,
 };
 
 // ---- recording painter ----
@@ -71,7 +71,6 @@ impl Painter for Recorder {
 pub const ERROR: Rgba = Rgba::hex(0xFF_4D5E);
 pub const BRIGHT: Rgba = Rgba::hex(0x3F_F5D6);
 pub const MUTED: Rgba = Rgba::hex(0x7E_8886);
-pub const SHARE: &str = "https://example.org/endlogic/#p=";
 pub const MOUSE: u32 = 1;
 pub const FINGER: u32 = 7;
 
@@ -87,7 +86,6 @@ pub fn config(width: f32, height: f32) -> Config {
         system_language: "en-US".to_owned(),
         code: None,
         touch: false,
-        share_prefix: SHARE.to_owned(),
         budgets: Budgets::default(),
     }
 }
@@ -112,7 +110,7 @@ pub fn settle(app: &mut App) -> Recorder {
 
 pub fn open(puzzle: &Puzzle) -> App {
     let mut config = config(1366.0, 768.0);
-    config.code = Some(encode(puzzle).unwrap());
+    config.code = Some((CodeKind::Play, encode(puzzle).unwrap()));
     let mut app = App::new(config);
     settle(&mut app);
     assert!(!app.is_generating());

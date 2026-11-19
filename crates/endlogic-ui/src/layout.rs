@@ -19,6 +19,10 @@ use crate::shell::Insets;
 use crate::text::{Lang, Text, difficulty_label, text};
 use endlogic_core::generator::Difficulty;
 
+mod edit;
+
+pub use edit::{EditLayout, Mode, PieceEditor, ResultPanel, Stepper};
+
 /// Smallest side of the touch zone of anything that can be tapped.
 pub const MIN_TARGET: f32 = 44.0;
 /// Below this height (logical pixels) a wide area gets the low arrangement.
@@ -84,6 +88,8 @@ pub struct LayoutInput {
     pub pieces: usize,
     /// Longest side of any piece, in cells.
     pub max_piece_side: usize,
+    /// Playing or editing.
+    pub mode: Mode,
 }
 
 /// Text broken into lines, drawn from the top of `rect`.
@@ -152,8 +158,9 @@ pub struct Layout {
     pub subtitle: Option<TextBlock>,
     /// The three help rows; empty when the help is not shown.
     pub help: Vec<HelpRow>,
-    /// Difficulty tabs, easiest first: one row, or a 2×2 grid.
-    pub tabs: [Rect; 4],
+    /// Tabs: the four difficulties, easiest first, then the custom tab.
+    /// One row, or a 2×2 grid with the custom tab under it.
+    pub tabs: [Rect; 5],
     /// Language switch: `EN | UA`, or with [`compact`](Layout::compact)
     /// one button showing the current language.
     pub lang: Rect,
@@ -205,6 +212,20 @@ pub struct Layout {
     pub next: Rect,
     /// Center of toasts.
     pub notice: Point,
+    /// The editor's controls, in the edit mode. The play controls (reset,
+    /// hint, new, the counter switch, the banner) are then empty.
+    pub edit: Option<EditLayout>,
+}
+
+/// Names of the tabs for test messages.
+const TAB_NAMES: [&str; 5] = ["easy", "normal", "hard", "expert", "custom"];
+
+/// The label of tab `k`: a difficulty, or the custom tab.
+#[must_use]
+pub fn tab_label(lang: Lang, k: usize) -> &'static str {
+    Difficulty::ALL
+        .get(k)
+        .map_or_else(|| text(lang, Text::Custom), |&d| difficulty_label(lang, d))
 }
 
 /// Line height as a multiple of the font size.
@@ -221,14 +242,20 @@ impl Layout {
             height: h,
             ..*input
         };
-        if w >= h * 1.2 {
-            if h < LOW_WIDE_HEIGHT {
-                low_wide(&input)
-            } else {
-                wide(&input)
-            }
+        let kind = if w < h * 1.2 {
+            Arrangement::Tall
+        } else if h < LOW_WIDE_HEIGHT {
+            Arrangement::LowWide
         } else {
-            tall(&input)
+            Arrangement::Wide
+        };
+        match (input.mode, kind) {
+            (Mode::Play, Arrangement::Wide) => wide(&input),
+            (Mode::Play, Arrangement::LowWide) => low_wide(&input),
+            (Mode::Play, Arrangement::Tall) => tall(&input),
+            (Mode::Edit, Arrangement::Wide) => edit::wide(&input),
+            (Mode::Edit, Arrangement::LowWide) => edit::low_wide(&input),
+            (Mode::Edit, Arrangement::Tall) => edit::tall(&input),
         }
     }
 
@@ -303,7 +330,7 @@ impl Layout {
             rects.push(("title", self.title));
             rects.push(("puzzle id", self.puzzle_id));
         }
-        for (tab, name) in self.tabs.iter().zip(["easy", "normal", "hard", "expert"]) {
+        for (tab, name) in self.tabs.iter().zip(TAB_NAMES) {
             rects.push((name, *tab));
         }
         rects.extend([
@@ -311,6 +338,14 @@ impl Layout {
             ("share", self.share),
             ("board", self.board_block()),
             ("tray", self.tray),
+        ]);
+        if let Some(edit) = &self.edit {
+            // What sits inside the left panel is part of it.
+            let inside = |r: &Rect| self.panel.is_some_and(|p| p.contains_rect(*r));
+            rects.extend(edit.static_rects().into_iter().filter(|(_, r)| !inside(r)));
+            return rects;
+        }
+        rects.extend([
             ("reset", self.reset),
             ("hint", self.hint),
             ("counters", self.counters),
@@ -335,20 +370,32 @@ impl Layout {
             ("normal", self.tabs[1]),
             ("hard", self.tabs[2]),
             ("expert", self.tabs[3]),
+            ("custom", self.tabs[4]),
         ];
-        if self.compact {
+        if let Some(edit) = &self.edit {
+            if self.compact {
+                targets.push(("lang", self.lang));
+            } else {
+                let (en, ua) = Layout::halves(self.lang);
+                targets.extend([("en", en), ("ua", ua)]);
+            }
+            targets.push(("share", self.share));
+            targets.extend(edit.targets());
+        } else if self.compact {
             targets.extend([("lang", self.lang), ("counters", self.counters)]);
         } else {
             let (grid, numbers) = Layout::halves(self.counters);
             let (en, ua) = Layout::halves(self.lang);
             targets.extend([("en", en), ("ua", ua), ("grid", grid), ("numbers", numbers)]);
         }
-        targets.extend([
-            ("share", self.share),
-            ("reset", self.reset),
-            ("hint", self.hint),
-            ("new", self.new),
-        ]);
+        if self.edit.is_none() {
+            targets.extend([
+                ("share", self.share),
+                ("reset", self.reset),
+                ("hint", self.hint),
+                ("new", self.new),
+            ]);
+        }
         targets.extend(self.cards.iter().map(|&card| ("card", card)));
         if let Some(pager) = self.pager {
             targets.extend([("previous page", pager.prev), ("next page", pager.next)]);
@@ -421,6 +468,11 @@ fn squeeze(ideal: &[f32], available: f32) -> Vec<f32> {
 /// Width of a button labelled `label` in `font`.
 fn button_width(label: &str, font: f32) -> f32 {
     (estimate_width(label, font) + 1.8 * font).max(MIN_TARGET)
+}
+
+/// Width of the new button, which reads "Edit" in the custom tab.
+fn new_width(lang: Lang, font: f32) -> f32 {
+    button_width(text(lang, Text::New), font).max(button_width(text(lang, Text::Edit), font))
 }
 
 /// Width of the hint button: room for the label and a two-digit count.
@@ -646,14 +698,13 @@ impl Metrics {
     }
 }
 
-/// Four equal tabs in a row centered on `axis`, no wider than `2 * half`.
-fn tab_row(lang: Lang, font: f32, pad: f32, axis: f32, half: f32, y: f32, h: f32) -> [Rect; 4] {
-    let widest = Difficulty::ALL
-        .iter()
-        .map(|&d| estimate_width(difficulty_label(lang, d), font) + 1.6 * pad)
+/// Five equal tabs in a row centered on `axis`, no wider than `2 * half`.
+fn tab_row(lang: Lang, font: f32, pad: f32, axis: f32, half: f32, y: f32, h: f32) -> [Rect; 5] {
+    let widest = (0..5)
+        .map(|k| estimate_width(tab_label(lang, k), font) + 1.6 * pad)
         .fold(MIN_TARGET, f32::max);
-    let tab = squeeze(&[widest * 4.0], 2.0 * half)[0].max(4.0 * MIN_TARGET) / 4.0;
-    let start = axis - 2.0 * tab;
+    let tab = squeeze(&[widest * 5.0], 2.0 * half)[0].max(5.0 * MIN_TARGET) / 5.0;
+    let start = axis - 2.5 * tab;
     core::array::from_fn(|k| Rect::new(start + tab * to_f32(k), y, tab, h))
 }
 
@@ -680,7 +731,7 @@ fn bottom_row(
 ) -> BottomRow {
     let t = |key| text(input.lang, key);
     let reset_w = button_width(t(Text::Reset), font);
-    let new_w = button_width(t(Text::New), font);
+    let new_w = new_width(input.lang, font);
     let ideal = switch_width(t(Text::Grid), t(Text::Numbers), font);
     let reset = Rect::new(x0, y, reset_w, h);
     let hint = Rect::new(reset.right() + gap, y, hint_width(input.lang, font), h);
@@ -888,6 +939,7 @@ fn wide(input: &LayoutInput) -> Layout {
         new: bottom.new,
         banner,
         next,
+        edit: None,
     }
 }
 
@@ -938,7 +990,7 @@ fn tall(input: &LayoutInput) -> Layout {
 
     // Tabs below; their touch zones reach 6 above and below.
     let tabs_y = top + TALL_HEADER + gap;
-    let tab_w = width / 4.0;
+    let tab_w = width / 5.0;
     let tabs =
         core::array::from_fn(|k| Rect::new(x0 + tab_w * to_f32(k), tabs_y, tab_w, TALL_TABS));
 
@@ -950,7 +1002,7 @@ fn tall(input: &LayoutInput) -> Layout {
         button_width(text(input.lang, Text::Reset), font),
         TALL_BUTTON,
     );
-    let new_w = button_width(text(input.lang, Text::New), font);
+    let new_w = new_width(input.lang, font);
     let new = Rect::new(x1 - new_w, bottom_y, new_w, TALL_BUTTON);
     let hint_w = hint_width(input.lang, font).min(new.x - reset.right() - 2.0 * gap);
     // Centered on the axis when there is room, else between the two.
@@ -1015,6 +1067,7 @@ fn tall(input: &LayoutInput) -> Layout {
         new,
         banner,
         next,
+        edit: None,
     }
 }
 
@@ -1025,6 +1078,19 @@ fn tall(input: &LayoutInput) -> Layout {
 /// between a third and a half of the board cell. When no board size allows
 /// that, the cards are split into the fewest pages that do.
 fn tall_tray(input: &LayoutInput, width: f32, region: f32, gap: f32) -> (TrayFit, f32) {
+    tall_tray_with(input, width, region, gap, 0.0, 0.0)
+}
+
+/// [`tall_tray`] with `reserved` more height taken from the region besides
+/// board and tray, and the tray at least `min_tray` high.
+fn tall_tray_with(
+    input: &LayoutInput,
+    width: f32,
+    region: f32,
+    gap: f32,
+    reserved: f32,
+    min_tray: f32,
+) -> (TrayFit, f32) {
     let n = input.pieces.max(1);
     let side = to_f32(input.max_piece_side.max(1));
     let shape = |pages: usize| {
@@ -1045,14 +1111,15 @@ fn tall_tray(input: &LayoutInput, width: f32, region: f32, gap: f32) -> (TrayFit
     let card_for = |fit: TrayFit, cell: f32| {
         let (_, block_h) = board_size(input, cell);
         let pager = if fit.paged { PAGER_H + gap } else { 0.0 };
-        let room = region - block_h - gap - to_f32(fit.rows + 1) * gap - pager;
+        let room = region - reserved - block_h - gap - to_f32(fit.rows + 1) * gap - pager;
         let by_width = (width - to_f32(fit.cols + 1) * gap) / to_f32(fit.cols);
         by_width.min(room / to_f32(fit.rows))
     };
     let fits = |fit: TrayFit, cell: f32| {
-        let (block_w, _) = board_size(input, cell);
+        let (block_w, block_h) = board_size(input, cell);
         let card = card_for(fit, cell);
         block_w <= width
+            && block_h + gap + reserved + min_tray <= region
             && card >= MIN_TARGET
             && card * TRAY_FILL / side >= MIN_TRAY_CELL
             && card * TRAY_FILL / side >= cell * TRAY_MIN_SCALE - 0.01
@@ -1062,7 +1129,9 @@ fn tall_tray(input: &LayoutInput, width: f32, region: f32, gap: f32) -> (TrayFit
         .find(|&fit| fits(fit, MIN_CELL))
         .unwrap_or_else(|| shape(n));
     let cell = largest(|cell| fits(fit, cell));
-    let card = card_for(fit, cell).max(1.0);
+    // No bigger than the longest piece needs at half the board cell.
+    let cap = (side * cell * TRAY_SCALE / TRAY_FILL).max(MIN_TARGET);
+    let card = card_for(fit, cell).min(cap).max(1.0);
     (TrayFit { card, ..fit }, cell)
 }
 
@@ -1093,7 +1162,7 @@ fn right_column(
     let t = |key| text(input.lang, key);
     let button = MIN_TARGET;
     let x1 = rx + side;
-    let new_w = button_width(t(Text::New), font);
+    let new_w = new_width(input.lang, font);
     let ideal_counters = switch_width(t(Text::Grid), t(Text::Numbers), font).min(side);
     // Cards sit close; a card's touch zone is grown to a full target, so a
     // card plus its gap must reach that size.
@@ -1138,13 +1207,74 @@ fn right_column(
     }
 }
 
-/// The left column of the low wide arrangement.
-struct LeftColumn {
+/// The top of the low wide left column: name and id, the tabs (2×2 with
+/// the custom tab under them), language and link.
+struct LeftTop {
     title: Rect,
     puzzle_id: Rect,
-    tabs: [Rect; 4],
+    tabs: [Rect; 5],
     lang: Rect,
     share: Rect,
+}
+
+/// Lays out [`LeftTop`] from `y0`, leaving `below` free above `y1` when it
+/// can: if two lines for the name and id leave too little, the id goes
+/// next to the name.
+#[allow(clippy::too_many_arguments)]
+fn left_top(
+    input: &LayoutInput,
+    x0: f32,
+    side: f32,
+    y0: f32,
+    y1: f32,
+    gap: f32,
+    font: f32,
+    below: f32,
+) -> LeftTop {
+    let lx = x0;
+    let tabs_h = 3.0 * MIN_TARGET - (MIN_TARGET - LOW_TAB);
+    let rest = gap + tabs_h + gap + MIN_TARGET;
+    let (title, puzzle_id) = if y0 + 38.0 + rest + below <= y1 {
+        let title = Rect::new(lx, y0, side, 22.0);
+        (title, Rect::new(lx, title.bottom(), side, 16.0))
+    } else {
+        let title_w = side * 0.55;
+        (
+            Rect::new(lx, y0, title_w, 22.0),
+            Rect::new(lx + title_w, y0 + 3.0, side - title_w, 16.0),
+        )
+    };
+    let tab_w = (side - gap) / 2.0;
+    let tabs_y = title.bottom().max(puzzle_id.bottom()) + gap;
+    // Tabs a full target apart, so their zones just touch; the custom tab
+    // takes the whole width under the 2×2 grid.
+    let tabs = core::array::from_fn(|k| {
+        let (w, x) = if k == 4 {
+            (side, lx)
+        } else {
+            (tab_w, lx + to_f32(k % 2) * (tab_w + gap))
+        };
+        Rect::new(x, tabs_y + to_f32(k / 2) * MIN_TARGET, w, LOW_TAB)
+    });
+    let row_y = tabs_y + tabs_h + gap;
+    let lang_w = switch_width("EN", "UA", font);
+    let lang = Rect::new(lx, row_y, lang_w, MIN_TARGET);
+    let share_w = button_width(share_label(input.lang, true), font).min(side - lang_w - gap);
+    let share = Rect::new(lx + side - share_w, row_y, share_w, MIN_TARGET);
+    LeftTop {
+        title,
+        puzzle_id,
+        tabs,
+        lang,
+        share,
+    }
+}
+
+/// The left column of the low wide arrangement while playing: [`LeftTop`],
+/// then hint above reset at the bottom, side by side when the column is
+/// too short to stack them.
+struct LeftColumn {
+    top: LeftTop,
     hint: Rect,
     reset: Rect,
 }
@@ -1158,58 +1288,28 @@ fn left_column(
     gap: f32,
     font: f32,
 ) -> LeftColumn {
-    // Left column: name, difficulty 2×2, language and link; hint and reset
-    // at the bottom, side by side when the column is too short to stack.
-    let lx = x0;
     let button = MIN_TARGET;
-    let t = |key| text(input.lang, key);
-    let title = Rect::new(lx, y0, side, 22.0);
-    let puzzle_id = Rect::new(lx, title.bottom(), side, 16.0);
-    let tab_w = (side - gap) / 2.0;
-    let tabs_y = puzzle_id.bottom() + gap;
-    // Tabs a full target apart, so their zones just touch.
-    let tabs = core::array::from_fn(|k| {
-        Rect::new(
-            lx + to_f32(k % 2) * (tab_w + gap),
-            tabs_y + to_f32(k / 2) * MIN_TARGET,
-            tab_w,
-            LOW_TAB,
-        )
-    });
-    let row_y = tabs_y + 2.0 * MIN_TARGET - (MIN_TARGET - LOW_TAB) + gap;
-    let lang_w = switch_width("EN", "UA", font);
-    let lang = Rect::new(lx, row_y, lang_w, button);
-    let share_w = button_width(share_label(input.lang, true), font).min(side - lang_w - gap);
-    let share = Rect::new(lx + side - share_w, row_y, share_w, button);
-    let reset_w = button_width(t(Text::Reset), font);
-    let stacked = lang.bottom() + gap + 2.0 * button + gap <= y1;
+    let top = left_top(input, x0, side, y0, y1, gap, font, gap + button);
+    let reset_w = button_width(text(input.lang, Text::Reset), font);
+    let stacked = top.lang.bottom() + gap + 2.0 * button + gap <= y1;
     let (hint, reset) = if stacked {
         (
             Rect::new(
-                lx,
+                x0,
                 y1 - 2.0 * button - gap,
                 hint_width(input.lang, font).min(side),
                 button,
             ),
-            Rect::new(lx, y1 - button, reset_w, button),
+            Rect::new(x0, y1 - button, reset_w, button),
         )
     } else {
         let half = (side - gap) / 2.0;
         (
-            Rect::new(lx + half + gap, y1 - button, half, button),
-            Rect::new(lx, y1 - button, half, button),
+            Rect::new(x0 + half + gap, y1 - button, half, button),
+            Rect::new(x0, y1 - button, half, button),
         )
     };
-
-    LeftColumn {
-        title,
-        puzzle_id,
-        tabs,
-        lang,
-        share,
-        hint,
-        reset,
-    }
+    LeftColumn { top, hint, reset }
 }
 
 fn low_wide(input: &LayoutInput) -> Layout {
@@ -1225,11 +1325,11 @@ fn low_wide(input: &LayoutInput) -> Layout {
 
     let left = left_column(input, x0, side, y0, y1, gap, font);
     let (title, puzzle_id, tabs, lang, share, hint, reset) = (
-        left.title,
-        left.puzzle_id,
-        left.tabs,
-        left.lang,
-        left.share,
+        left.top.title,
+        left.top.puzzle_id,
+        left.top.tabs,
+        left.top.lang,
+        left.top.share,
         left.hint,
         left.reset,
     );
@@ -1305,5 +1405,6 @@ fn low_wide(input: &LayoutInput) -> Layout {
         new,
         banner,
         next,
+        edit: None,
     }
 }

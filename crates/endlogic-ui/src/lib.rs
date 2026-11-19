@@ -12,6 +12,7 @@ mod app;
 mod board;
 mod counters;
 mod draw;
+mod editor;
 mod hint;
 mod layout;
 mod painter;
@@ -25,13 +26,17 @@ pub use app::{
 };
 pub use board::{Board, Line, LineState, PieceState, Turned};
 pub use counters::{CounterView, MAX_TICKS, MAX_TWO_LINES, MIN_SQUARE, counter_view};
+pub use editor::{
+    ClueRef, DRAFT_SIDE, Draft, DraftError, EditControl, Editor, SOLUTION_LIMIT, SolveState,
+};
 pub use layout::{
-    Arrangement, BAND, COUNTER_GAP, HelpRow, LOW_WIDE_HEIGHT, Layout, LayoutInput, MAX_TRAY_SHARE,
-    MIN_TARGET, MIN_TRAY_CELL, Pager, TRAY_MIN_SCALE, TRAY_SCALE, TextBlock,
+    Arrangement, BAND, COUNTER_GAP, EditLayout, HelpRow, LOW_WIDE_HEIGHT, Layout, LayoutInput,
+    MAX_TRAY_SHARE, MIN_TARGET, MIN_TRAY_CELL, Mode, Pager, PieceEditor, ResultPanel, Stepper,
+    TRAY_MIN_SCALE, TRAY_SCALE, TextBlock, tab_label,
 };
 pub use painter::{Align, Font, FontFamily, Painter, Point, Rect, Rgba};
 pub use shell::{
-    Budgets, Config, Cursor, Effect, Event, Insets, Key, Pointer, PointerKind, SETTING_COUNTERS,
-    SETTING_DIFFICULTY, SETTING_KEYS, SETTING_LANG,
+    Budgets, CodeKind, Config, Cursor, Effect, Event, Insets, Key, Pointer, PointerKind,
+    SETTING_COUNTERS, SETTING_DIFFICULTY, SETTING_EDITOR, SETTING_KEYS, SETTING_LANG,
 };
-pub use text::{Lang, Text, difficulty_label, text};
+pub use text::{Lang, Text, difficulty_label, problem_text, solution_of, text};

@@ -5,12 +5,14 @@ use core::f32::consts::{FRAC_PI_2, TAU};
 use endlogic_core::generator::Difficulty;
 use endlogic_core::{Cell, Shape};
 
+mod edit;
+
 use crate::app::{App, CounterMode, Game, Gesture};
 use crate::board::{Line, LineState};
 use crate::counters::{CounterView, counter_view};
-use crate::layout::{Arrangement, Layout, TextBlock, to_f32};
+use crate::layout::{Arrangement, Layout, TextBlock, tab_label, to_f32};
 use crate::painter::{Align, Font, FontFamily, Painter, Point, Rect, Rgba};
-use crate::text::{Lang, Text, difficulty_label, text};
+use crate::text::{Lang, Text, text};
 use crate::theme::{self, ease_out};
 
 /// Text shown in place of the puzzle id while there is no puzzle.
@@ -25,6 +27,11 @@ pub(crate) fn draw(app: &App, p: &mut dyn Painter) {
     );
     draw_header(app, p);
     draw_top_controls(app, p);
+    if app.is_editing() {
+        edit::draw(app, p);
+        draw_overlays(app, p);
+        return;
+    }
     if let Some(game) = &app.game {
         draw_board(app, game, p);
         draw_counters(app, game, p);
@@ -39,7 +46,7 @@ pub(crate) fn draw(app: &App, p: &mut dyn Painter) {
 
 // ---- small helpers ----
 
-fn sans(size: f32, bold: bool) -> Font {
+pub(crate) fn sans(size: f32, bold: bool) -> Font {
     Font {
         family: FontFamily::Sans,
         size,
@@ -47,7 +54,7 @@ fn sans(size: f32, bold: bool) -> Font {
     }
 }
 
-fn mono(size: f32, bold: bool) -> Font {
+pub(crate) fn mono(size: f32, bold: bool) -> Font {
     Font {
         family: FontFamily::Mono,
         size,
@@ -56,7 +63,7 @@ fn mono(size: f32, bold: bool) -> Font {
 }
 
 /// `font`, shrunk if needed so that `text` is at most `max_width` wide.
-fn fit(p: &mut dyn Painter, text: &str, font: Font, max_width: f32) -> Font {
+pub(crate) fn fit(p: &mut dyn Painter, text: &str, font: Font, max_width: f32) -> Font {
     let width = p.text_width(text, font);
     if width <= max_width || width <= 0.0 {
         font
@@ -69,7 +76,7 @@ fn fit(p: &mut dyn Painter, text: &str, font: Font, max_width: f32) -> Font {
 }
 
 /// Draws `text` centered in `rect`, shrinking it to fit.
-fn centered_text(p: &mut dyn Painter, text: &str, rect: Rect, font: Font, color: Rgba) {
+pub(crate) fn centered_text(p: &mut dyn Painter, text: &str, rect: Rect, font: Font, color: Rgba) {
     let font = fit(p, text, font, rect.w - 8.0);
     p.text(text, rect.center(), font, Align::Center, color);
 }
@@ -87,13 +94,13 @@ fn paragraph(p: &mut dyn Painter, block: &TextBlock, color: Rgba) {
 }
 
 #[derive(Clone, Copy, PartialEq, Eq)]
-enum Style {
+pub(crate) enum Style {
     Normal,
     Primary,
     Disabled,
 }
 
-fn button(p: &mut dyn Painter, rect: Rect, label: &str, style: Style, font: f32) {
+pub(crate) fn button(p: &mut dyn Painter, rect: Rect, label: &str, style: Style, font: f32) {
     let radius = rect.h / 2.0;
     let (fill, stroke, color) = match style {
         Style::Normal => (theme::PANEL, theme::CELL_MARK, theme::TEXT),
@@ -240,15 +247,16 @@ fn draw_help(l: &Layout, p: &mut dyn Painter) {
 
 fn draw_top_controls(app: &App, p: &mut dyn Painter) {
     let l = &app.layout;
-    let labels: Vec<&str> = Difficulty::ALL
-        .iter()
-        .map(|&d| difficulty_label(app.lang, d))
-        .collect();
-    let active = Difficulty::ALL.iter().position(|&d| d == app.difficulty);
+    let labels: Vec<&str> = (0..5).map(|k| tab_label(app.lang, k)).collect();
+    let active = if app.is_custom() {
+        Some(4)
+    } else {
+        Difficulty::ALL.iter().position(|&d| d == app.difficulty)
+    };
     if l.tabs_in_a_row() {
         segmented(p, l.tab_bar(), &labels, active, l.font * 0.9);
     } else {
-        // A 2×2 grid: each tab is its own pill.
+        // A 2×2 grid and the custom tab: each tab is its own pill.
         for (k, (&rect, label)) in l.tabs.iter().zip(&labels).enumerate() {
             segmented(
                 p,
@@ -261,7 +269,9 @@ fn draw_top_controls(app: &App, p: &mut dyn Painter) {
     }
     if l.compact {
         button(p, l.lang, app.lang.label(), Style::Normal, l.font * 0.9);
-        counter_toggle(p, l.counters, app.counters, l.font * 0.9);
+        if !app.is_editing() {
+            counter_toggle(p, l.counters, app.counters, l.font * 0.9);
+        }
     } else {
         let lang = [Lang::En, Lang::Ua];
         segmented(
@@ -272,7 +282,7 @@ fn draw_top_controls(app: &App, p: &mut dyn Painter) {
             l.font * 0.9,
         );
     }
-    let style = if app.game.is_some() {
+    let style = if app.game.is_some() || app.is_editing() {
         Style::Normal
     } else {
         Style::Disabled
@@ -319,7 +329,12 @@ fn draw_bottom_controls(app: &App, p: &mut dyn Painter) {
             l.font * 0.9,
         );
     }
-    button(p, l.new, text(app.lang, Text::New), Style::Primary, l.font);
+    let new = if app.is_custom() {
+        Text::Edit
+    } else {
+        Text::New
+    };
+    button(p, l.new, text(app.lang, new), Style::Primary, l.font);
 }
 
 /// The one-button counter switch: three ticks for the grid display, `123`
@@ -349,7 +364,7 @@ fn counter_toggle(p: &mut dyn Painter, rect: Rect, mode: CounterMode, font: f32)
 
 // ---- board ----
 
-fn brackets(p: &mut dyn Painter, frame: Rect, len: f32, color: Rgba) {
+pub(crate) fn brackets(p: &mut dyn Painter, frame: Rect, len: f32, color: Rgba) {
     let w = 2.0;
     let corners = [
         (frame.x, frame.y, 1.0, 1.0),
@@ -369,7 +384,7 @@ fn draw_empty_board(l: &Layout, p: &mut dyn Painter) {
     p.fill_rect(l.tray, 12.0, theme::TRAY);
 }
 
-fn free_cell(p: &mut dyn Painter, r: Rect) {
+pub(crate) fn free_cell(p: &mut dyn Painter, r: Rect) {
     p.fill_rect(r, 0.0, theme::CELL);
     let tick = r.w * 0.14;
     let off = r.w * 0.1;
@@ -392,7 +407,7 @@ fn free_cell(p: &mut dyn Painter, r: Rect) {
     p.fill_circle(r.center(), (r.w * 0.04).max(1.0), mark);
 }
 
-fn lock_cell(p: &mut dyn Painter, r: Rect) {
+pub(crate) fn lock_cell(p: &mut dyn Painter, r: Rect) {
     p.fill_rect(r, 0.0, theme::LOCK);
     let w = (r.w * 0.05).max(1.5);
     p.stroke_rect(r.inset(w), 1.0, w, theme::BRIGHT);
@@ -406,7 +421,7 @@ fn lock_cell(p: &mut dyn Painter, r: Rect) {
     p.fill_rect(body, 1.5, icon);
 }
 
-fn dead_cell(p: &mut dyn Painter, r: Rect) {
+pub(crate) fn dead_cell(p: &mut dyn Painter, r: Rect) {
     p.fill_rect(r, 0.0, theme::DEAD);
     p.push_clip(r);
     let step = r.w / 5.0;
@@ -485,8 +500,11 @@ fn draw_board(app: &App, game: &Game, p: &mut dyn Painter) {
 }
 
 /// The hint silhouette: a faint hatched fill on every cell the solution
-/// covers, with no borders between pieces.
+/// covers, with no borders between pieces. It goes with the win.
 fn draw_silhouette(app: &App, game: &Game, p: &mut dyn Painter) {
+    if game.won {
+        return;
+    }
     let l = &app.layout;
     let width = game.board.width();
     let fill = theme::SILHOUETTE.alpha(0.16);
@@ -709,7 +727,14 @@ fn draw_pieces(app: &App, game: &Game, p: &mut dyn Painter) {
 
 /// Draws a piece centered on `center` with cells of side `cell`, turned by
 /// `angle` radians (clockwise) about its center.
-fn piece(p: &mut dyn Painter, shape: &Shape, center: Point, cell: f32, angle: f32, fill: Rgba) {
+pub(crate) fn piece(
+    p: &mut dyn Painter,
+    shape: &Shape,
+    center: Point,
+    cell: f32,
+    angle: f32,
+    fill: Rgba,
+) {
     let (half_w, half_h) = (to_f32(shape.width()) / 2.0, to_f32(shape.height()) / 2.0);
     let (sin, cos) = angle.sin_cos();
     let map = |x: f32, y: f32| {
@@ -841,7 +866,14 @@ fn draw_overlays(app: &App, p: &mut dyn Painter) {
         button(
             p,
             l.next,
-            text(app.lang, Text::Next),
+            text(
+                app.lang,
+                if app.is_custom() {
+                    Text::Edit
+                } else {
+                    Text::Next
+                },
+            ),
             Style::Primary,
             l.font,
         );

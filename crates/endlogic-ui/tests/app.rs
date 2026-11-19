@@ -8,8 +8,8 @@ use endlogic_core::code::encode;
 use endlogic_core::generator::Difficulty;
 use endlogic_core::solver::{DEFAULT_NODE_BUDGET, search};
 use endlogic_ui::{
-    App, Arrangement, Config, CounterMode, Cursor, Effect, Event, Insets, Key, Lang, Layout,
-    LineState, Point, PointerKind, TOUCH_DRAG_THRESHOLD, Text,
+    App, Arrangement, CodeKind, Config, CounterMode, Cursor, Effect, Event, Insets, Key, Lang,
+    Layout, LineState, Point, PointerKind, TOUCH_DRAG_THRESHOLD, Text,
 };
 
 // ---- dragging ----
@@ -345,7 +345,10 @@ fn after_a_win_pieces_stay_and_next_starts_a_new_puzzle() {
     let new = app.code().unwrap().to_owned();
     assert_ne!(new, old);
     assert_eq!(app.difficulty(), Difficulty::Easy, "5×5 opens as easy");
-    assert!(app.take_effects().contains(&Effect::SetCode(new)));
+    assert!(
+        app.take_effects()
+            .contains(&Effect::SetCode(CodeKind::Play, new))
+    );
 }
 
 #[test]
@@ -371,14 +374,17 @@ fn a_code_opens_its_puzzle() {
     let puzzle = sample("wln006-2.txt");
     let code = encode(&puzzle).unwrap();
     let mut config = config(390.0, 844.0);
-    config.code = Some(format!(" {code} "));
+    config.code = Some((CodeKind::Play, format!(" {code} ")));
     let mut app = App::new(config);
     assert!(!app.is_generating());
     assert_eq!(app.board().unwrap().puzzle(), &puzzle);
     assert_eq!(app.code(), Some(code.as_str()));
     assert_eq!(app.puzzle_id().unwrap(), format!("Δ-H-{}", &code[..6]));
     assert_eq!(app.difficulty(), Difficulty::Hard);
-    assert!(app.take_effects().contains(&Effect::SetCode(code)));
+    assert!(
+        app.take_effects()
+            .contains(&Effect::SetCode(CodeKind::Play, code))
+    );
     assert!(app.toast().is_none());
     let drawing = settle(&mut app);
     assert!(texts(&drawing).iter().any(|t| t.starts_with("Δ-H-AWYAG")));
@@ -387,7 +393,7 @@ fn a_code_opens_its_puzzle() {
 #[test]
 fn a_bad_code_shows_a_message_and_generates() {
     let mut config = config(1366.0, 768.0);
-    config.code = Some("not-a-code!".to_owned());
+    config.code = Some((CodeKind::Play, "not-a-code!".to_owned()));
     let mut app = App::new(config);
     let toast = app.toast().unwrap();
     assert_eq!((toast.text, toast.error), (Text::InvalidLink, true));
@@ -397,7 +403,7 @@ fn a_bad_code_shows_a_message_and_generates() {
     assert!(app.toast().is_none(), "toast faded");
     drop(drawing);
     let mut app = App::new(Config {
-        code: Some("AQ".to_owned()),
+        code: Some((CodeKind::Play, "AQ".to_owned())),
         ..config_with_lang("uk-UA")
     });
     let mut recorder = Recorder::default();
@@ -417,13 +423,16 @@ fn a_changed_address_opens_the_new_code() {
     let mut app = generated(config(1366.0, 768.0));
     let first = app.code().unwrap().to_owned();
     let code = encode(&sample("wlh9000-1.txt")).unwrap();
-    app.handle(Event::CodeChanged(code.clone()));
+    app.handle(Event::CodeChanged(CodeKind::Play, code.clone()));
     assert_eq!(app.code(), Some(code.as_str()));
     app.take_effects();
-    app.handle(Event::CodeChanged("garbage".to_owned()));
+    app.handle(Event::CodeChanged(CodeKind::Play, "garbage".to_owned()));
     assert_eq!(app.code(), Some(code.as_str()));
     assert_eq!(app.toast().unwrap().text, Text::InvalidLink);
-    assert_eq!(app.take_effects(), vec![Effect::SetCode(code)]);
+    assert_eq!(
+        app.take_effects(),
+        vec![Effect::SetCode(CodeKind::Play, code)]
+    );
     assert_ne!(first, app.code().unwrap());
 }
 
@@ -433,7 +442,10 @@ fn generated_puzzles_publish_their_code() {
     assert_eq!(app.take_effects(), Vec::new());
     let drawing = settle(&mut app);
     let code = app.code().unwrap().to_owned();
-    assert!(app.take_effects().contains(&Effect::SetCode(code.clone())));
+    assert!(
+        app.take_effects()
+            .contains(&Effect::SetCode(CodeKind::Play, code.clone()))
+    );
     assert_eq!(app.difficulty(), Difficulty::Normal);
     assert_eq!(app.puzzle_id().unwrap(), format!("Δ-N-{}", &code[..6]));
     assert!(!texts(&drawing).iter().any(|t| t == "Generating…"));
@@ -460,9 +472,9 @@ fn share_copies_a_link() {
     let copied: Vec<Effect> = app
         .take_effects()
         .into_iter()
-        .filter(|e| matches!(e, Effect::CopyText(_)))
+        .filter(|e| matches!(e, Effect::CopyLink(..)))
         .collect();
-    assert_eq!(copied, vec![Effect::CopyText(format!("{SHARE}{code}"))]);
+    assert_eq!(copied, vec![Effect::CopyLink(CodeKind::Play, code.clone())]);
     // No toast until the shell reports the result.
     assert_eq!(app.toast(), None);
     app.handle(Event::CopyFinished(true));
@@ -483,7 +495,7 @@ fn share_copies_a_link() {
             .any(|t| t == "Couldn't copy the link")
     );
     let mut ua = config_with_lang("uk-UA");
-    ua.code = Some(code);
+    ua.code = Some((CodeKind::Play, code));
     let mut app = App::new(ua);
     app.handle(Event::CopyFinished(false));
     let mut recorder = Recorder::default();
@@ -743,7 +755,7 @@ fn a_finger_may_miss_a_piece_by_a_little() {
 fn the_tall_header_switches_language_and_counters_with_one_button_each() {
     let mut config = config(390.0, 844.0);
     config.touch = true;
-    config.code = Some(encode(&sample("wlh9000-1.txt")).unwrap());
+    config.code = Some((CodeKind::Play, encode(&sample("wlh9000-1.txt")).unwrap()));
     let mut app = App::new(config);
     settle(&mut app);
     let layout = app.layout().clone();
