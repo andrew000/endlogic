@@ -12,6 +12,9 @@
 //! left, or when some row or column can no longer reach its clue, either
 //! because too few of its cells are still coverable or because the remaining
 //! pieces are too small to supply the missing cells.
+//!
+//! A search may start with some pieces already fixed in place
+//! ([`Search::with_fixed`]); it then only places the rest.
 
 use alloc::vec;
 use alloc::vec::Vec;
@@ -109,6 +112,25 @@ impl Search {
     /// spent until [`step`](Search::step) is called.
     #[must_use]
     pub fn new(puzzle: &Puzzle, max_solutions: usize) -> Search {
+        Search::with_fixed(puzzle, max_solutions, &[])
+    }
+
+    /// Prepares a search in which some pieces are already placed:
+    /// `fixed[i]`, when present and `Some`, is where piece `i` stands. Only
+    /// the other pieces are searched for, and every solution keeps the fixed
+    /// placements as given.
+    ///
+    /// Identical pieces are still counted once: a fixed piece may take the
+    /// place of any of its copies, and solutions that differ only by
+    /// swapping the free copies are one solution. If the fixed placements
+    /// are invalid on their own (outside the grid, on a locked or dead cell,
+    /// overlapping, or over a clue), the search finds no solution.
+    #[must_use]
+    pub fn with_fixed(
+        puzzle: &Puzzle,
+        max_solutions: usize,
+        fixed: &[Option<Placement>],
+    ) -> Search {
         let mut search = Search {
             board: None,
             stack: Vec::new(),
@@ -121,7 +143,8 @@ impl Search {
             search.finished = Some(StopReason::SolutionLimit);
             return search;
         }
-        let Some(board) = Board::new(puzzle) else {
+        let Some(board) = Board::new(puzzle).and_then(|board| board.with_fixed(puzzle, fixed))
+        else {
             search.finished = Some(StopReason::Exhausted);
             return search;
         };
@@ -302,6 +325,11 @@ struct PieceType {
     color: usize,
     /// Indices of the pieces of this type, ascending.
     members: Vec<usize>,
+    /// Positions in `members` of the copies the search places, ascending;
+    /// the others are fixed.
+    free: Vec<usize>,
+    /// The distinct orientations, as indexed by candidates.
+    orientations: Vec<Shape>,
     /// For each member, for each orientation, the rotation of that member's
     /// own shape that produces it.
     member_rotations: Vec<Vec<Rotation>>,
@@ -329,6 +357,8 @@ struct Board {
     min_index: Vec<usize>,
     /// Candidate indices chosen so far for each type, ascending.
     chosen: Vec<Vec<usize>>,
+    /// Pieces fixed before the search, with their placements.
+    fixed: Vec<(usize, Placement)>,
 }
 
 impl Board {
@@ -403,7 +433,42 @@ impl Board {
             occupied: [0; MAX_GRID_SIZE],
             min_index: vec![0; type_count],
             chosen: vec![Vec::new(); type_count],
+            fixed: Vec::new(),
         })
+    }
+
+    /// Puts the fixed pieces on the board, or returns `None` if one of them
+    /// cannot stand where it is given.
+    fn with_fixed(mut self, puzzle: &Puzzle, fixed: &[Option<Placement>]) -> Option<Board> {
+        let pieces = puzzle.pieces();
+        for (index, placement) in fixed.iter().enumerate().take(pieces.len()) {
+            let Some(placement) = *placement else {
+                continue;
+            };
+            let shape = pieces[index].shape.rotated(placement.rotation);
+            let (t, m) = self.types.iter().enumerate().find_map(|(t, piece_type)| {
+                let m = piece_type.members.iter().position(|&p| p == index)?;
+                Some((t, m))
+            })?;
+            let piece_type = &self.types[t];
+            let orientation = piece_type.orientations.iter().position(|s| *s == shape)?;
+            let i = piece_type.candidates.iter().position(|c| {
+                c.orientation == orientation && c.row == placement.row && c.col == placement.col
+            })?;
+            let candidate = &piece_type.candidates[i];
+            let free = candidate
+                .rows
+                .iter()
+                .all(|&(r, mask, _)| self.occupied[r] & mask == 0);
+            if !free || !self.fits(piece_type.color, candidate) {
+                return None;
+            }
+            self.apply(t, i, true);
+            self.remaining[t] -= 1;
+            self.types[t].free.retain(|&f| f != m);
+            self.fixed.push((index, placement));
+        }
+        Some(self)
     }
 
     fn fits(&self, color: usize, candidate: &Candidate) -> bool {
@@ -507,7 +572,7 @@ impl Board {
     fn solution(&self) -> Solution {
         let mut placements = vec![Placement::default(); self.piece_count];
         for (piece_type, chosen) in self.types.iter().zip(&self.chosen) {
-            for (m, &i) in chosen.iter().enumerate() {
+            for (&m, &i) in piece_type.free.iter().zip(chosen) {
                 let candidate = &piece_type.candidates[i];
                 placements[piece_type.members[m]] = Placement {
                     rotation: piece_type.member_rotations[m][candidate.orientation],
@@ -515,6 +580,9 @@ impl Board {
                     col: candidate.col,
                 };
             }
+        }
+        for &(index, placement) in &self.fixed {
+            placements[index] = placement;
         }
         Solution { placements }
     }
@@ -529,7 +597,6 @@ fn build_types(
     let grid = puzzle.grid();
     let mut types: Vec<PieceType> = Vec::new();
     let mut keys: Vec<(Color, Shape)> = Vec::new();
-    let mut orientation_sets: Vec<Vec<Shape>> = Vec::new();
 
     for (index, piece) in puzzle.pieces().iter().enumerate() {
         let own = piece.shape.orientations();
@@ -548,15 +615,17 @@ fn build_types(
             types.push(PieceType {
                 color: color_index(piece.color),
                 members: Vec::new(),
+                free: Vec::new(),
+                orientations,
                 member_rotations: Vec::new(),
                 candidates,
                 max_span: piece.shape.max_line_span(),
             });
             keys.push(key);
-            orientation_sets.push(orientations);
             types.len() - 1
         };
-        let rotations = orientation_sets[t]
+        let rotations = types[t]
+            .orientations
             .iter()
             .map(|target| {
                 own.iter()
@@ -564,6 +633,8 @@ fn build_types(
                     .map_or(Rotation::R0, |(r, _)| *r)
             })
             .collect();
+        let next = types[t].members.len();
+        types[t].free.push(next);
         types[t].members.push(index);
         types[t].member_rotations.push(rotations);
     }

@@ -6,7 +6,8 @@
 //! 1. scatters dead cells and lays locks, mostly as straight runs along a row
 //!    or column;
 //! 2. grows each piece directly on the board from a random free cell by
-//!    adding random free neighbours until it has the chosen size;
+//!    adding random free neighbours until it has the chosen size, never
+//!    letting its bounding box grow past [`GeneratorParams::max_piece_side`];
 //! 3. derives the row and column clues from the pieces and locks;
 //! 4. hides the solution by rotating every piece randomly and shuffling the
 //!    piece order;
@@ -66,6 +67,8 @@ pub struct GeneratorParams {
     pub pieces: SizeRange,
     /// Cells per piece; at least 1.
     pub piece_size: SizeRange,
+    /// Longest side of a piece's bounding box; at least 1.
+    pub max_piece_side: usize,
     /// Number of locked cells.
     pub locks: SizeRange,
     /// Number of dead cells.
@@ -89,6 +92,8 @@ pub enum ParamsError {
     TooManyPieces,
     /// Pieces must have at least one cell.
     EmptyPieces,
+    /// `max_piece_side` is zero.
+    NoPieceSide,
     /// `max_attempts` is zero.
     NoAttempts,
 }
@@ -102,6 +107,7 @@ impl fmt::Display for ParamsError {
             ParamsError::EmptyRange(field) => write!(f, "`{field}` has min > max"),
             ParamsError::TooManyPieces => write!(f, "at most {MAX_PIECES} pieces"),
             ParamsError::EmptyPieces => f.write_str("pieces need at least one cell"),
+            ParamsError::NoPieceSide => f.write_str("`max_piece_side` must be at least 1"),
             ParamsError::NoAttempts => f.write_str("`max_attempts` must be at least 1"),
         }
     }
@@ -135,6 +141,9 @@ impl GeneratorParams {
         }
         if self.piece_size.min == 0 {
             return Err(ParamsError::EmptyPieces);
+        }
+        if self.max_piece_side == 0 {
+            return Err(ParamsError::NoPieceSide);
         }
         if self.max_attempts == 0 {
             return Err(ParamsError::NoAttempts);
@@ -182,7 +191,8 @@ impl Difficulty {
         Difficulty::ALL.into_iter().find(|d| d.name() == name)
     }
 
-    /// The parameters for this level (unique solutions required).
+    /// The parameters for this level (unique solutions required, pieces at
+    /// most 5 cells long or wide).
     #[must_use]
     pub const fn params(self) -> GeneratorParams {
         let (size, pieces, piece_size, locks, dead, node_budget, max_attempts) = match self {
@@ -196,6 +206,7 @@ impl Difficulty {
             height: size,
             pieces: SizeRange::new(pieces.0, pieces.1),
             piece_size: SizeRange::new(piece_size.0, piece_size.1),
+            max_piece_side: 5,
             locks: SizeRange::new(locks.0, locks.1),
             dead: SizeRange::new(dead.0, dead.1),
             node_budget,
@@ -467,8 +478,8 @@ fn build_attempt(params: &GeneratorParams, rng: &mut Rng) -> Option<(Puzzle, Sol
     let mut grown_pieces: Vec<Vec<usize>> = Vec::with_capacity(piece_count);
     for piece in 0..piece_count {
         let size = rng.usize_inclusive(params.piece_size.min, params.piece_size.max);
-        let grown =
-            (0..START_TRIES).find_map(|_| grow_piece(&cells, &owner, width, height, size, rng))?;
+        let grown = (0..START_TRIES)
+            .find_map(|_| grow_piece(&cells, &owner, width, size, params.max_piece_side, rng))?;
         for &i in &grown {
             owner[i] = Some(piece);
         }
@@ -544,20 +555,31 @@ fn place_locks(
     true
 }
 
-/// Grows a connected piece of `size` cells from a random free cell. Returns
-/// its cell indices, or `None` if it runs out of room.
+/// Grows a connected piece of `size` cells from a random free cell, its
+/// bounding box at most `max_side` long and wide. Returns its cell indices,
+/// or `None` if it runs out of room.
 fn grow_piece(
     cells: &[Cell],
     owner: &[Option<usize>],
     width: usize,
-    height: usize,
     size: usize,
+    max_side: usize,
     rng: &mut Rng,
 ) -> Option<Vec<usize>> {
+    let height = cells.len() / width;
     let available = |i: usize| cells[i] == Cell::Free && owner[i].is_none();
     let free: Vec<usize> = (0..cells.len()).filter(|&i| available(i)).collect();
     let mut piece = vec![*rng.choose(&free)?];
     while piece.len() < size {
+        let rows = piece.iter().map(|&i| i / width);
+        let cols = piece.iter().map(|&i| i % width);
+        let (top, bottom) = (rows.clone().min()?, rows.max()?);
+        let (left, right) = (cols.clone().min()?, cols.max()?);
+        // A cell keeps the box within `max_side` in both directions.
+        let within = |i: usize| {
+            let (r, c) = (i / width, i % width);
+            r.max(bottom) - r.min(top) < max_side && c.max(right) - c.min(left) < max_side
+        };
         let mut frontier: Vec<usize> = Vec::new();
         for &i in &piece {
             let (r, c) = (i / width, i % width);
@@ -574,7 +596,7 @@ fn grow_piece(
                 frontier.push(i + 1);
             }
         }
-        frontier.retain(|&i| available(i) && !piece.contains(&i));
+        frontier.retain(|&i| available(i) && !piece.contains(&i) && within(i));
         frontier.sort_unstable();
         frontier.dedup();
         piece.push(*rng.choose(&frontier)?);

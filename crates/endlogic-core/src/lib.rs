@@ -6,7 +6,8 @@
 //! A puzzle ([`Puzzle`]) is a [`Grid`] of free, locked and dead cells, a list
 //! of [`Piece`]s and per-color [`LineClues`]. A [`Solution`] gives each piece
 //! a [`Rotation`] and a position; [`verify`] checks it independently of the
-//! solver.
+//! solver. [`diagnose`] lists structural reasons why a puzzle has no
+//! solution without searching.
 #![no_std]
 #![forbid(unsafe_code)]
 
@@ -27,6 +28,7 @@ pub use shape::{Rotation, Shape};
 pub use solution::{Placement, Solution, VerifyError, verify};
 
 pub mod code;
+pub mod diagnose;
 pub mod format;
 pub mod generator;
 pub mod rng;

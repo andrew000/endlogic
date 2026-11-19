@@ -8,7 +8,9 @@ use endlogic_core::solver::{
     DEFAULT_NODE_BUDGET, Progress, Search, SearchResult, StopReason, Uniqueness, check_uniqueness,
     search,
 };
-use endlogic_core::{Cell, Color, Grid, LineClues, Piece, Puzzle, Shape, Solution, verify};
+use endlogic_core::{
+    Cell, Color, Grid, LineClues, Piece, Placement, Puzzle, Rotation, Shape, Solution, verify,
+};
 
 const REFERENCE: &str = include_str!("../../../puzzles/wln006-2.txt");
 
@@ -461,4 +463,220 @@ fn stepwise_search_reports_progress() {
     let first = stepper.solutions()[0].clone();
     assert_eq!(verify(&p, &first), Ok(()));
     assert_eq!(stepper.nodes(), search(&p, 1, DEFAULT_NODE_BUDGET).nodes);
+}
+
+// ---- fixed pieces ----
+
+/// A solution as the sorted cell sets of its pieces: equal for solutions
+/// that differ only by swapping identical pieces.
+fn cell_sets(p: &Puzzle, s: &Solution) -> Vec<Vec<(usize, usize)>> {
+    let mut sets: Vec<Vec<(usize, usize)>> = p
+        .pieces()
+        .iter()
+        .zip(&s.placements)
+        .map(|(piece, at)| {
+            let mut cells: Vec<(usize, usize)> = piece
+                .shape
+                .rotated(at.rotation)
+                .cells()
+                .iter()
+                .map(|&(r, c)| (at.row + r, at.col + c))
+                .collect();
+            cells.sort_unstable();
+            cells
+        })
+        .collect();
+    sets.sort();
+    sets
+}
+
+/// Every solution of a search with `fixed`, run in steps of `step`.
+fn fixed_search(p: &Puzzle, fixed: &[Option<Placement>], step: u64) -> SearchResult {
+    let mut search = Search::with_fixed(p, usize::MAX, fixed);
+    for _ in 0..DEFAULT_NODE_BUDGET {
+        if let Progress::Done(result) = search.step(step) {
+            assert_eq!(result.stop, StopReason::Exhausted);
+            return result;
+        }
+    }
+    panic!("search never finished");
+}
+
+fn only(p: &Puzzle, i: usize, at: Placement) -> Vec<Option<Placement>> {
+    let mut fixed = vec![None; p.pieces().len()];
+    fixed[i] = Some(at);
+    fixed
+}
+
+#[test]
+fn fixing_a_whole_solution_gives_that_solution() {
+    for name in ["wln006-2.txt", "wlh9000-1.txt", "permutations-4.txt"] {
+        let p = sample(name);
+        for solution in all(&p) {
+            let fixed: Vec<Option<Placement>> =
+                solution.placements.iter().copied().map(Some).collect();
+            let result = fixed_search(&p, &fixed, u64::MAX);
+            assert_eq!(result.solutions, vec![solution.clone()], "{name}");
+            assert_eq!(result.nodes, 0, "{name}: nothing left to place");
+        }
+    }
+}
+
+#[test]
+fn fixing_one_piece_keeps_exactly_the_matching_solutions() {
+    let p = sample("wlh9000-1.txt");
+    let every = all(&p);
+    assert_eq!(every.len(), 5);
+    let mut narrowed = false;
+    for solution in &every {
+        for (i, &at) in solution.placements.iter().enumerate() {
+            let fixed = only(&p, i, at);
+            let result = fixed_search(&p, &fixed, u64::MAX);
+            // Piece `i` stands where it was put in every solution found.
+            for found in &result.solutions {
+                assert_eq!(found.placements[i], at);
+                assert_eq!(verify(&p, found), Ok(()));
+            }
+            // The cells of piece `i` there, as a set.
+            let target: Vec<(usize, usize)> = {
+                let mut cells: Vec<(usize, usize)> = p.pieces()[i]
+                    .shape
+                    .rotated(at.rotation)
+                    .cells()
+                    .iter()
+                    .map(|&(r, c)| (at.row + r, at.col + c))
+                    .collect();
+                cells.sort_unstable();
+                cells
+            };
+            // Solutions where some copy of piece `i` covers those cells.
+            let mut expected: Vec<_> = every
+                .iter()
+                .map(|s| cell_sets(&p, s))
+                .filter(|sets| sets.contains(&target))
+                .collect();
+            let mut got: Vec<_> = result.solutions.iter().map(|s| cell_sets(&p, s)).collect();
+            expected.sort();
+            got.sort();
+            assert_eq!(got, expected, "piece {i} at {at:?}");
+            narrowed |= got.len() < every.len();
+            // The step size changes nothing.
+            for step in [1, 7] {
+                assert_eq!(fixed_search(&p, &fixed, step), result);
+            }
+        }
+    }
+    assert!(narrowed, "some fixing must rule solutions out");
+}
+
+#[test]
+fn a_fixed_piece_may_be_any_of_its_copies() {
+    let p = sample("permutations-4.txt");
+    let at = |row, col| Placement {
+        rotation: Rotation::R0,
+        row,
+        col,
+    };
+    for i in 0..4 {
+        let result = fixed_search(&p, &only(&p, i, at(0, 0)), u64::MAX);
+        // The other three monominoes fill rows 1–3 and columns 1–3: 3! ways.
+        assert_eq!(result.solutions.len(), 6, "piece {i}");
+        assert!(result.solutions.iter().all(|s| s.placements[i] == at(0, 0)));
+    }
+    // Two copies fixed in different rows and columns: 2 ways left.
+    let fixed = [Some(at(0, 0)), None, None, Some(at(1, 1))];
+    assert_eq!(fixed_search(&p, &fixed, u64::MAX).solutions.len(), 2);
+    // A fixed list shorter than the pieces leaves the rest free.
+    assert_eq!(fixed_search(&p, &[None], u64::MAX).solutions.len(), 24);
+}
+
+#[test]
+fn invalid_fixed_pieces_give_no_solution() {
+    let p = sample("wln006-2.txt");
+    let solution = all(&p).remove(0);
+    let base: Vec<Option<Placement>> = vec![None; p.pieces().len()];
+    let with = |i: usize, at: Placement| {
+        let mut fixed = base.clone();
+        fixed[i] = Some(at);
+        fixed
+    };
+    let grid = p.grid();
+    let lock = (0..grid.height())
+        .flat_map(|r| (0..grid.width()).map(move |c| (r, c)))
+        .find(|&(r, c)| matches!(grid.get(r, c), Some(Cell::Lock(_))))
+        .unwrap();
+    let rotation = Rotation::R0;
+    let cases = [
+        (
+            "outside",
+            with(
+                0,
+                Placement {
+                    rotation,
+                    row: 6,
+                    col: 6,
+                },
+            ),
+        ),
+        (
+            "far outside",
+            with(
+                0,
+                Placement {
+                    rotation,
+                    row: 99,
+                    col: 0,
+                },
+            ),
+        ),
+        (
+            "on a lock",
+            with(
+                0,
+                Placement {
+                    rotation,
+                    row: lock.0,
+                    col: lock.1,
+                },
+            ),
+        ),
+        ("overlap", {
+            let mut fixed = base.clone();
+            fixed[0] = Some(solution.placements[0]);
+            fixed[1] = Some(solution.placements[0]);
+            fixed
+        }),
+        // Row 6 asks for one cell; the square puts two there.
+        (
+            "over a clue",
+            with(
+                3,
+                Placement {
+                    rotation,
+                    row: 5,
+                    col: 2,
+                },
+            ),
+        ),
+    ];
+    for (what, fixed) in cases {
+        let result = fixed_search(&p, &fixed, u64::MAX);
+        assert!(result.solutions.is_empty(), "{what}");
+    }
+    let dead = sample("dead-cells.txt");
+    let grid = dead.grid();
+    let spot = (0..grid.height())
+        .flat_map(|r| (0..grid.width()).map(move |c| (r, c)))
+        .find(|&(r, c)| grid.get(r, c) == Some(Cell::Dead))
+        .unwrap();
+    let mut fixed = vec![None; dead.pieces().len()];
+    fixed[0] = Some(Placement {
+        rotation,
+        row: spot.0,
+        col: spot.1,
+    });
+    assert!(
+        fixed_search(&dead, &fixed, u64::MAX).solutions.is_empty(),
+        "on a dead cell"
+    );
 }

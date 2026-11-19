@@ -91,6 +91,8 @@ fn every_level_gives_unique_valid_puzzles_within_parameters() {
             assert!(params.pieces.contains(puzzle.pieces().len()));
             for piece in puzzle.pieces() {
                 assert!(params.piece_size.contains(piece.shape.area()));
+                let side = piece.shape.width().max(piece.shape.height());
+                assert!(side <= params.max_piece_side, "a piece {side} cells long");
             }
             let locks = grid
                 .cells()
@@ -198,6 +200,13 @@ fn invalid_params_are_rejected() {
                 ..base
             },
             ParamsError::NoAttempts,
+        ),
+        (
+            GeneratorParams {
+                max_piece_side: 0,
+                ..base
+            },
+            ParamsError::NoPieceSide,
         ),
     ];
     for (params, expected) in cases {
