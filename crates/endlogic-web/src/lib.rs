@@ -27,12 +27,15 @@ const STORAGE_PREFIX: &str = "endlogic.";
 const PLAY_FRAGMENT: &str = "#p=";
 /// Prefix of a puzzle code open in the editor.
 const EDIT_FRAGMENT: &str = "#e=";
+/// Prefix of a puzzle code to play in the custom tab.
+const CUSTOM_FRAGMENT: &str = "#c=";
 
 /// The address fragment prefix for a kind of code.
 fn fragment(kind: CodeKind) -> &'static str {
     match kind {
         CodeKind::Play => PLAY_FRAGMENT,
         CodeKind::Edit => EDIT_FRAGMENT,
+        CodeKind::Custom => CUSTOM_FRAGMENT,
     }
 }
 
@@ -180,7 +183,7 @@ fn load_settings(storage: Option<&Storage>) -> Vec<(String, String)> {
 
 fn code_from_address(window: &Window) -> Option<(CodeKind, String)> {
     let hash = window.location().hash().ok()?;
-    [CodeKind::Play, CodeKind::Edit]
+    [CodeKind::Play, CodeKind::Edit, CodeKind::Custom]
         .into_iter()
         .find_map(|kind| {
             let code = hash.strip_prefix(fragment(kind))?;

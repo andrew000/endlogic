@@ -395,11 +395,11 @@ fn edit_and_play_codes_go_both_ways() {
     let other = sample("wlh9000-1.txt");
     app.handle(Event::CodeChanged(CodeKind::Edit, encode(&other).unwrap()));
     assert_eq!(editor(&app).puzzle(), other);
-    // Play: a play code, and the custom tab stays.
+    // Play: a custom play code, and the custom tab stays.
     app.take_effects();
     app.press(edit(&app).play);
     assert!(!app.is_editing() && app.is_custom());
-    let played = last_code(&mut app, CodeKind::Play).unwrap();
+    let played = last_code(&mut app, CodeKind::Custom).unwrap();
     assert_eq!(decode(&played).unwrap(), other);
     assert!(app.puzzle_id().unwrap().starts_with("Δ-C-"));
     // "Edit" goes back with the same puzzle.
@@ -416,6 +416,7 @@ fn edit_and_play_codes_go_both_ways() {
     settle(&mut app);
     assert!(app.is_custom() && !app.is_editing());
     assert_eq!(app.board().unwrap().puzzle(), &odd);
+    assert!(last_code(&mut app, CodeKind::Custom).is_some());
     // A bad edit link is refused.
     let mut bad = common::config(390.0, 844.0);
     bad.code = Some((CodeKind::Edit, "nope".to_owned()));
@@ -645,4 +646,74 @@ fn every_editor_state_draws_at_every_size() {
         });
         settle(&mut app);
     }
+}
+
+/// The kind of every `SetCode` and `CopyLink` since the last call.
+fn kinds(app: &mut App) -> (Vec<CodeKind>, Vec<CodeKind>) {
+    let mut set = Vec::new();
+    let mut copied = Vec::new();
+    for effect in app.take_effects() {
+        match effect {
+            Effect::SetCode(kind, _) => set.push(kind),
+            Effect::CopyLink(kind, _) => copied.push(kind),
+            _ => {}
+        }
+    }
+    (set, copied)
+}
+
+#[test]
+fn the_three_code_kinds_go_both_ways() {
+    // wln006-2 is 7×7, the size of the hard level.
+    let wln = sample("wln006-2.txt");
+    let code = encode(&wln).unwrap();
+    let open = |kind: CodeKind| {
+        let mut config = config(1366.0, 768.0);
+        config.code = Some((kind, code.clone()));
+        let mut app = App::new(config);
+        settle(&mut app);
+        app
+    };
+    // Play: the hard level, with "New"; the address and the link say play.
+    let mut app = open(CodeKind::Play);
+    assert!(!app.is_custom());
+    assert_eq!(app.puzzle_id().unwrap().chars().nth(2), Some('H'));
+    let drawing = settle(&mut app);
+    assert!(texts(&drawing).contains(&"New".to_owned()));
+    assert_eq!(kinds(&mut app).0, vec![CodeKind::Play]);
+    app.press(app.layout().share);
+    assert_eq!(kinds(&mut app).1, vec![CodeKind::Play]);
+    // Custom: the custom tab playing, with "Edit", though the size is
+    // standard.
+    let mut app = open(CodeKind::Custom);
+    assert!(app.is_custom() && !app.is_editing());
+    assert!(app.puzzle_id().unwrap().starts_with("Δ-C-"));
+    assert_eq!(app.board().unwrap().puzzle(), &wln);
+    let drawing = settle(&mut app);
+    assert!(texts(&drawing).contains(&"Edit".to_owned()));
+    assert_eq!(kinds(&mut app).0, vec![CodeKind::Custom]);
+    app.press(app.layout().share);
+    assert_eq!(kinds(&mut app).1, vec![CodeKind::Custom]);
+    // "Edit" opens the editor: an edit code; sharing there gives an edit
+    // link; "Play" goes back with a custom code.
+    app.press(app.layout().new);
+    assert!(app.is_editing());
+    assert_eq!(kinds(&mut app).0.last(), Some(&CodeKind::Edit));
+    app.press(app.layout().share);
+    assert_eq!(kinds(&mut app).1, vec![CodeKind::Edit]);
+    app.press(edit(&app).play);
+    assert_eq!(kinds(&mut app).0, vec![CodeKind::Custom]);
+    // A changed address of each kind is followed.
+    let other = sample("wlh9000-1.txt");
+    let other_code = encode(&other).unwrap();
+    app.handle(Event::CodeChanged(CodeKind::Play, other_code.clone()));
+    assert!(!app.is_custom(), "5×5 is the easy level");
+    app.handle(Event::CodeChanged(CodeKind::Custom, other_code.clone()));
+    assert!(app.is_custom() && !app.is_editing());
+    app.handle(Event::CodeChanged(CodeKind::Edit, other_code));
+    assert!(app.is_editing());
+    assert_eq!(editor(&app).puzzle(), other);
+    // Edit codes open the editor directly.
+    let app = open(CodeKind::Edit);
+    assert!(app.is_editing());
 }

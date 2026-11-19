@@ -719,9 +719,10 @@ impl App {
             return true;
         }
         let grid = puzzle.grid();
+        // A custom puzzle stays custom whatever its size.
         let matching = Difficulty::ALL.into_iter().find(|d| {
             let params = d.params();
-            params.width == grid.width() && params.height == grid.height()
+            kind == CodeKind::Play && params.width == grid.width() && params.height == grid.height()
         });
         let letter = match matching {
             Some(d) => {
@@ -754,7 +755,12 @@ impl App {
         self.tray_page = 0;
         self.custom = letter == 'C';
         self.edit = EditState::default();
-        self.effects.push(Effect::SetCode(CodeKind::Play, code));
+        let kind = if self.custom {
+            CodeKind::Custom
+        } else {
+            CodeKind::Play
+        };
+        self.effects.push(Effect::SetCode(kind, code));
         self.relayout();
     }
 
@@ -1158,7 +1164,12 @@ impl App {
                 .ok()
                 .map(|code| (CodeKind::Edit, code))
         } else {
-            self.code().map(|code| (CodeKind::Play, code.to_owned()))
+            let kind = if self.custom {
+                CodeKind::Custom
+            } else {
+                CodeKind::Play
+            };
+            self.code().map(|code| (kind, code.to_owned()))
         }
     }
 

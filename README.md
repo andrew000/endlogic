@@ -89,7 +89,8 @@ to cycle free, locked and dead, tap a counter to type the clues, and draw
 the pieces. "Solve" lists up to 50 solutions; "Play" plays the puzzle.
 
 A puzzle's link (`#p=<code>`) opens the same puzzle; an editor link
-(`#e=<code>`) opens it in the custom tab.
+(`#e=<code>`) opens it in the custom tab's editor, and a custom link
+(`#c=<code>`) plays it in the custom tab.
 
 Building needs the `wasm32-unknown-unknown` target (installed by
 `rust-toolchain.toml`) and `wasm-bindgen-cli` of the same version as the

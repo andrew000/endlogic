@@ -22,10 +22,13 @@ pub const SETTING_EDITOR: &str = "editor";
 /// sees the kind.
 #[derive(Debug, Clone, Copy, PartialEq, Eq, Hash)]
 pub enum CodeKind {
-    /// A puzzle to play.
+    /// A puzzle to play: a level if its size is one, else in the custom
+    /// tab.
     Play,
     /// A puzzle open in the editor of the custom tab.
     Edit,
+    /// A puzzle to play in the custom tab, whatever its size.
+    Custom,
 }
 
 /// Everything the UI needs at start-up.
