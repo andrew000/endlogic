@@ -4,6 +4,7 @@ description = "Model, text format, solver and verifier for endlogic puzzles."
 version.workspace = true
 edition.workspace = true
 publish.workspace = true
+license.workspace = true
 
 [dependencies]
 

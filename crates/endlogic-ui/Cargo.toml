@@ -4,6 +4,7 @@ description = "Platform-independent trainer UI for endlogic: state, layout and d
 version.workspace = true
 edition.workspace = true
 publish.workspace = true
+license.workspace = true
 
 [dependencies]
 endlogic-core.workspace = true
