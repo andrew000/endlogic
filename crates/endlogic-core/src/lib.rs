@@ -26,6 +26,7 @@ pub use puzzle::{LineClues, MAX_PIECES, Piece, Puzzle};
 pub use shape::{Rotation, Shape};
 pub use solution::{Placement, Solution, VerifyError, verify};
 
+pub mod code;
 pub mod format;
 pub mod generator;
 pub mod rng;
