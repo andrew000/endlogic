@@ -27,4 +27,5 @@ pub use shape::{Rotation, Shape};
 pub use solution::{Placement, Solution, VerifyError, verify};
 
 pub mod format;
+pub mod rng;
 pub mod solver;
