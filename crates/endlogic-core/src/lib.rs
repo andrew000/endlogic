@@ -22,3 +22,5 @@ pub use grid::{Cell, Grid, MAX_GRID_SIZE};
 pub use puzzle::{LineClues, MAX_PIECES, Piece, Puzzle};
 pub use shape::{Rotation, Shape};
 pub use solution::{Placement, Solution, VerifyError, verify};
+
+pub mod format;
