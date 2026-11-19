@@ -1,0 +1,15 @@
+endlogic 1
+// Dead cells (x) cannot be covered and never count towards clues.
+grid
+x...
+..x.
+....
+rows 3 2 3
+cols 2 2 2 2
+piece
+###
+piece
+#.
+##
+piece
+##

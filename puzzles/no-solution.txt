@@ -1,0 +1,10 @@
+endlogic 1
+// Clue sums match the piece area, but the domino cannot fill
+// row 0 and column 0 at the same time.
+grid
+..
+..
+rows 2 0
+cols 2 0
+piece
+##

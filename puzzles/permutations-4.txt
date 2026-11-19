@@ -1,0 +1,17 @@
+endlogic 1
+// Four identical monominoes, one per row and column: 4! = 24 solutions.
+grid
+....
+....
+....
+....
+rows 1 1 1 1
+cols 1 1 1 1
+piece
+#
+piece
+#
+piece
+#
+piece
+#
