@@ -414,6 +414,15 @@ fn parse_piece(piece_line: usize, block: &[Line<'_>]) -> Result<Piece, ParseErro
     Ok(Piece::new(Color::DEFAULT, shape))
 }
 
+impl core::str::FromStr for Puzzle {
+    type Err = ParseError;
+
+    /// Same as [`parse`].
+    fn from_str(text: &str) -> Result<Puzzle, ParseError> {
+        parse(text)
+    }
+}
+
 /// Writes a puzzle in format version 1, in canonical form: no comments or
 /// blank lines, each piece as its bounding box.
 ///

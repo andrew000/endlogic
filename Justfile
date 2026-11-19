@@ -8,6 +8,10 @@ default:
 fmt:
     cargo fmt --all
 
+# Check formatting without changing files.
+fmt-check:
+    cargo fmt --all --check
+
 # Run clippy on every target, treating warnings as errors.
 lint:
     cargo clippy --workspace --all-targets -- -D warnings
@@ -20,8 +24,8 @@ test:
 check-wasm:
     cargo build -p endlogic-core --target wasm32-unknown-unknown
 
-# Format, lint, test and build for wasm, in that order.
-ci: fmt lint test check-wasm
+# Check formatting, lint, test and build for wasm, in that order.
+ci: fmt-check lint test check-wasm
 
 # Solve a puzzle file; extra arguments go to the CLI (e.g. --count 50).
 [unix]

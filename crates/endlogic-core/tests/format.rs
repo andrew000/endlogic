@@ -33,6 +33,18 @@ fn parses_reference_puzzle() {
 }
 
 #[test]
+fn from_str_matches_parse() {
+    let puzzle: Puzzle = REFERENCE.parse().unwrap();
+    assert_eq!(puzzle, parse(REFERENCE).unwrap());
+    let err = "endlogic 1
+grid
+"
+    .parse::<Puzzle>()
+    .unwrap_err();
+    assert_eq!(err.line, 2);
+}
+
+#[test]
 fn reference_text_is_canonical() {
     let puzzle = parse(REFERENCE).unwrap();
     assert_eq!(
