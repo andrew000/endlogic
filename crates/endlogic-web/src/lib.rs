@@ -7,7 +7,7 @@
 
 use std::cell::RefCell;
 use std::f64::consts::TAU;
-use std::rc::Rc;
+use std::rc::{Rc, Weak};
 
 use endlogic_ui::{
     Align, App, Config, Cursor, Effect, Event, Font, FontFamily, Key, Painter, Point, Pointer,
@@ -80,7 +80,9 @@ pub fn start() -> Result<(), JsValue> {
         frame_pending: false,
         last_frame: None,
         frame_callback: None,
+        this: Weak::new(),
     }));
+    shell.borrow_mut().this = Rc::downgrade(&shell);
     install_frame_callback(&shell);
     listen(&shell)?;
     Shell::request_frame(&shell);
@@ -153,6 +155,8 @@ struct Shell {
     /// Time of the previous frame while frames run back to back.
     last_frame: Option<f64>,
     frame_callback: Option<Closure<dyn FnMut(f64)>>,
+    /// The shell itself, for callbacks that arrive later.
+    this: Weak<RefCell<Shell>>,
 }
 
 type SharedShell = Rc<RefCell<Shell>>;
@@ -227,6 +231,36 @@ impl Shell {
         }
     }
 
+    /// Writes `text` to the clipboard and reports the outcome to the app
+    /// with [`Event::CopyFinished`] once the browser has answered.
+    fn copy(&self, text: &str) {
+        let navigator = self.window.navigator();
+        let available = js_sys::Reflect::has(&navigator, &"clipboard".into()).unwrap_or(false);
+        let report = |ok: bool| {
+            let this = self.this.clone();
+            Closure::<dyn FnMut(JsValue)>::new(move |result: JsValue| {
+                if !ok {
+                    web_sys::console::warn_2(&"clipboard write refused:".into(), &result);
+                }
+                if let Some(shell) = this.upgrade() {
+                    Shell::dispatch(&shell, Event::CopyFinished(ok));
+                }
+            })
+        };
+        let (done, refused) = (report(true), report(false));
+        if available {
+            let _ = navigator
+                .clipboard()
+                .write_text(text)
+                .then2(&done, &refused);
+        } else {
+            let _ = js_sys::Promise::reject(&"no clipboard API".into()).catch(&refused);
+        }
+        // Two small closures per share; they must outlive the promise.
+        done.forget();
+        refused.forget();
+    }
+
     fn run_effects(&mut self) {
         for effect in self.app.take_effects() {
             match effect {
@@ -236,21 +270,7 @@ impl Shell {
                         let _ = history.replace_state_with_url(&JsValue::NULL, "", Some(&url));
                     }
                 }
-                Effect::CopyText(text) => {
-                    // Not awaited; a refusal (no focus, no permission) is
-                    // only reported in the console.
-                    let refused = Closure::<dyn FnMut(JsValue)>::new(|err: JsValue| {
-                        web_sys::console::warn_2(&"clipboard write refused:".into(), &err);
-                    });
-                    let _ = self
-                        .window
-                        .navigator()
-                        .clipboard()
-                        .write_text(&text)
-                        .catch(&refused);
-                    // One small closure per share; it must outlive the promise.
-                    refused.forget();
-                }
+                Effect::CopyText(text) => self.copy(&text),
                 Effect::SaveSetting { key, value } => {
                     if let Some(storage) = &self.storage {
                         let _ = storage.set_item(&format!("{STORAGE_PREFIX}{key}"), &value);
