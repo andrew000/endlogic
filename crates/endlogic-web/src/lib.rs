@@ -10,8 +10,8 @@ use std::f64::consts::TAU;
 use std::rc::{Rc, Weak};
 
 use endlogic_ui::{
-    Align, App, Config, Cursor, Effect, Event, Font, FontFamily, Key, Painter, Point, Pointer,
-    PointerKind, Rect, Rgba, SETTING_KEYS,
+    Align, App, Config, Cursor, Effect, Event, Font, FontFamily, Insets, Key, Painter, Point,
+    Pointer, PointerKind, Rect, Rgba, SETTING_KEYS,
 };
 use wasm_bindgen::JsCast;
 use wasm_bindgen::prelude::*;
@@ -54,10 +54,15 @@ pub fn start() -> Result<(), JsValue> {
         .dyn_into()?;
 
     let (width, height) = css_size(&canvas);
+    let probe = inset_probe(&window);
+    let insets = probe
+        .as_ref()
+        .map_or_else(Insets::default, |probe| safe_insets(&window, probe));
     let storage = window.local_storage().ok().flatten();
     let config = Config {
         width,
         height,
+        insets,
         entropy: entropy(&window)?,
         settings: load_settings(storage.as_ref()),
         system_language: window.navigator().language().unwrap_or_default(),
@@ -77,6 +82,8 @@ pub fn start() -> Result<(), JsValue> {
         painter: CanvasPainter { ctx },
         storage,
         size: (0, 0),
+        insets,
+        probe,
         frame_pending: false,
         last_frame: None,
         frame_callback: None,
@@ -87,6 +94,43 @@ pub fn start() -> Result<(), JsValue> {
     listen(&shell)?;
     Shell::request_frame(&shell);
     Ok(())
+}
+
+/// Adds an invisible element whose padding is the safe-area insets.
+fn inset_probe(window: &Window) -> Option<web_sys::Element> {
+    let document = window.document()?;
+    let probe = document.create_element("div").ok()?;
+    probe
+        .set_attribute(
+            "style",
+            "position:fixed;left:0;top:0;width:0;height:0;visibility:hidden;pointer-events:none;\
+             padding:env(safe-area-inset-top) env(safe-area-inset-right) \
+             env(safe-area-inset-bottom) env(safe-area-inset-left)",
+        )
+        .ok()?;
+    document.body()?.append_child(&probe).ok()?;
+    Some(probe)
+}
+
+/// The safe-area insets in CSS pixels, read from the probe's padding.
+fn safe_insets(window: &Window, probe: &web_sys::Element) -> Insets {
+    let Ok(Some(style)) = window.get_computed_style(probe) else {
+        return Insets::default();
+    };
+    let side = |name: &str| {
+        style
+            .get_property_value(name)
+            .ok()
+            .and_then(|v| v.trim().trim_end_matches("px").parse::<f32>().ok())
+            .unwrap_or(0.0)
+            .max(0.0)
+    };
+    Insets {
+        top: side("padding-top"),
+        right: side("padding-right"),
+        bottom: side("padding-bottom"),
+        left: side("padding-left"),
+    }
 }
 
 /// The canvas size in CSS pixels.
@@ -151,6 +195,11 @@ struct Shell {
     storage: Option<Storage>,
     /// Canvas backing store size in device pixels.
     size: (u32, u32),
+    /// Safe-area insets last passed to the app.
+    insets: Insets,
+    /// An invisible element padded by `env(safe-area-inset-*)`, read back
+    /// to learn the insets.
+    probe: Option<web_sys::Element>,
     frame_pending: bool,
     /// Time of the previous frame while frames run back to back.
     last_frame: Option<f64>,
@@ -199,11 +248,20 @@ impl Shell {
             px
         };
         let size = (device(width), device(height));
-        if size != self.size {
+        let insets = self
+            .probe
+            .as_ref()
+            .map_or_else(Insets::default, |probe| safe_insets(&self.window, probe));
+        if size != self.size || insets != self.insets {
             self.size = size;
+            self.insets = insets;
             self.canvas.set_width(size.0);
             self.canvas.set_height(size.1);
-            self.app.handle(Event::Resize { width, height });
+            self.app.handle(Event::Resize {
+                width,
+                height,
+                insets,
+            });
         }
         // Logical pixels from here on; the backing store may have been reset.
         let _ = self

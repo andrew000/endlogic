@@ -33,6 +33,7 @@ features = [
     "Location",
     "MediaQueryList",
     "MouseEvent",
+    "Node",
     "Navigator",
     "PointerEvent",
     "Storage",
