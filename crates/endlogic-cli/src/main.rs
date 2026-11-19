@@ -14,7 +14,8 @@ endlogic - solver and generator for Arknights: Endfield mechanism repair puzzles
 
 Usage:
   endlogic solve <FILE> [--count [N]] [--budget N]
-  endlogic gen --difficulty <easy|normal|hard|expert> [--seed N] [--solution] [--code]
+  endlogic gen --difficulty <easy|normal|hard|expert> [--seed N]
+               [--allow-multiple] [--solution] [--code]
   endlogic encode <FILE>
   endlogic decode <CODE>
   endlogic --help
@@ -23,9 +24,12 @@ Commands:
   solve    Print the first solution of a puzzle file.
              --count [N]   Count solutions instead, stopping at N (default 1000)
              --budget N    Give up after trying N piece placements (default 200000)
-  gen      Generate a puzzle with a unique solution and print it in the text
-           format. Seed, attempt and solver nodes go to stderr.
+  gen      Generate a puzzle and print it in the text format. The solution
+           is unique unless --allow-multiple is given. Seed, attempt and
+           solver nodes go to stderr.
              --seed N      Use this seed (default: taken from the clock)
+             --allow-multiple
+                           Accept puzzles with more than one solution
              --solution    Also print the solution, as comment lines
              --code        Also print the puzzle code, as a comment line
   encode   Print the code of a puzzle file.
@@ -58,6 +62,7 @@ enum Command {
     Gen {
         difficulty: Difficulty,
         seed: Option<u64>,
+        allow_multiple: bool,
         solution: bool,
         code: bool,
     },
@@ -152,6 +157,7 @@ fn parse_solve_args(args: &[String]) -> Result<Command, String> {
 fn parse_gen_args(args: &[String]) -> Result<Command, String> {
     let mut difficulty = None;
     let mut seed = None;
+    let mut allow_multiple = false;
     let mut solution = false;
     let mut code = false;
     let mut iter = args.iter();
@@ -172,6 +178,7 @@ fn parse_gen_args(args: &[String]) -> Result<Command, String> {
                         .map_err(|_| format!("invalid value `{value}` for `--seed`"))?,
                 );
             }
+            "--allow-multiple" => allow_multiple = true,
             "--solution" => solution = true,
             "--code" => code = true,
             other => return Err(format!("unexpected argument `{other}`")),
@@ -181,6 +188,7 @@ fn parse_gen_args(args: &[String]) -> Result<Command, String> {
     Ok(Command::Gen {
         difficulty,
         seed,
+        allow_multiple,
         solution,
         code,
     })
@@ -245,11 +253,14 @@ fn clock_seed() -> u64 {
 fn run_gen(
     difficulty: Difficulty,
     seed: Option<u64>,
+    allow_multiple: bool,
     with_solution: bool,
     with_code: bool,
 ) -> ExitCode {
     let seed = seed.unwrap_or_else(clock_seed);
-    let generated = match generate(difficulty.params(), seed) {
+    let mut params = difficulty.params();
+    params.require_unique = !allow_multiple;
+    let generated = match generate(params, seed) {
         Ok(generated) => generated,
         Err(err) => {
             eprintln!("error: seed {seed}: {err}");
@@ -333,9 +344,10 @@ fn main() -> ExitCode {
         Ok(Command::Gen {
             difficulty,
             seed,
+            allow_multiple,
             solution,
             code,
-        }) => run_gen(difficulty, seed, solution, code),
+        }) => run_gen(difficulty, seed, allow_multiple, solution, code),
         Ok(Command::Encode { path }) => run_encode(&path),
         Ok(Command::Decode { code }) => run_decode(&code),
         Err(message) => {
@@ -398,6 +410,7 @@ mod tests {
             Ok(Command::Gen {
                 difficulty: Difficulty::Hard,
                 seed: Some(1),
+                allow_multiple: false,
                 solution: false,
                 code: true,
             })
@@ -407,7 +420,18 @@ mod tests {
             Ok(Command::Gen {
                 difficulty: Difficulty::Easy,
                 seed: None,
+                allow_multiple: false,
                 solution: true,
+                code: false,
+            })
+        );
+        assert_eq!(
+            parse_args(&args(&["gen", "--difficulty", "easy", "--allow-multiple"])),
+            Ok(Command::Gen {
+                difficulty: Difficulty::Easy,
+                seed: None,
+                allow_multiple: true,
+                solution: false,
                 code: false,
             })
         );

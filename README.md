@@ -54,6 +54,8 @@ valid puzzle file:
 cargo run --release -p endlogic-cli -- gen --difficulty hard --seed 1 --solution --code
 ```
 
+`--allow-multiple` also accepts puzzles with more than one solution.
+
 Convert between puzzle files and shareable codes:
 
 ```sh

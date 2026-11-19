@@ -195,3 +195,32 @@ fn decode_rejects_bad_codes() {
         stderr(&output)
     );
 }
+
+#[test]
+fn gen_allow_multiple_accepts_ambiguous_puzzles() {
+    use endlogic_core::solver::{DEFAULT_NODE_BUDGET, StopReason, search};
+    let mut ambiguous = 0;
+    for seed in 0..8 {
+        let seed = seed.to_string();
+        let output = run(&[
+            "gen",
+            "--difficulty",
+            "easy",
+            "--seed",
+            &seed,
+            "--allow-multiple",
+        ]);
+        assert_eq!(output.status.code(), Some(0), "seed {seed}");
+        let puzzle = endlogic_core::format::parse(&stdout(&output)).unwrap();
+        let result = search(&puzzle, 2, DEFAULT_NODE_BUDGET);
+        assert_ne!(result.stop, StopReason::NodeBudget);
+        assert!(!result.solutions.is_empty(), "seed {seed}");
+        if result.solutions.len() > 1 {
+            ambiguous += 1;
+        }
+    }
+    assert!(
+        ambiguous > 0,
+        "no seed gave a puzzle with several solutions"
+    );
+}
