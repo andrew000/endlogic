@@ -1,7 +1,10 @@
 # endlogic
 
-Solver, generator and (later) trainer for the "mechanism repair" puzzles
-from Arknights: Endfield.
+Solver, generator and trainer for the "mechanism repair" puzzles from
+Arknights: Endfield.
+
+This is a fan project. It is not affiliated with or endorsed by the
+developers or publishers of Arknights: Endfield.
 
 A puzzle is a rectangular grid of free, locked and dead cells, a set of
 polyominoes, and a target count of filled cells for every row and column.
@@ -16,6 +19,10 @@ cells do not.
   generator, puzzle generator and puzzle codes. Builds for
   `wasm32-unknown-unknown`.
 - `crates/endlogic-cli` — the `endlogic` command-line tool.
+- `crates/endlogic-ui` — the trainer itself: state, rules, layout and
+  drawing, independent of any platform.
+- `crates/endlogic-web` — the browser shell for the trainer.
+- `web/` — the web page.
 - `puzzles/` — sample puzzles.
 - `docs/FORMAT.md` — the puzzle file format.
 - `docs/CODE.md` — the puzzle code format.
@@ -67,3 +74,31 @@ cargo run --release -p endlogic-cli -- decode AWYAG92sqX2JVQAAAAAAAURshXEtRHzP5E
 ```
 
 `endlogic --help` lists all options and exit codes.
+
+## Web trainer
+
+Drag pieces onto the board until every row and column count matches; `R`
+or a tap rotates, `Tab` switches the counters, `Esc` cancels a drag. A
+puzzle's link (`#p=<code>`) opens the same puzzle.
+
+Building needs the `wasm32-unknown-unknown` target (installed by
+`rust-toolchain.toml`) and `wasm-bindgen-cli` of the same version as the
+`wasm-bindgen` crate:
+
+```sh
+cargo install wasm-bindgen-cli --version 0.2.130 --locked
+```
+
+Build into `web/dist`:
+
+```sh
+just web-build
+```
+
+Serve it at http://localhost:8080 (needs Python 3; stop with Ctrl+C):
+
+```sh
+just web-serve
+```
+
+`web/dist` is a plain static site and can be served by any web server.
