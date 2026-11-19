@@ -10,14 +10,19 @@ use crate::draw;
 use crate::layout::{Layout, LayoutInput, to_f32};
 use crate::painter::{Painter, Point, Rect};
 use crate::shell::{
-    Config, Cursor, Effect, Event, Key, Pointer, PointerKind, SETTING_COUNTERS, SETTING_DIFFICULTY,
-    SETTING_LANG,
+    Config, Cursor, Effect, Event, Insets, Key, Pointer, PointerKind, SETTING_COUNTERS,
+    SETTING_DIFFICULTY, SETTING_LANG,
 };
 use crate::text::{Lang, Text};
 use crate::theme;
 
-/// Movement, in logical pixels, that turns a press into a drag.
+/// Movement, in logical pixels, that turns a mouse press into a drag.
 pub const DRAG_THRESHOLD: f32 = 8.0;
+/// Movement, in logical pixels, that turns a touch into a drag rather than
+/// a tap.
+pub const TOUCH_DRAG_THRESHOLD: f32 = 14.0;
+/// How far from a touch, in cells, a piece cell still counts as touched.
+pub const TOUCH_SLACK: f32 = 0.4;
 /// How far above the finger a piece dragged by touch floats, in cells.
 pub const TOUCH_LIFT: f32 = 1.5;
 /// Solver nodes the generator may spend in one frame. Time cannot be
@@ -113,6 +118,8 @@ pub(crate) struct PieceAnim {
     /// Growth from tray to board scale after a pick-up: the starting cell
     /// size and the seconds elapsed.
     pub grow: Option<(f32, f32)>,
+    /// Seconds into the shake of a turn that did not fit.
+    pub wobble: Option<f32>,
 }
 
 /// The puzzle being played.
@@ -184,6 +191,7 @@ impl Gesture {
 pub struct App {
     pub(crate) width: f32,
     pub(crate) height: f32,
+    insets: Insets,
     pub(crate) touch: bool,
     share_prefix: String,
     entropy: u64,
@@ -227,6 +235,7 @@ impl App {
         let mut app = App {
             width: config.width,
             height: config.height,
+            insets: config.insets,
             touch: config.touch,
             share_prefix: config.share_prefix,
             entropy: config.entropy,
@@ -244,6 +253,7 @@ impl App {
             layout: Layout::compute(&LayoutInput {
                 width: 1.0,
                 height: 1.0,
+                insets: Insets::default(),
                 touch: false,
                 lang,
                 grid_width: 1,
@@ -269,9 +279,14 @@ impl App {
     /// Handles one input event.
     pub fn handle(&mut self, event: Event) {
         match event {
-            Event::Resize { width, height } => {
+            Event::Resize {
+                width,
+                height,
+                insets,
+            } => {
                 self.width = width;
                 self.height = height;
+                self.insets = insets;
                 self.relayout();
             }
             Event::PointerDown(p) => self.pointer_down(p),
@@ -530,9 +545,12 @@ impl App {
             || self.toast.is_some()
             || self.game.as_ref().is_some_and(|g| {
                 (g.won && g.win_elapsed < theme::WIN_TIME)
-                    || g.anims
-                        .iter()
-                        .any(|a| a.fly.is_some() || a.spin.is_some() || a.grow.is_some())
+                    || g.anims.iter().any(|a| {
+                        a.fly.is_some()
+                            || a.spin.is_some()
+                            || a.grow.is_some()
+                            || a.wobble.is_some()
+                    })
             })
     }
 
@@ -551,6 +569,7 @@ impl App {
         LayoutInput {
             width: self.width,
             height: self.height,
+            insets: self.insets,
             touch: self.touch,
             lang: self.lang,
             grid_width,
@@ -679,6 +698,12 @@ impl App {
                     anim.grow = None;
                 }
             }
+            if let Some(elapsed) = &mut anim.wobble {
+                *elapsed += dt;
+                if *elapsed >= theme::WOBBLE_TIME {
+                    anim.wobble = None;
+                }
+            }
         }
     }
 
@@ -740,27 +765,59 @@ impl App {
     fn control_at(&self, p: Point) -> Option<Control> {
         self.controls()
             .into_iter()
-            .find(|&(_, rect, enabled)| enabled && rect.contains(p))
+            .find(|&(_, rect, enabled)| enabled && Layout::zone(rect).contains(p))
             .map(|(control, _, _)| control)
     }
 
-    /// The piece under `p` that may be picked up.
-    fn piece_at(&self, p: Point) -> Option<usize> {
+    /// The piece under `p` that may be picked up. A mouse must hit a piece
+    /// cell; a finger may miss by up to [`TOUCH_SLACK`] of a cell, and then
+    /// the nearest piece cell counts.
+    fn piece_at(&self, p: Point, kind: PointerKind) -> Option<usize> {
         if !self.can_move() {
             return None;
         }
         let game = self.game.as_ref()?;
         let l = &self.layout;
-        if l.cells.contains(p) {
+        let cell_at = |p: Point| {
             let col = ((p.x - l.cells.x) / l.cell).floor();
             let row = ((p.y - l.cells.y) / l.cell).floor();
-            // Inside the cells rectangle, so small and non-negative.
+            // Callers check that `p` is inside the cells first.
             #[allow(clippy::cast_possible_truncation, clippy::cast_sign_loss)]
-            let (row, col) = (row as usize, col as usize);
-            return game.board.owner(row, col);
+            let cell = (row as usize, col as usize);
+            cell
+        };
+        if l.cells.contains(p) {
+            let (row, col) = cell_at(p);
+            if let Some(owner) = game.board.owner(row, col) {
+                return Some(owner);
+            }
+        }
+        let slack = TOUCH_SLACK * l.cell;
+        if kind == PointerKind::Touch && l.cells.inset(-slack).contains(p) {
+            let mut best: Option<(f32, usize)> = None;
+            for row in 0..game.board.height() {
+                for col in 0..game.board.width() {
+                    let Some(owner) = game.board.owner(row, col) else {
+                        continue;
+                    };
+                    let r = l.cell_rect(row, col);
+                    let dx = (r.x - p.x).max(p.x - r.right()).max(0.0);
+                    let dy = (r.y - p.y).max(p.y - r.bottom()).max(0.0);
+                    let d = dx.hypot(dy);
+                    if d <= slack && best.is_none_or(|(b, _)| d < b) {
+                        best = Some((d, owner));
+                    }
+                }
+            }
+            if let Some((_, owner)) = best {
+                return Some(owner);
+            }
         }
         (0..game.board.piece_count()).find(|&i| {
-            game.board.piece(i).at.is_none() && l.cards.get(i).is_some_and(|card| card.contains(p))
+            game.board.piece(i).at.is_none()
+                && l.cards
+                    .get(i)
+                    .is_some_and(|&card| Layout::zone(card).contains(p))
         })
     }
 
@@ -768,7 +825,7 @@ impl App {
         let cursor = match (self.gesture, self.hover) {
             (Gesture::Dragging(_), _) => Cursor::Grabbing,
             (_, Some(p)) if self.control_at(p).is_some() => Cursor::Pointer,
-            (_, Some(p)) if self.piece_at(p).is_some() => Cursor::Grab,
+            (_, Some(p)) if self.piece_at(p, PointerKind::Mouse).is_some() => Cursor::Grab,
             _ => Cursor::Default,
         };
         if cursor != self.cursor {
@@ -789,7 +846,7 @@ impl App {
         }
         self.gesture = if let Some(control) = self.control_at(pos) {
             Gesture::Control { id: p.id, control }
-        } else if let Some(piece) = self.piece_at(pos) {
+        } else if let Some(piece) = self.piece_at(pos, p.kind) {
             let rect = self.piece_rect(piece);
             let grab = Point::new(
                 ((pos.x - rect.x) / rect.w).clamp(0.0, 1.0),
@@ -823,7 +880,11 @@ impl App {
                 start,
                 grab,
             } => {
-                if (pos.x - start.x).hypot(pos.y - start.y) >= DRAG_THRESHOLD {
+                let threshold = match kind {
+                    PointerKind::Mouse => DRAG_THRESHOLD,
+                    PointerKind::Touch => TOUCH_DRAG_THRESHOLD,
+                };
+                if (pos.x - start.x).hypot(pos.y - start.y) >= threshold {
                     self.begin_drag(id, kind, piece, grab, pos);
                 }
             }
@@ -870,7 +931,10 @@ impl App {
                     self.gesture = Gesture::Ignored { id };
                 }
                 _ => {
-                    if let Some(piece) = self.hover.and_then(|p| self.piece_at(p)) {
+                    if let Some(piece) = self
+                        .hover
+                        .and_then(|p| self.piece_at(p, PointerKind::Mouse))
+                    {
                         self.rotate_piece(piece);
                     }
                 }
@@ -977,6 +1041,9 @@ impl App {
         });
     }
 
+    /// Puts a released piece down: where it was dropped if it fits there;
+    /// back where it came from if it was taken from the board and dropped
+    /// over the grid; otherwise into the tray.
     fn drop_piece(&mut self, drag: Drag) {
         let from = self.drag_visual(&drag);
         let target = self.drop_target(&drag);
@@ -984,6 +1051,17 @@ impl App {
             (Some((row, col)), Some(game)) => game.board.place(drag.piece, row, col),
             _ => false,
         };
+        if !placed
+            && target.is_some()
+            && let (Some((row, col)), Some(game)) = (drag.origin.at, &mut self.game)
+        {
+            game.board.set_turns(drag.piece, drag.origin.turns);
+            let (row, col) = (
+                isize::try_from(row).unwrap_or(0),
+                isize::try_from(col).unwrap_or(0),
+            );
+            game.board.place(drag.piece, row, col);
+        }
         let duration = if placed {
             theme::SNAP_TIME
         } else {
@@ -1030,11 +1108,17 @@ impl App {
             return;
         };
         match game.board.rotate(piece) {
-            Turned::InTray => {}
-            Turned::Stays(..) => self.fly_from(piece, from, theme::ROTATE_TIME),
-            Turned::ToTray => self.fly_from(piece, from, theme::RETURN_TIME),
+            Turned::InTray => self.spin(piece),
+            Turned::Stays(..) => {
+                self.fly_from(piece, from, theme::ROTATE_TIME);
+                self.spin(piece);
+            }
+            Turned::Blocked => {
+                if let Some(anim) = game.anims.get_mut(piece) {
+                    anim.wobble = Some(0.0);
+                }
+            }
         }
-        self.spin(piece);
         self.check_win();
     }
 }

@@ -10,6 +10,7 @@
 
 mod app;
 mod board;
+mod counters;
 mod draw;
 mod layout;
 mod painter;
@@ -17,12 +18,19 @@ mod shell;
 mod text;
 mod theme;
 
-pub use app::{App, Control, CounterMode, DRAG_THRESHOLD, TOUCH_LIFT, Toast};
+pub use app::{
+    App, Control, CounterMode, DRAG_THRESHOLD, NODES_PER_FRAME, TOUCH_DRAG_THRESHOLD, TOUCH_LIFT,
+    TOUCH_SLACK, Toast,
+};
 pub use board::{Board, Line, LineState, PieceState, Turned};
-pub use layout::{Layout, LayoutInput, MIN_TARGET};
+pub use counters::{CounterView, MAX_TICKS, MAX_TWO_LINES, MIN_SQUARE, counter_view};
+pub use layout::{
+    Arrangement, BAND, COUNTER_GAP, HelpRow, LOW_WIDE_HEIGHT, Layout, LayoutInput, MAX_TRAY_SHARE,
+    MIN_TARGET, TRAY_MIN_SCALE, TRAY_SCALE, TextBlock,
+};
 pub use painter::{Align, Font, FontFamily, Painter, Point, Rect, Rgba};
 pub use shell::{
-    Config, Cursor, Effect, Event, Key, Pointer, PointerKind, SETTING_COUNTERS, SETTING_DIFFICULTY,
-    SETTING_KEYS, SETTING_LANG,
+    Config, Cursor, Effect, Event, Insets, Key, Pointer, PointerKind, SETTING_COUNTERS,
+    SETTING_DIFFICULTY, SETTING_KEYS, SETTING_LANG,
 };
 pub use text::{Lang, Text, difficulty_label, text};

@@ -17,6 +17,9 @@ pub struct Config {
     pub width: f32,
     /// Height of the drawing area in logical pixels.
     pub height: f32,
+    /// Parts of the area covered by notches, rounded corners or system
+    /// bars; no control is placed there.
+    pub insets: Insets,
     /// Random bits for puzzle seeds. The UI has no other source of
     /// randomness, so the same entropy and the same events give the same
     /// puzzles.
@@ -34,6 +37,20 @@ pub struct Config {
     /// Text put in front of a puzzle code to make a shareable link, e.g.
     /// `https://example.org/endlogic/#p=`. Empty to share the bare code.
     pub share_prefix: String,
+}
+
+/// Safe-area insets: how far in from each edge the area is fully usable,
+/// in logical pixels.
+#[derive(Debug, Clone, Copy, PartialEq, Default)]
+pub struct Insets {
+    /// From the top edge.
+    pub top: f32,
+    /// From the right edge.
+    pub right: f32,
+    /// From the bottom edge.
+    pub bottom: f32,
+    /// From the left edge.
+    pub left: f32,
 }
 
 /// The kind of device behind a pointer.
@@ -74,12 +91,14 @@ pub enum Key {
 /// Input from the shell.
 #[derive(Debug, Clone, PartialEq)]
 pub enum Event {
-    /// The drawing area changed size (logical pixels).
+    /// The drawing area changed size or safe-area insets (logical pixels).
     Resize {
         /// New width.
         width: f32,
         /// New height.
         height: f32,
+        /// New safe-area insets.
+        insets: Insets,
     },
     /// The primary button went down or a finger touched. Shells send only
     /// the primary mouse button.

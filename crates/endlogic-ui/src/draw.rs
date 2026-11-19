@@ -1,13 +1,14 @@
 //! Drawing the whole screen with [`Painter`] primitives.
 
-use core::f32::consts::FRAC_PI_2;
+use core::f32::consts::{FRAC_PI_2, TAU};
 
 use endlogic_core::generator::Difficulty;
 use endlogic_core::{Cell, Shape};
 
 use crate::app::{App, CounterMode, Game, Gesture};
 use crate::board::{Line, LineState};
-use crate::layout::{Layout, TextBlock, to_f32};
+use crate::counters::{CounterView, counter_view};
+use crate::layout::{Arrangement, Layout, TextBlock, to_f32};
 use crate::painter::{Align, Font, FontFamily, Painter, Point, Rect, Rgba};
 use crate::text::{Lang, Text, difficulty_label, text};
 use crate::theme::{self, ease_out};
@@ -177,7 +178,7 @@ fn draw_header(app: &App, p: &mut dyn Painter) {
         p.fill_rect(panel, 10.0, theme::PANEL);
     }
     // Title: `//` in the accent color, then the name.
-    let title_font = fit(p, "// ENDLOGIC", mono(l.font * 1.4, true), l.title.w);
+    let title_font = fit(p, "// ENDLOGIC", mono(l.title_font, true), l.title.w);
     let y = l.title.center().y;
     p.text(
         "//",
@@ -200,7 +201,7 @@ fn draw_header(app: &App, p: &mut dyn Painter) {
     let r = l.puzzle_id;
     let marker = Rect::new(r.x, r.center().y - r.h * 0.3, 4.0, r.h * 0.6);
     p.fill_rect(marker, 1.0, theme::MARKER);
-    let font = fit(p, &id, mono(l.font * 0.9, false), r.w - 12.0);
+    let font = fit(p, &id, mono(l.id_font, false), r.w - 12.0);
     p.text(
         &id,
         Point::new(r.x + 12.0, r.center().y),
@@ -244,13 +245,20 @@ fn draw_top_controls(app: &App, p: &mut dyn Painter) {
         .map(|&d| difficulty_label(app.lang, d))
         .collect();
     let active = Difficulty::ALL.iter().position(|&d| d == app.difficulty);
-    let tabs = Rect::new(
-        l.tabs[0].x,
-        l.tabs[0].y,
-        l.tabs[3].right() - l.tabs[0].x,
-        l.tabs[0].h,
-    );
-    segmented(p, tabs, &labels, active, l.font * 0.9);
+    if l.tabs_in_a_row() {
+        segmented(p, l.tab_bar(), &labels, active, l.font * 0.9);
+    } else {
+        // A 2×2 grid: each tab is its own pill.
+        for (k, (&rect, label)) in l.tabs.iter().zip(&labels).enumerate() {
+            segmented(
+                p,
+                rect,
+                &[label],
+                (active == Some(k)).then_some(0),
+                l.font * 0.9,
+            );
+        }
+    }
     let lang = [Lang::En, Lang::Ua];
     segmented(
         p,
@@ -264,7 +272,12 @@ fn draw_top_controls(app: &App, p: &mut dyn Painter) {
     } else {
         Style::Disabled
     };
-    button(p, l.share, text(app.lang, Text::Share), style, l.font * 0.9);
+    let label = if l.share_short {
+        Text::ShareShort
+    } else {
+        Text::Share
+    };
+    button(p, l.share, text(app.lang, label), style, l.font * 0.9);
 }
 
 fn draw_bottom_controls(app: &App, p: &mut dyn Painter) {
@@ -439,85 +452,65 @@ fn line_color(line: Line) -> Rgba {
     }
 }
 
-/// Draws one counter in `area`; `vertical_ticks` for rows (ticks side by
-/// side), otherwise columns (ticks stacked).
-fn counter(p: &mut dyn Painter, area: Rect, line: Line, mode: CounterMode, rows: bool, font: f32) {
-    let cell = if rows { area.h } else { area.w };
-    if line.clue == 0 {
-        let color = if line.filled == 0 {
-            theme::MUTED
+/// Draws one counter in `area`: for a row (`row`), the band part left of
+/// the row; for a column, the band part above it.
+fn counter(
+    p: &mut dyn Painter,
+    area: Rect,
+    line: Line,
+    mode: CounterMode,
+    row: bool,
+    cell: f32,
+    font: f32,
+) {
+    let zero_color = if line.filled == 0 {
+        theme::MUTED
+    } else {
+        theme::ERROR
+    };
+    if mode == CounterMode::Numbers {
+        let color = if line.clue == 0 {
+            zero_color
         } else {
-            theme::ERROR
+            line_color(line)
         };
-        match mode {
-            CounterMode::Grid => {
-                let c = if rows {
-                    Point::new(area.right() - cell * 0.4, area.center().y)
-                } else {
-                    Point::new(area.center().x, area.bottom() - cell * 0.4)
-                };
-                empty_sign(p, c, cell * 0.16, (cell * 0.05).max(1.5), color);
-            }
-            CounterMode::Numbers => number(p, area, line, color, rows, font),
-        }
+        number(p, area, line, color, row, font);
         return;
     }
-    match mode {
-        CounterMode::Numbers => number(p, area, line, line_color(line), rows, font),
-        CounterMode::Grid => ticks(p, area, line, rows, cell),
+    match counter_view(line, area, row, cell) {
+        CounterView::Empty { center, radius } => {
+            empty_sign(p, center, radius, (cell * 0.05).max(1.5), zero_color);
+        }
+        CounterView::Number => number(p, area, line, line_color(line), row, font),
+        CounterView::Marks { marks, ticks } => {
+            let radius = if ticks { 0.0 } else { 1.0 };
+            for (k, rect) in marks.into_iter().enumerate() {
+                match line.state() {
+                    LineState::Exact => p.fill_rect(rect, radius, theme::BRIGHT),
+                    LineState::Over => p.fill_rect(rect, radius, theme::ERROR),
+                    LineState::Under if k < line.filled => {
+                        p.fill_rect(rect, radius, theme::ACCENT);
+                    }
+                    LineState::Under => {
+                        p.stroke_rect(rect.inset(0.5), radius, 1.0, theme::ACCENT);
+                    }
+                }
+            }
+        }
     }
 }
 
-fn number(p: &mut dyn Painter, area: Rect, line: Line, color: Rgba, rows: bool, font: f32) {
+fn number(p: &mut dyn Painter, area: Rect, line: Line, color: Rgba, row: bool, font: f32) {
     let label = format!("{}/{}", line.filled, line.clue);
-    let size = (if rows { area.h } else { area.w } * 0.36).min(font);
+    let size = (if row { area.h } else { area.w } * 0.36).min(font);
     let bold = line.state() == LineState::Exact;
-    let font = fit(
-        p,
-        &label,
-        mono(size, bold),
-        if rows { area.w } else { area.w - 2.0 } * 0.9,
-    );
-    if rows {
-        let anchor = Point::new(area.right() - area.w * 0.12, area.center().y);
+    let font = fit(p, &label, mono(size, bold), area.w * 0.92);
+    if row {
+        let anchor = Point::new(area.right() - area.w * 0.04, area.center().y);
         p.text(&label, anchor, font, Align::Right, color);
     } else {
-        let anchor = Point::new(area.center().x, area.bottom() - area.h * 0.3);
+        let anchor = Point::new(area.center().x, area.bottom() - area.h * 0.35);
         p.text(&label, anchor, font, Align::Center, color);
-    }
-}
-
-fn ticks(p: &mut dyn Painter, area: Rect, line: Line, rows: bool, cell: f32) {
-    let n = line.clue;
-    let depth = if rows { area.w } else { area.h };
-    let room = depth * 0.85;
-    let spacing = (cell * 0.18).min(room / to_f32(n));
-    let thick = (spacing * 0.55).min(cell * 0.08).max(1.5);
-    let long = cell * 0.5;
-    let state = line.state();
-    for k in 0..n {
-        // Tick 0 is next to the board.
-        let offset = depth * 0.08 + spacing * (to_f32(k) + 0.5);
-        let rect = if rows {
-            Rect::centered(
-                Point::new(area.right() - offset, area.center().y),
-                thick,
-                long,
-            )
-        } else {
-            Rect::centered(
-                Point::new(area.center().x, area.bottom() - offset),
-                long,
-                thick,
-            )
-        };
-        let filled = k < line.filled;
-        match state {
-            LineState::Exact => p.fill_rect(rect, 0.0, theme::BRIGHT),
-            LineState::Over => p.fill_rect(rect, 0.0, theme::ERROR),
-            LineState::Under if filled => p.fill_rect(rect, 0.0, theme::ACCENT),
-            LineState::Under => p.stroke_rect(rect.inset(0.5), 0.0, 1.0, theme::ACCENT),
-        }
     }
 }
 
@@ -527,12 +520,12 @@ fn draw_counters(app: &App, game: &Game, p: &mut dyn Painter) {
     for (row, line) in game.board.rows().into_iter().enumerate() {
         let cell = l.cell_rect(row, 0);
         let area = Rect::new(l.row_counters.x, cell.y, l.row_counters.w, cell.h);
-        counter(p, area, line, app.counters, true, font);
+        counter(p, area, line, app.counters, true, l.cell, font);
     }
     for (col, line) in game.board.cols().into_iter().enumerate() {
         let cell = l.cell_rect(0, col);
         let area = Rect::new(cell.x, l.col_counters.y, cell.w, l.col_counters.h);
-        counter(p, area, line, app.counters, false, font);
+        counter(p, area, line, app.counters, false, l.cell, font);
     }
 }
 
@@ -540,7 +533,7 @@ fn draw_counters(app: &App, game: &Game, p: &mut dyn Painter) {
 
 fn draw_tray(app: &App, game: &Game, p: &mut dyn Painter) {
     let l = &app.layout;
-    if game.won && !l.wide && !app.is_generating() {
+    if game.won && l.kind != Arrangement::Wide && !app.is_generating() {
         // The banner takes the empty tray's place.
         return;
     }
@@ -577,9 +570,16 @@ fn draw_pieces(app: &App, game: &Game, p: &mut dyn Painter) {
         .chain(dragged);
     for i in order {
         let (center, cell) = app.piece_visual(i);
-        let spin = game.anims.get(i).and_then(|a| a.spin).map_or(0.0, |t| {
+        let anim = game.anims.get(i);
+        let spin = anim.and_then(|a| a.spin).map_or(0.0, |t| {
             -FRAC_PI_2 * (1.0 - ease_out(t / theme::ROTATE_TIME))
         });
+        // A turn that did not fit: a short shake that dies down.
+        let wobble = anim.and_then(|a| a.wobble).map_or(0.0, |t| {
+            let left = 1.0 - (t / theme::WOBBLE_TIME).clamp(0.0, 1.0);
+            0.14 * left * (t / theme::WOBBLE_TIME * 3.0 * TAU).sin()
+        });
+        let spin = spin + wobble;
         let fill = theme::PIECE.mix(theme::BRIGHT, win * 0.35);
         let alpha = if Some(i) == dragged { 0.92 } else { 1.0 };
         piece(
@@ -692,7 +692,11 @@ fn draw_overlays(app: &App, p: &mut dyn Painter) {
         p.fill_rect(banner, 12.0, theme::PANEL.alpha(0.97 * t));
         p.stroke_rect(banner.inset(0.75), 12.0, 1.5, theme::BRIGHT.alpha(t));
         // The text fills the part left of the button.
-        let title_area = Rect::new(banner.x, banner.y, l.next.x - banner.x, banner.h);
+        let title_area = if l.next.x > banner.center().x {
+            Rect::new(banner.x, banner.y, l.next.x - banner.x, banner.h)
+        } else {
+            Rect::new(banner.x, banner.y, banner.w, l.next.y - banner.y)
+        };
         let label = text(app.lang, Text::Complete);
         let font = fit(p, label, mono(l.font * 1.2, true), title_area.w - 16.0);
         p.text(

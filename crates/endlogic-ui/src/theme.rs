@@ -45,6 +45,8 @@ pub const SNAP_TIME: f32 = 0.12;
 pub const RETURN_TIME: f32 = 0.18;
 /// Seconds for a piece taken from the tray to grow to board scale.
 pub const GROW_TIME: f32 = 0.08;
+/// Seconds a piece shakes when a turn does not fit.
+pub const WOBBLE_TIME: f32 = 0.2;
 /// Seconds for a quarter turn.
 pub const ROTATE_TIME: f32 = 0.10;
 /// Seconds for the win highlight to fade in.

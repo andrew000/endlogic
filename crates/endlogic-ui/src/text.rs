@@ -86,6 +86,8 @@ pub enum Text {
     InvalidLink,
     /// Share button.
     Share,
+    /// Share button where space is short.
+    ShareShort,
 }
 
 /// The text for `key` in `lang`.
@@ -108,6 +110,7 @@ pub const fn text(lang: Lang, key: Text) -> &'static str {
             Text::CopyFailed => "Couldn't copy the link",
             Text::InvalidLink => "Invalid puzzle link",
             Text::Share => "Share",
+            Text::ShareShort => "Link",
         },
         Lang::Ua => match key {
             Text::Subtitle => "Розмістіть компоненти на платі, щоб відремонтувати",
@@ -125,6 +128,7 @@ pub const fn text(lang: Lang, key: Text) -> &'static str {
             Text::CopyFailed => "Не вдалося скопіювати посилання",
             Text::InvalidLink => "Некоректне посилання",
             Text::Share => "Поділитися",
+            Text::ShareShort => "Лінк",
         },
     }
 }

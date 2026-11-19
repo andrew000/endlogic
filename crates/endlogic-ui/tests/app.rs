@@ -1,14 +1,18 @@
 //! Behaviour of the trainer, driven by synthetic events and a recording
 //! painter: no browser and no window.
 
+use std::fmt::Write as _;
+
 use endlogic_core::code::encode;
 use endlogic_core::format::parse;
 use endlogic_core::generator::Difficulty;
 use endlogic_core::solver::{DEFAULT_NODE_BUDGET, search};
 use endlogic_core::{Puzzle, Solution};
 use endlogic_ui::{
-    Align, App, Config, CounterMode, Cursor, Effect, Event, Font, Key, Lang, Layout, LayoutInput,
-    LineState, MIN_TARGET, Painter, Point, Pointer, PointerKind, Rect, Rgba, Text,
+    Align, App, Arrangement, BAND, COUNTER_GAP, Config, CounterMode, CounterView, Cursor, Effect,
+    Event, Font, Insets, Key, Lang, Layout, LayoutInput, Line, LineState, MIN_SQUARE, MIN_TARGET,
+    Painter, Point, Pointer, PointerKind, Rect, Rgba, TOUCH_DRAG_THRESHOLD, TRAY_MIN_SCALE,
+    TRAY_SCALE, Text, counter_view,
 };
 
 // ---- recording painter ----
@@ -82,6 +86,7 @@ fn config(width: f32, height: f32) -> Config {
     Config {
         width,
         height,
+        insets: Insets::default(),
         entropy: 0x5eed,
         settings: Vec::new(),
         system_language: "en-US".to_owned(),
@@ -440,15 +445,22 @@ fn a_tap_rotates() {
 }
 
 #[test]
-fn a_piece_that_cannot_turn_in_place_goes_to_the_tray() {
+fn a_piece_that_cannot_turn_in_place_stays_and_shakes() {
     let mut app = open(&strip());
     app.place(0, 0, 0, 0, PointerKind::Mouse);
     assert_eq!(at(&app, 0), Some((0, 0)));
     app.hover(cell(&app, 0, 1));
     app.handle(Event::Key(Key::R));
-    assert_eq!(at(&app, 0), None);
-    assert_eq!(turns(&app, 0), 1);
+    assert_eq!(at(&app, 0), Some((0, 0)));
+    assert_eq!(turns(&app, 0), 0);
+    // The shake is short and then the app goes idle.
+    assert!(app.frame(0.05, &mut Recorder::default()), "shaking");
+    let before = app.board().unwrap().clone();
     settle(&mut app);
+    assert_eq!(app.board().unwrap(), &before);
+    // A tap does the same.
+    app.tap(cell(&app, 0, 1));
+    assert_eq!((at(&app, 0), turns(&app, 0)), (Some((0, 0)), 0));
 }
 
 // ---- cancelling ----
@@ -878,8 +890,9 @@ fn idle_frames_are_not_requested() {
     app.handle(Event::Resize {
         width: 500.0,
         height: 900.0,
+        insets: Insets::default(),
     });
-    assert!(!app.layout().wide);
+    assert_eq!(app.layout().kind, Arrangement::Tall);
     assert!(!app.frame(0.016, &mut Recorder::default()));
 }
 
@@ -912,13 +925,51 @@ fn same_entropy_and_events_give_the_same_state() {
 
 // ---- layout ----
 
-const SIZES: [(f32, f32); 5] = [
+const SIZES: [(f32, f32); 10] = [
+    (360.0, 640.0),
+    (390.0, 844.0),
+    (412.0, 915.0),
+    (800.0, 895.0),
+    (780.0, 300.0),
+    (844.0, 390.0),
+    (915.0, 412.0),
     (1366.0, 768.0),
     (1920.0, 1080.0),
     (2560.0, 1440.0),
-    (390.0, 844.0),
-    (844.0, 390.0),
 ];
+
+/// Typical phone insets: a notch on top or on one side, a home indicator.
+fn phone_insets(w: f32, h: f32) -> Insets {
+    if w < h {
+        Insets {
+            top: 47.0,
+            right: 0.0,
+            bottom: 34.0,
+            left: 0.0,
+        }
+    } else if h < 520.0 {
+        Insets {
+            top: 0.0,
+            right: 47.0,
+            bottom: 21.0,
+            left: 47.0,
+        }
+    } else {
+        Insets::default()
+    }
+}
+
+fn expected_kind(w: f32, h: f32) -> Arrangement {
+    if w >= h * 1.2 {
+        if h < 520.0 {
+            Arrangement::LowWide
+        } else {
+            Arrangement::Wide
+        }
+    } else {
+        Arrangement::Tall
+    }
+}
 
 fn assert_close(a: f32, b: f32, what: &str) {
     assert!((a - b).abs() < 0.5, "{what}: {a} != {b}");
@@ -926,7 +977,10 @@ fn assert_close(a: f32, b: f32, what: &str) {
 
 fn check_layout(layout: &Layout, input: &LayoutInput, what: &str) {
     let (w, h) = (input.width, input.height);
+    assert_eq!(layout.kind, expected_kind(w, h), "{what}: arrangement");
     let screen = Rect::new(0.0, 0.0, w, h);
+    let i = input.insets;
+    let safe = Rect::new(i.left, i.top, w - i.left - i.right, h - i.top - i.bottom);
     let rects = layout.static_rects();
     for (name, rect) in &rects {
         assert!(
@@ -943,11 +997,27 @@ fn check_layout(layout: &Layout, input: &LayoutInput, what: &str) {
             );
         }
     }
-    for (name, rect) in layout.targets() {
+    // Touch zones: big enough, inside the safe area, never overlapping.
+    let mut targets = layout.targets();
+    targets.push(("next", Layout::zone(layout.next)));
+    for (name, zone) in &targets {
         assert!(
-            rect.w >= MIN_TARGET - 0.01 && rect.h >= MIN_TARGET - 0.01,
-            "{what}: {name} {rect:?} too small to tap"
+            zone.w >= MIN_TARGET - 0.01 && zone.h >= MIN_TARGET - 0.01,
+            "{what}: {name} {zone:?} too small to tap"
         );
+        assert!(
+            safe.contains_rect(*zone),
+            "{what}: {name} {zone:?} in an inset"
+        );
+    }
+    let playing = &targets[..targets.len() - 1];
+    for (k, (a, za)) in playing.iter().enumerate() {
+        for (b, zb) in &playing[k + 1..] {
+            assert!(
+                !za.intersects(*zb),
+                "{what}: zones {a} {za:?} and {b} {zb:?}"
+            );
+        }
     }
     if let Some(panel) = layout.panel {
         let mut inner = vec![layout.title, layout.puzzle_id];
@@ -963,46 +1033,37 @@ fn check_layout(layout: &Layout, input: &LayoutInput, what: &str) {
             );
         }
     }
-    // Counters sit right next to the grid.
-    assert!(layout.frame.contains_rect(layout.cells), "{what}: cells");
-    assert_close(
-        layout.row_counters.right(),
-        layout.cells.x - 0.15 * layout.cell,
-        what,
-    );
-    assert_close(
-        layout.col_counters.bottom(),
-        layout.cells.y - 0.15 * layout.cell,
-        what,
-    );
-
+    check_board(layout, what);
     check_tray(layout, input, what);
     check_banner(layout, &rects, what);
-
-    if layout.wide {
-        assert!(
-            layout.tray.w <= w * 0.24 + 0.01,
-            "{what}: tray {} of {w}",
-            layout.tray.w
-        );
-        // One vertical axis.
-        let axis = layout.axis;
-        assert_close(axis, w / 2.0, what);
-        for (name, rect) in [
-            ("tabs", layout.tab_bar()),
-            ("board", layout.board_block()),
-            ("counters", layout.counters),
-            ("banner", layout.banner),
-        ] {
-            assert_close(rect.center().x, axis, &format!("{what}: {name} axis"));
-        }
+    match layout.kind {
+        Arrangement::Wide => check_wide(layout, w, what),
+        Arrangement::Tall => check_tall(layout, safe, what),
+        Arrangement::LowWide => check_low_wide(layout, what),
     }
-    assert!(layout.cell >= 20.0, "{what}: cell {}", layout.cell);
-    assert_eq!(layout.wide, w > h, "{what}: arrangement");
+    assert!(layout.cell >= 12.0, "{what}: cell {}", layout.cell);
+}
+
+/// The grid is on the axis, with a counter band on the left and an equal
+/// empty band on the right.
+fn check_board(layout: &Layout, what: &str) {
+    let c = layout.cell;
+    assert!(layout.frame.contains_rect(layout.cells), "{what}: cells");
+    assert_close(
+        layout.cells.center().x,
+        layout.axis,
+        &format!("{what}: grid axis"),
+    );
+    assert_close(layout.row_counters.w, BAND * c, what);
+    assert_close(layout.col_counters.h, BAND * c, what);
+    assert_close(layout.right_band.w, layout.row_counters.w, what);
+    let gap = COUNTER_GAP * c;
+    assert_close(layout.row_counters.right(), layout.cells.x - gap, what);
+    assert_close(layout.col_counters.bottom(), layout.cells.y - gap, what);
+    assert_close(layout.right_band.x, layout.cells.right() + gap, what);
 }
 
 fn check_tray(layout: &Layout, input: &LayoutInput, what: &str) {
-    // The tray: every piece fits, cards share one size and one scale.
     assert_eq!(layout.cards.len(), input.pieces, "{what}: cards");
     let first = layout.cards[0];
     for (k, card) in layout.cards.iter().enumerate() {
@@ -1017,7 +1078,7 @@ fn check_tray(layout: &Layout, input: &LayoutInput, what: &str) {
         }
     }
     assert!(
-        layout.tray_cell <= layout.cell * 0.5 + 0.01,
+        layout.tray_cell <= layout.cell * TRAY_SCALE + 0.01,
         "{what}: tray cell {} board cell {}",
         layout.tray_cell,
         layout.cell
@@ -1030,25 +1091,108 @@ fn check_tray(layout: &Layout, input: &LayoutInput, what: &str) {
 }
 
 fn check_banner(layout: &Layout, rects: &[(&str, Rect)], what: &str) {
-    let screen = Rect::new(0.0, 0.0, layout.axis * 2.0, f32::MAX);
-    // The banner: on screen, clear of the board, counters and buttons.
-    assert!(screen.contains_rect(layout.banner), "{what}: banner");
+    assert!(layout.safe.contains_rect(layout.banner), "{what}: banner");
     assert!(layout.banner.contains_rect(layout.next), "{what}: next");
     for (name, rect) in rects {
-        if *name != "banner" && (*name != "tray" || layout.wide) {
+        let on_tray = *name == "tray" && layout.kind != Arrangement::Wide;
+        if *name != "banner" && !on_tray {
             assert!(
                 !layout.banner.intersects(*rect),
                 "{what}: banner overlaps {name}"
             );
         }
     }
-    if !layout.wide {
-        // Where the tray was; it may be wider than a narrow tray.
-        assert!(
-            layout.banner.y >= layout.tray.y - 0.01
-                && layout.banner.bottom() <= layout.tray.bottom() + 0.01,
-            "{what}: banner not on the tray"
+}
+
+fn check_wide(layout: &Layout, w: f32, what: &str) {
+    assert!(
+        layout.tray.w <= w * 0.24 + 0.01,
+        "{what}: tray {} of {w}",
+        layout.tray.w
+    );
+    for (name, rect) in [
+        ("tabs", layout.tab_bar()),
+        ("counters", layout.counters),
+        ("banner", layout.banner),
+    ] {
+        assert_close(
+            rect.center().x,
+            layout.axis,
+            &format!("{what}: {name} axis"),
         );
+    }
+}
+
+fn check_tall(layout: &Layout, safe: Rect, what: &str) {
+    let header_top = layout.title.y.min(layout.lang.y);
+    let header_bottom = layout
+        .puzzle_id
+        .bottom()
+        .max(layout.lang.bottom())
+        .max(layout.share.bottom());
+    assert!(header_bottom - header_top <= 48.0, "{what}: header");
+    assert!(layout.tabs.iter().all(|t| t.h <= 36.0), "{what}: tabs");
+    for button in [layout.reset, layout.counters, layout.new] {
+        assert!((38.0..=42.0).contains(&button.h), "{what}: bottom button");
+        assert!(
+            button.bottom() <= safe.bottom() - 12.0 + 0.01,
+            "{what}: above inset"
+        );
+    }
+    let content = safe.w - 32.0;
+    assert_close(layout.tray.w, content, &format!("{what}: tray width"));
+    assert!(
+        layout.tray.w >= layout.cells.w,
+        "{what}: tray narrower than grid"
+    );
+    assert!(
+        layout.tray_cell >= layout.cell * TRAY_MIN_SCALE - 0.01,
+        "{what}: tray cell {} below a third of {}",
+        layout.tray_cell,
+        layout.cell
+    );
+    assert!(
+        layout.tray.y >= layout.board_block().bottom(),
+        "{what}: tray under board"
+    );
+}
+
+fn check_low_wide(layout: &Layout, what: &str) {
+    // No top or bottom row: every control is beside the board.
+    let block = layout.board_block();
+    let mut controls = vec![
+        layout.lang,
+        layout.share,
+        layout.reset,
+        layout.counters,
+        layout.new,
+        layout.tray,
+    ];
+    controls.extend(layout.tabs);
+    for rect in controls {
+        assert!(
+            rect.right() <= block.x + 0.01 || rect.x >= block.right() - 0.01,
+            "{what}: {rect:?} above or below the board"
+        );
+    }
+    assert!(
+        layout.panel.is_none() && layout.help.is_empty(),
+        "{what}: help"
+    );
+}
+
+fn input_for(w: f32, h: f32, difficulty: Difficulty, side: usize, lang: Lang) -> LayoutInput {
+    let params = difficulty.params();
+    LayoutInput {
+        width: w,
+        height: h,
+        insets: Insets::default(),
+        touch: false,
+        lang,
+        grid_width: params.width,
+        grid_height: params.height,
+        pieces: params.pieces.max,
+        max_piece_side: side,
     }
 }
 
@@ -1056,30 +1200,26 @@ fn check_banner(layout: &Layout, rects: &[(&str, Rect)], what: &str) {
 fn layout_fits_every_size_and_difficulty() {
     for (w, h) in SIZES {
         for difficulty in Difficulty::ALL {
-            let params = difficulty.params();
             for lang in [Lang::En, Lang::Ua] {
                 for touch in [false, true] {
-                    // The largest tray this difficulty can produce.
-                    for side in [3, params.piece_size.max] {
-                        let input = LayoutInput {
-                            width: w,
-                            height: h,
-                            touch,
-                            lang,
-                            grid_width: params.width,
-                            grid_height: params.height,
-                            pieces: params.pieces.max,
-                            max_piece_side: side,
-                        };
-                        let what =
-                            format!("{w}x{h} {difficulty:?} {lang:?} touch={touch} side={side}");
-                        let layout = Layout::compute(&input);
-                        check_layout(&layout, &input, &what);
-                        if touch || !layout.wide {
-                            assert!(layout.help.is_empty(), "{what}: help");
-                        }
-                        if !touch && layout.wide && h >= 700.0 {
-                            assert_eq!(layout.help.len(), 3, "{what}: no help");
+                    for insets in [Insets::default(), phone_insets(w, h)] {
+                        for side in [3, 4, 5] {
+                            let input = LayoutInput {
+                                touch,
+                                insets,
+                                ..input_for(w, h, difficulty, side, lang)
+                            };
+                            let what = format!(
+                                "{w}x{h} {difficulty:?} {lang:?} touch={touch} side={side} {insets:?}"
+                            );
+                            let layout = Layout::compute(&input);
+                            check_layout(&layout, &input, &what);
+                            if touch || layout.kind != Arrangement::Wide {
+                                assert!(layout.help.is_empty(), "{what}: help");
+                            }
+                            if !touch && layout.kind == Arrangement::Wide && h >= 700.0 {
+                                assert_eq!(layout.help.len(), 3, "{what}: no help");
+                            }
                         }
                     }
                 }
@@ -1089,18 +1229,27 @@ fn layout_fits_every_size_and_difficulty() {
 }
 
 #[test]
+fn phones_on_their_side_get_a_big_board() {
+    for (w, h, least) in [(844.0, 390.0, 40.0), (780.0, 300.0, 30.0)] {
+        for insets in [Insets::default(), phone_insets(w, h)] {
+            let input = LayoutInput {
+                insets,
+                ..input_for(w, h, Difficulty::Normal, 4, Lang::Ua)
+            };
+            let layout = Layout::compute(&input);
+            assert_eq!(layout.kind, Arrangement::LowWide);
+            assert!(
+                layout.cell >= least,
+                "{w}x{h} {insets:?}: cell {}",
+                layout.cell
+            );
+        }
+    }
+}
+
+#[test]
 fn a_big_screen_gives_easy_a_big_board() {
-    let params = Difficulty::Easy.params();
-    let layout = Layout::compute(&LayoutInput {
-        width: 1920.0,
-        height: 1080.0,
-        touch: false,
-        lang: Lang::En,
-        grid_width: params.width,
-        grid_height: params.height,
-        pieces: params.pieces.max,
-        max_piece_side: 3,
-    });
+    let layout = Layout::compute(&input_for(1920.0, 1080.0, Difficulty::Easy, 3, Lang::En));
     assert!(layout.cell > 64.0, "cell {}", layout.cell);
 }
 
@@ -1108,16 +1257,7 @@ fn a_big_screen_gives_easy_a_big_board() {
 fn help_icons_share_an_axis_and_center_on_their_text() {
     for (w, h) in [(1366.0, 768.0), (1920.0, 1080.0), (2560.0, 1440.0)] {
         for lang in [Lang::En, Lang::Ua] {
-            let layout = Layout::compute(&LayoutInput {
-                width: w,
-                height: h,
-                touch: false,
-                lang,
-                grid_width: 6,
-                grid_height: 6,
-                pieces: 5,
-                max_piece_side: 4,
-            });
+            let layout = Layout::compute(&input_for(w, h, Difficulty::Normal, 4, lang));
             let what = format!("{w}x{h} {lang:?}");
             assert_eq!(layout.help.len(), 3, "{what}");
             let axis = layout.help[0].icon.center().x;
@@ -1133,7 +1273,6 @@ fn help_icons_share_an_axis_and_center_on_their_text() {
                     gaps.push(top - bottom);
                 }
             }
-            // Equal spacing between rows, and about the same above the help.
             assert_close(gaps[0], gaps[1], &what);
             let subtitle = layout.subtitle.as_ref().unwrap();
             let first = &layout.help[0];
@@ -1143,7 +1282,6 @@ fn help_icons_share_an_axis_and_center_on_their_text() {
                 "{what}: {above} vs {}",
                 gaps[0]
             );
-            // The panel ends with its content.
             let panel = layout.panel.unwrap();
             let last = &layout.help[2];
             let bottom = last.text.rect.bottom().max(last.icon.bottom());
@@ -1155,12 +1293,60 @@ fn help_icons_share_an_axis_and_center_on_their_text() {
     }
 }
 
+/// A 16×16 board with clues from 1 to 16 and eight 4×4 pieces.
+fn sixteen() -> Puzzle {
+    let mut text = String::from("endlogic 1\ngrid\n");
+    for _ in 0..16 {
+        text.push_str(&".".repeat(16));
+        text.push('\n');
+    }
+    let clues: Vec<String> = (1..=16).rev().map(|n: u32| n.to_string()).collect();
+    let clues = clues.join(" ");
+    writeln!(text, "rows {clues}\ncols {clues}").unwrap();
+    for _ in 0..8 {
+        text.push_str("piece\n####\n####\n####\n####\n");
+    }
+    parse(&text).unwrap()
+}
+
+#[test]
+fn a_sixteen_by_sixteen_puzzle_fits() {
+    for (w, h) in [(390.0, 844.0), (1920.0, 1080.0)] {
+        let mut config = config(w, h);
+        config.code = Some(encode(&sixteen()).unwrap());
+        config.touch = w < h;
+        let mut app = App::new(config);
+        assert!(!app.is_generating());
+        let board = app.board().unwrap();
+        let input = LayoutInput {
+            width: w,
+            height: h,
+            insets: Insets::default(),
+            touch: w < h,
+            lang: Lang::En,
+            grid_width: board.width(),
+            grid_height: board.height(),
+            pieces: board.piece_count(),
+            max_piece_side: board.max_piece_side(),
+        };
+        check_layout(app.layout(), &input, &format!("16x16 at {w}x{h}"));
+        let drawing = settle(&mut app);
+        let screen = Rect::new(-1.0, -1.0, w + 2.0, h + 2.0);
+        for call in &drawing.calls {
+            if let Call::FillRect(r, _) | Call::StrokeRect(r, _) = call {
+                assert!(screen.contains_rect(*r), "{w}x{h}: {call:?}");
+            }
+        }
+    }
+}
+
 #[test]
 fn layout_of_real_puzzles_fits() {
     for (w, h) in SIZES {
         for (k, difficulty) in Difficulty::ALL.into_iter().enumerate() {
             let mut config = config(w, h);
-            config.touch = w < h;
+            config.touch = w < h || h < 520.0;
+            config.insets = phone_insets(w, h);
             config.entropy = u64::try_from(k).unwrap();
             config.settings = vec![("difficulty".to_owned(), difficulty.name().to_owned())];
             let mut app = generated(config);
@@ -1168,7 +1354,8 @@ fn layout_of_real_puzzles_fits() {
             let input = LayoutInput {
                 width: w,
                 height: h,
-                touch: w < h,
+                insets: phone_insets(w, h),
+                touch: w < h || h < 520.0,
                 lang: Lang::En,
                 grid_width: board.width(),
                 grid_height: board.height(),
@@ -1205,6 +1392,7 @@ fn any_window_size_draws_without_panicking() {
         app.handle(Event::Resize {
             width: w,
             height: h,
+            insets: Insets::default(),
         });
         settle(&mut app);
         let from = card(&app, 0);
@@ -1219,6 +1407,7 @@ fn any_window_size_draws_without_panicking() {
         app.handle(Event::Resize {
             width: w,
             height: h,
+            insets: Insets::default(),
         });
         assert!(
             app.layout().cell >= 24.0,
@@ -1261,4 +1450,254 @@ fn a_piece_grows_when_taken_from_the_tray_and_shrinks_back() {
     );
     settle(&mut app);
     assert_eq!(app.piece_visual(0).1, tray_cell);
+}
+
+// ---- counters ----
+
+/// The band part beside row 0 of a grid at (100, 100) with cells of `cell`.
+fn row_area(cell: f32) -> Rect {
+    let band = BAND * cell;
+    Rect::new(100.0 - COUNTER_GAP * cell - band, 100.0, band, cell)
+}
+
+/// The band part above column 0 of the same grid.
+fn col_area(cell: f32) -> Rect {
+    let band = BAND * cell;
+    Rect::new(100.0, 100.0 - COUNTER_GAP * cell - band, cell, band)
+}
+
+fn marks(view: CounterView) -> (Vec<Rect>, bool) {
+    match view {
+        CounterView::Marks { marks, ticks } => (marks, ticks),
+        other => panic!("expected marks, got {other:?}"),
+    }
+}
+
+fn line(filled: usize, clue: usize) -> Line {
+    Line { filled, clue }
+}
+
+/// Distinct values, rounded to half a pixel.
+fn distinct(values: impl Iterator<Item = f32>) -> usize {
+    // Screen coordinates, far inside `i64`.
+    #[allow(clippy::cast_possible_truncation)]
+    let mut v: Vec<i64> = values.map(|x| (x * 2.0).round() as i64).collect();
+    v.sort_unstable();
+    v.dedup();
+    v.len()
+}
+
+#[test]
+fn counter_shapes_follow_the_clue() {
+    let cell = 60.0;
+    for row in [true, false] {
+        let area = if row { row_area(cell) } else { col_area(cell) };
+        match counter_view(line(0, 0), area, row, cell) {
+            CounterView::Empty { center, radius } => {
+                assert!(area.contains_rect(Rect::centered(center, 2.0 * radius, 2.0 * radius)));
+            }
+            other => panic!("zero clue: {other:?}"),
+        }
+        for n in 1..=16 {
+            let (marks, ticks) = marks(counter_view(line(0, n), area, row, cell));
+            assert_eq!(marks.len(), n, "clue {n}");
+            assert_eq!(ticks, n <= 5, "clue {n}");
+            for m in &marks {
+                assert!(
+                    area.contains_rect(*m),
+                    "clue {n} row={row}: {m:?} outside {area:?}"
+                );
+            }
+            // Distance from the grid, and position across the band.
+            let along = |m: &Rect| if row { -m.center().x } else { -m.center().y };
+            let across = |m: &Rect| if row { m.center().y } else { m.center().x };
+            let lines = distinct(marks.iter().map(across));
+            let groups = distinct(marks.iter().map(along));
+            match n {
+                1..=5 => assert_eq!((lines, groups), (1, n), "clue {n}"),
+                6..=10 => assert_eq!((lines, groups), (2, n.div_ceil(2)), "clue {n}"),
+                _ => assert_eq!((lines, groups), (3, n.div_ceil(3)), "clue {n}"),
+            }
+            // Marks come nearest-first; inside a group top to bottom (rows)
+            // or left to right (columns).
+            for pair in marks.windows(2) {
+                let (a, b) = (&pair[0], &pair[1]);
+                let same_group = (along(a) - along(b)).abs() < 0.5;
+                if same_group {
+                    assert!(across(a) < across(b), "clue {n}: order inside a group");
+                } else {
+                    assert!(along(a) < along(b), "clue {n}: groups grow outwards");
+                }
+            }
+            // A remainder sits in the farthest group.
+            if n > 5 {
+                let size = if n <= 10 { 2 } else { 3 };
+                let farthest = marks.iter().map(along).fold(f32::MIN, f32::max);
+                let last = marks
+                    .iter()
+                    .filter(|m| (along(m) - farthest).abs() < 0.5)
+                    .count();
+                let expected = if n % size == 0 { size } else { n % size };
+                assert_eq!(last, expected, "clue {n}: remainder");
+            }
+        }
+    }
+}
+
+#[test]
+fn squares_too_small_become_a_number() {
+    // At a 20 px cell sixteen squares would be under 3 px.
+    let cell = 20.0;
+    assert_eq!(
+        counter_view(line(0, 16), row_area(cell), true, cell),
+        CounterView::Number
+    );
+    // Small clues still get marks, and every mark is at least 3 px.
+    for n in 1..=16 {
+        if let CounterView::Marks {
+            marks,
+            ticks: false,
+        } = counter_view(line(0, n), row_area(cell), true, cell)
+        {
+            assert!(marks.iter().all(|m| m.w >= MIN_SQUARE), "clue {n}");
+        }
+    }
+    let (marks, _) = marks(counter_view(line(0, 6), col_area(60.0), false, 60.0));
+    assert!(marks.iter().all(|m| m.w >= MIN_SQUARE));
+}
+
+/// An 8×2 board whose rows ask for 6 and 7 cells: square counters.
+fn long_rows() -> Puzzle {
+    parse("endlogic 1\ngrid\n........\n........\nrows 6 7\ncols 2 2 2 2 2 2 1 0\npiece\n#######\npiece\n######\n").unwrap()
+}
+
+fn fills(drawing: &Recorder, color: Rgba) -> usize {
+    drawing
+        .calls
+        .iter()
+        .filter(|c| matches!(c, Call::FillRect(_, k) if *k == color))
+        .count()
+}
+
+#[test]
+fn square_counters_show_the_three_states() {
+    let mut app = open(&long_rows());
+    let accent = Rgba::hex(0x19_E3C0);
+    let outlines = |d: &Recorder| {
+        d.calls
+            .iter()
+            .filter(|c| matches!(c, Call::StrokeRect(_, k) if *k == accent))
+            .count()
+    };
+    // Nothing placed: 6 + 7 outlined squares.
+    let drawing = settle(&mut app);
+    assert!(outlines(&drawing) >= 13);
+    assert_eq!(fills(&drawing, ERROR), 0);
+    // Seven cells in the row that wants six: all six squares red.
+    app.place(0, 0, 0, 0, PointerKind::Mouse);
+    assert_eq!(app.board().unwrap().rows()[0].state(), LineState::Over);
+    let drawing = settle(&mut app);
+    assert!(fills(&drawing, ERROR) >= 6, "{}", fills(&drawing, ERROR));
+    // In the row that wants seven: all seven bright.
+    let press = cell(&app, 0, 3);
+    let to = release_point(&app, 0, press, 1, 0, PointerKind::Mouse);
+    app.drag(press, to, PointerKind::Mouse);
+    assert_eq!(at(&app, 0), Some((1, 0)));
+    let drawing = settle(&mut app);
+    assert!(fills(&drawing, BRIGHT) >= 7);
+    assert_eq!(fills(&drawing, ERROR), 0);
+}
+
+// ---- controls ----
+
+#[test]
+fn a_bad_drop_over_the_grid_returns_a_board_piece_to_its_cell() {
+    let mut app = open(&sample("wlh9000-1.txt"));
+    app.place(0, 0, 1, 0, PointerKind::Mouse);
+    app.place(1, 0, 3, 3, PointerKind::Mouse);
+    // Take piece 0, turn it, and drop it onto piece 1: invalid, but over
+    // the grid, so it goes back to (1, 0) in its old turn.
+    let press = cell(&app, 1, 0);
+    let id = app.start_drag(
+        press,
+        Point::new(press.x + 20.0, press.y),
+        PointerKind::Mouse,
+    );
+    app.handle(Event::Key(Key::R));
+    let to = release_point(&app, 0, press, 3, 3, PointerKind::Mouse);
+    app.handle(Event::PointerMove(pointer(id, to, PointerKind::Mouse)));
+    app.handle(Event::PointerUp(pointer(id, to, PointerKind::Mouse)));
+    assert_eq!((at(&app, 0), turns(&app, 0)), (Some((1, 0)), 0));
+    assert!(app.frame(0.01, &mut Recorder::default()), "flies back");
+    settle(&mut app);
+    // Dropped half off the grid at a dead cell row: still over the grid.
+    let press = cell(&app, 1, 0);
+    let to = release_point(&app, 0, press, 0, 0, PointerKind::Mouse);
+    app.drag(press, to, PointerKind::Mouse);
+    assert_eq!(at(&app, 0), Some((1, 0)));
+    // Dropped clear of the grid: to the tray.
+    app.drag(cell(&app, 1, 0), Point::new(3.0, 3.0), PointerKind::Mouse);
+    assert_eq!(at(&app, 0), None);
+    // From the tray to a bad spot: back to the tray.
+    app.place(2, 0, 3, 3, PointerKind::Mouse);
+    assert_eq!(at(&app, 2), None);
+}
+
+#[test]
+fn a_finger_needs_a_longer_move_to_drag() {
+    let mut app = open(&sample("wlh9000-1.txt"));
+    let from = card(&app, 0);
+    let short = Point::new(from.x + TOUCH_DRAG_THRESHOLD - 3.0, from.y);
+    app.handle(Event::PointerDown(pointer(
+        FINGER,
+        from,
+        PointerKind::Touch,
+    )));
+    app.handle(Event::PointerMove(pointer(
+        FINGER,
+        short,
+        PointerKind::Touch,
+    )));
+    assert_eq!(app.dragged_piece(), None);
+    app.handle(Event::PointerUp(pointer(FINGER, short, PointerKind::Touch)));
+    assert_eq!(turns(&app, 0), 1, "still a tap");
+    let far = Point::new(from.x + TOUCH_DRAG_THRESHOLD + 1.0, from.y);
+    app.handle(Event::PointerDown(pointer(
+        FINGER,
+        from,
+        PointerKind::Touch,
+    )));
+    app.handle(Event::PointerMove(pointer(FINGER, far, PointerKind::Touch)));
+    assert_eq!(app.dragged_piece(), Some(0));
+    app.handle(Event::Key(Key::Escape));
+    app.handle(Event::PointerUp(pointer(FINGER, far, PointerKind::Touch)));
+    // The mouse keeps its short threshold.
+    let mouse = Point::new(from.x + TOUCH_DRAG_THRESHOLD - 3.0, from.y);
+    app.handle(Event::PointerDown(pointer(MOUSE, from, PointerKind::Mouse)));
+    app.handle(Event::PointerMove(pointer(
+        MOUSE,
+        mouse,
+        PointerKind::Mouse,
+    )));
+    assert_eq!(app.dragged_piece(), Some(0));
+}
+
+#[test]
+fn a_finger_may_miss_a_piece_by_a_little() {
+    let mut app = open(&sample("wlh9000-1.txt"));
+    // Piece 0 covers (1, 0), (1, 1) and (2, 0); (2, 1) is empty.
+    app.place(0, 0, 1, 0, PointerKind::Mouse);
+    let l = app.layout().clone();
+    let near = Point::new(l.cells.x + 1.3 * l.cell, l.cells.y + 2.6 * l.cell);
+    let far = Point::new(l.cells.x + 1.5 * l.cell, l.cells.y + 2.6 * l.cell);
+    // The mouse must hit the piece.
+    app.hover(near);
+    app.handle(Event::Key(Key::R));
+    assert_eq!(turns(&app, 0), 0);
+    // Half a cell away a finger misses too.
+    app.tap(far);
+    assert_eq!(turns(&app, 0), 0);
+    // A finger 0.3 cell away still taps it.
+    app.tap(near);
+    assert_eq!(turns(&app, 0), 1);
 }

@@ -51,8 +51,9 @@ pub enum Turned {
     InTray,
     /// It stays on the board at this top-left cell.
     Stays(usize, usize),
-    /// It did not fit in the new orientation and went to the tray.
-    ToTray,
+    /// It did not fit in the new orientation, so it stayed where it was,
+    /// unturned.
+    Blocked,
 }
 
 /// The puzzle plus the player's piece positions.
@@ -199,7 +200,7 @@ impl Board {
     }
 
     /// Turns piece `i` a quarter clockwise. A piece on the board turns
-    /// about its center; if it no longer fits there it goes to the tray.
+    /// about its center; if it does not fit there turned, nothing changes.
     pub fn rotate(&mut self, i: usize) -> Turned {
         let state = self.pieces[i];
         let turns = (state.turns + 1) % 4;
@@ -224,16 +225,14 @@ impl Board {
             .iter()
             .flat_map(|&a| dc.iter().map(move |&b| (row + a, col + b)))
             .find(|&(r, c)| self.fits(i, turns, r, c));
+        let Some((r, c)) = spot else {
+            return Turned::Blocked;
+        };
         self.remove(i);
         self.pieces[i].turns = turns;
-        match spot {
-            Some((r, c)) => {
-                self.place(i, r, c);
-                let (r, c) = self.pieces[i].at.unwrap_or_default();
-                Turned::Stays(r, c)
-            }
-            None => Turned::ToTray,
-        }
+        self.place(i, r, c);
+        let (r, c) = self.pieces[i].at.unwrap_or_default();
+        Turned::Stays(r, c)
     }
 
     /// Moves every piece to the tray, keeping orientations.
