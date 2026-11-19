@@ -12,8 +12,11 @@
 //!   farthest from the grid.
 //!
 //! Marks fill from the grid outwards: nearest group first, and inside a
-//! group top to bottom for rows, left to right for columns. When squares
-//! would be smaller than [`MIN_SQUARE`] the counter shows a number instead.
+//! group top to bottom for rows, left to right for columns.
+//!
+//! All square counters of one puzzle use the same square and the same
+//! spacing, set by the largest clue of the puzzle. When squares would be
+//! smaller than [`MIN_SQUARE`] every square counter shows a number instead.
 
 use crate::board::Line;
 use crate::layout::to_f32;
@@ -50,9 +53,11 @@ pub enum CounterView {
 
 /// Lays out the counter of `line` in `area`, the part of the counter band
 /// beside one row (`row == true`; the grid is to the right of `area`) or
-/// above one column (the grid is below `area`). `cell` is the board cell.
+/// above one column (the grid is below `area`). `cell` is the board cell
+/// and `largest` the largest clue of the puzzle, rows and columns alike,
+/// which sets the size of the squares.
 #[must_use]
-pub fn counter_view(line: Line, area: Rect, row: bool, cell: f32) -> CounterView {
+pub fn counter_view(line: Line, area: Rect, row: bool, cell: f32, largest: usize) -> CounterView {
     let n = line.clue;
     let depth = if row { area.w } else { area.h };
     if n == 0 {
@@ -68,7 +73,15 @@ pub fn counter_view(line: Line, area: Rect, row: bool, cell: f32) -> CounterView
     if n <= MAX_TICKS {
         return ticks(n, area, row, cell, depth);
     }
-    squares(n, area, row, cell, depth)
+    squares(n, area, row, square_pitch(largest.max(n), cell, depth))
+}
+
+/// Distance between neighbouring squares when the largest clue is `n`:
+/// the square plus the space after it.
+fn square_pitch(n: usize, cell: f32, depth: f32) -> f32 {
+    let lines = if n <= MAX_TWO_LINES { 2 } else { 3 };
+    let groups = n.div_ceil(lines);
+    (depth * 0.95 / to_f32(groups)).min(cell * 0.85 / to_f32(lines))
 }
 
 fn ticks(n: usize, area: Rect, row: bool, cell: f32, depth: f32) -> CounterView {
@@ -99,11 +112,10 @@ fn ticks(n: usize, area: Rect, row: bool, cell: f32, depth: f32) -> CounterView 
     CounterView::Marks { marks, ticks: true }
 }
 
-fn squares(n: usize, area: Rect, row: bool, cell: f32, depth: f32) -> CounterView {
+fn squares(n: usize, area: Rect, row: bool, pitch: f32) -> CounterView {
+    let depth = if row { area.w } else { area.h };
     let lines = if n <= MAX_TWO_LINES { 2 } else { 3 };
     let groups = n.div_ceil(lines);
-    // Pitch is the square plus the space after it.
-    let pitch = (depth * 0.95 / to_f32(groups)).min(cell * 0.85 / to_f32(lines));
     let side = pitch / 1.35;
     if side < MIN_SQUARE {
         return CounterView::Number;

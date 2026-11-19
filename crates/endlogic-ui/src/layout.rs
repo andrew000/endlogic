@@ -45,6 +45,10 @@ pub const TRAY_MIN_SCALE: f32 = 1.0 / 3.0;
 const LOW_TRAY_GAP: f32 = 4.0;
 /// Share of a card a piece may span.
 const TRAY_FILL: f32 = 0.88;
+/// Smallest piece cell in the tray before the tray is split into pages.
+pub const MIN_TRAY_CELL: f32 = 6.0;
+/// Height of the page switcher under the tray cards.
+const PAGER_H: f32 = 40.0;
 
 /// Which arrangement a layout uses.
 #[derive(Debug, Clone, Copy, PartialEq, Eq, Hash)]
@@ -109,6 +113,17 @@ pub struct HelpRow {
     pub text: TextBlock,
 }
 
+/// The page switcher of a tray with more cards than fit: `‹ 2 / 4 ›`.
+#[derive(Debug, Clone, Copy, PartialEq)]
+pub struct Pager {
+    /// Previous page.
+    pub prev: Rect,
+    /// Next page.
+    pub next: Rect,
+    /// The page number.
+    pub label: Rect,
+}
+
 /// Where everything goes. Rectangles are what is drawn; touch zones come
 /// from [`Layout::zone`].
 #[derive(Debug, Clone, PartialEq)]
@@ -137,8 +152,12 @@ pub struct Layout {
     pub help: Vec<HelpRow>,
     /// Difficulty tabs, easiest first: one row, or a 2×2 grid.
     pub tabs: [Rect; 4],
-    /// Language switch, `EN | UA`.
+    /// Language switch: `EN | UA`, or with [`compact`](Layout::compact)
+    /// one button showing the current language.
     pub lang: Rect,
+    /// The language and counter switches are single buttons that show the
+    /// current choice and switch on a tap (the tall arrangement).
+    pub compact: bool,
     /// Share button.
     pub share: Rect,
     /// The share button carries the short label.
@@ -157,14 +176,20 @@ pub struct Layout {
     pub right_band: Rect,
     /// Tray background.
     pub tray: Rect,
-    /// One card per piece, in piece order, all the same size.
+    /// The card slots of one tray page, all the same size. Piece `i` takes
+    /// slot `i % per_page` on page `i / per_page`.
     pub cards: Vec<Rect>,
+    /// Cards on one page: all of them unless the tray has pages.
+    pub per_page: usize,
+    /// The page switcher, when the cards do not fit on one page.
+    pub pager: Option<Pager>,
     /// Side of one cell of a piece drawn in the tray, the same for every
     /// card and at most half the board cell.
     pub tray_cell: f32,
     /// Reset button.
     pub reset: Rect,
-    /// Counter display switch, `Grid | Numbers`.
+    /// Counter display switch: `Grid | Numbers`, or with
+    /// [`compact`](Layout::compact) one button in the header.
     pub counters: Rect,
     /// The `TAB` key hint next to the switch, when shown.
     pub tab_hint: Option<Rect>,
@@ -245,6 +270,12 @@ impl Layout {
         self.tabs.iter().all(|t| (t.y - self.tabs[0].y).abs() < 0.5)
     }
 
+    /// Number of tray pages for `cards` cards.
+    #[must_use]
+    pub fn pages(&self, cards: usize) -> usize {
+        cards.div_ceil(self.per_page.max(1)).max(1)
+    }
+
     /// Screen rectangle of the cell at `(row, col)`.
     #[must_use]
     pub fn cell_rect(&self, row: usize, col: usize) -> Rect {
@@ -294,26 +325,32 @@ impl Layout {
     /// exists after a win, over the then empty tray or under the board.
     #[must_use]
     pub fn targets(&self) -> Vec<(&'static str, Rect)> {
-        let (grid, numbers) = Layout::halves(self.counters);
-        let (en, ua) = Layout::halves(self.lang);
-        let mut targets: Vec<(&'static str, Rect)> = [
+        let mut targets: Vec<(&'static str, Rect)> = vec![
             ("easy", self.tabs[0]),
             ("normal", self.tabs[1]),
             ("hard", self.tabs[2]),
             ("expert", self.tabs[3]),
-            ("en", en),
-            ("ua", ua),
+        ];
+        if self.compact {
+            targets.extend([("lang", self.lang), ("counters", self.counters)]);
+        } else {
+            let (grid, numbers) = Layout::halves(self.counters);
+            let (en, ua) = Layout::halves(self.lang);
+            targets.extend([("en", en), ("ua", ua), ("grid", grid), ("numbers", numbers)]);
+        }
+        targets.extend([
             ("share", self.share),
             ("reset", self.reset),
-            ("grid", grid),
-            ("numbers", numbers),
             ("new", self.new),
-        ]
-        .into_iter()
-        .map(|(name, rect)| (name, Layout::zone(rect)))
-        .collect();
-        targets.extend(self.cards.iter().map(|&card| ("card", Layout::zone(card))));
+        ]);
+        targets.extend(self.cards.iter().map(|&card| ("card", card)));
+        if let Some(pager) = self.pager {
+            targets.extend([("previous page", pager.prev), ("next page", pager.next)]);
+        }
         targets
+            .into_iter()
+            .map(|(name, rect)| (name, Layout::zone(rect)))
+            .collect()
     }
 }
 
@@ -467,6 +504,80 @@ fn cards_at(n: usize, cols: usize, card: f32, gap: f32, axis: f32, top: f32) -> 
 
 fn tray_cell(input: &LayoutInput, card: f32, cell: f32) -> f32 {
     (card * TRAY_FILL / to_f32(input.max_piece_side.max(1))).min(cell * TRAY_SCALE)
+}
+
+/// Smallest card: its touch zone (grown to [`MIN_TARGET`] across the gap)
+/// must not reach the next card, and the longest piece must keep cells of
+/// at least [`MIN_TRAY_CELL`].
+fn min_card(input: &LayoutInput, gap: f32) -> f32 {
+    (MIN_TARGET - gap).max(MIN_TRAY_CELL * to_f32(input.max_piece_side.max(1)) / TRAY_FILL)
+}
+
+/// How the cards of a tray are arranged on a page.
+#[derive(Debug, Clone, Copy)]
+struct TrayFit {
+    per_page: usize,
+    cols: usize,
+    rows: usize,
+    card: f32,
+    paged: bool,
+}
+
+impl TrayFit {
+    /// Height of the tray: cards, gaps and the pager.
+    fn height(&self, gap: f32) -> f32 {
+        let pager = if self.paged { PAGER_H + gap } else { 0.0 };
+        to_f32(self.rows) * self.card + to_f32(self.rows + 1) * gap + pager
+    }
+}
+
+/// Whole cells of `size` that fit in `room`, at least one.
+fn count_in(room: f32, size: f32) -> usize {
+    let n = (room / size).floor().max(1.0);
+    // A small positive count.
+    #[allow(clippy::cast_possible_truncation, clippy::cast_sign_loss)]
+    let n = n as usize;
+    n
+}
+
+/// `n` cards two per row in a column `side` wide with `room` of height,
+/// split into pages when they would be smaller than `min`.
+fn column_fit(n: usize, side: f32, room: f32, gap: f32, min: f32) -> TrayFit {
+    let n = n.max(1);
+    let width_card = (side - 3.0 * gap) / 2.0;
+    let rows = n.div_ceil(2);
+    let card = width_card.min((room - to_f32(rows + 1) * gap) / to_f32(rows));
+    if card >= min {
+        return TrayFit {
+            per_page: n,
+            cols: 2,
+            rows,
+            card,
+            paged: false,
+        };
+    }
+    let room = room - PAGER_H - gap;
+    let rows = count_in(room - gap, min + gap).min(rows);
+    let per_page = (2 * rows).min(n);
+    let card = width_card.min((room - to_f32(rows + 1) * gap) / to_f32(rows));
+    TrayFit {
+        per_page,
+        cols: 2,
+        rows,
+        card: card.max(1.0),
+        paged: per_page < n,
+    }
+}
+
+/// The pager under the cards of a tray at `tray` (whose last `PAGER_H`
+/// plus `gap` are the pager row).
+fn pager_in(tray: Rect, gap: f32) -> Pager {
+    let y = tray.bottom() - gap - PAGER_H;
+    let w = MIN_TARGET;
+    let prev = Rect::new(tray.x + gap, y, w, PAGER_H);
+    let next = Rect::new(tray.right() - gap - w, y, w, PAGER_H);
+    let label = Rect::new(prev.right(), y, (next.x - prev.right()).max(0.0), PAGER_H);
+    Pager { prev, next, label }
 }
 
 /// The banner with its next button: one row (text, then the button) when
@@ -715,12 +826,15 @@ fn wide(input: &LayoutInput) -> Layout {
     );
 
     // The tray: two cards per row in the right column.
-    let rows = input.pieces.max(1).div_ceil(2);
-    let card = ((side - 3.0 * m.gap) / 2.0)
-        .min((y1 - y0 - to_f32(rows + 1) * m.gap) / to_f32(rows))
-        .max(1.0);
-    let tray_w = 2.0 * card + 3.0 * m.gap;
-    let tray_h = to_f32(rows) * card + to_f32(rows + 1) * m.gap;
+    let fit = column_fit(input.pieces, side, y1 - y0, m.gap, min_card(input, m.gap));
+    let card = fit.card;
+    // A paged tray takes the whole column, for the pager.
+    let tray_w = if fit.paged {
+        side
+    } else {
+        2.0 * card + 3.0 * m.gap
+    };
+    let tray_h = fit.height(m.gap);
     let column_axis = x1 - side / 2.0;
     let tray_top = y0 + ((y1 - y0) - tray_h).max(0.0) / 2.0;
     let tray = Rect::new(column_axis - tray_w / 2.0, tray_top, tray_w, tray_h);
@@ -738,6 +852,7 @@ fn wide(input: &LayoutInput) -> Layout {
         help: panel.help,
         tabs,
         lang,
+        compact: false,
         share,
         share_short: false,
         notice: banner.center(),
@@ -747,7 +862,9 @@ fn wide(input: &LayoutInput) -> Layout {
         row_counters: board.row_counters,
         col_counters: board.col_counters,
         right_band: board.right_band,
-        cards: cards_at(input.pieces, 2, card, m.gap, column_axis, tray_top),
+        cards: cards_at(fit.per_page, 2, card, m.gap, column_axis, tray_top),
+        per_page: fit.per_page,
+        pager: fit.paged.then(|| pager_in(tray, m.gap)),
         tray,
         tray_cell: tray_cell(input, card, cell),
         reset: bottom.reset,
@@ -785,23 +902,22 @@ fn tall(input: &LayoutInput) -> Layout {
     let axis = safe.center().x;
     let top = safe.y + 8.0;
 
-    // Header: title and id on the left, language and link on the right.
+    // Header: title and id on the left; the counter display, the language
+    // and the link on the right, each a single button.
     let header_mid = top + TALL_HEADER / 2.0;
+    let header_button = |x: f32, w: f32| {
+        Rect::new(
+            x,
+            header_mid - TALL_HEADER_BUTTON / 2.0,
+            w,
+            TALL_HEADER_BUTTON,
+        )
+    };
     let share_w = button_width(share_label(input.lang, true), small_font);
-    let share = Rect::new(
-        x1 - share_w,
-        header_mid - TALL_HEADER_BUTTON / 2.0,
-        share_w,
-        TALL_HEADER_BUTTON,
-    );
-    let lang_w = switch_width("EN", "UA", small_font);
-    let lang = Rect::new(
-        share.x - gap - lang_w,
-        header_mid - TALL_HEADER_BUTTON / 2.0,
-        lang_w,
-        TALL_HEADER_BUTTON,
-    );
-    let title_w = (lang.x - gap - x0).max(1.0);
+    let share = header_button(x1 - share_w, share_w);
+    let lang = header_button(share.x - gap - MIN_TARGET, MIN_TARGET);
+    let counters = header_button(lang.x - gap - MIN_TARGET, MIN_TARGET);
+    let title_w = (counters.x - gap - x0).max(1.0);
     let title = Rect::new(x0, top + 3.0, title_w, 22.0);
     let puzzle_id = Rect::new(x0, title.bottom(), title_w, 16.0);
 
@@ -811,33 +927,25 @@ fn tall(input: &LayoutInput) -> Layout {
     let tabs =
         core::array::from_fn(|k| Rect::new(x0 + tab_w * to_f32(k), tabs_y, tab_w, TALL_TABS));
 
+    // Bottom row: reset on the left, new on the right.
     let bottom_y = safe.bottom() - TALL_BOTTOM - TALL_BUTTON;
-    let bottom = bottom_row(input, font, gap, x0, x1, axis, bottom_y, TALL_BUTTON);
+    let reset = Rect::new(
+        x0,
+        bottom_y,
+        button_width(text(input.lang, Text::Reset), font),
+        TALL_BUTTON,
+    );
+    let new_w = button_width(text(input.lang, Text::New), font);
+    let new = Rect::new(x1 - new_w, bottom_y, new_w, TALL_BUTTON);
 
     // Board and tray share the height between tabs and the bottom row.
     let region_top = tabs_y + TALL_TABS + gap;
     let region_bottom = bottom_y - gap;
     let region = (region_bottom - region_top).max(0.0);
-    let n = input.pieces.max(1);
-    let (cols, rows) = if n <= 4 { (n, 1) } else { (n.div_ceil(2), 2) };
-    let card_by_width = (width - to_f32(cols + 1) * gap) / to_f32(cols);
-    let side = to_f32(input.max_piece_side.max(1));
-    let card_for = |cell: f32| {
-        let (_, block_h) = board_size(input, cell);
-        let room = region - block_h - gap - to_f32(rows + 1) * gap;
-        card_by_width.min(room / to_f32(rows))
-    };
-    let fits = |cell: f32| {
-        let (block_w, _) = board_size(input, cell);
-        let card = card_for(cell);
-        block_w <= width
-            && card >= MIN_TARGET
-            && card * TRAY_FILL / side >= cell * TRAY_MIN_SCALE - 0.01
-    };
-    let cell = largest(fits);
-    let card = card_for(cell).max(1.0);
+    let (fit, cell) = tall_tray(input, width, region, gap);
+    let card = fit.card;
     let (_, block_h) = board_size(input, cell);
-    let tray_h = to_f32(rows) * card + to_f32(rows + 1) * gap;
+    let tray_h = fit.height(gap);
     let stack = block_h + gap + tray_h;
     let board_top = region_top + (region - stack).max(0.0) / 2.0;
     let board = board_at(input, axis, board_top, cell);
@@ -864,6 +972,7 @@ fn tall(input: &LayoutInput) -> Layout {
         help: Vec::new(),
         tabs,
         lang,
+        compact: true,
         share,
         share_short: true,
         notice: banner.center(),
@@ -873,16 +982,66 @@ fn tall(input: &LayoutInput) -> Layout {
         row_counters: board.row_counters,
         col_counters: board.col_counters,
         right_band: board.right_band,
-        cards: cards_at(input.pieces, cols, card, gap, axis, tray_top),
+        cards: cards_at(fit.per_page, fit.cols, card, gap, axis, tray_top),
+        per_page: fit.per_page,
+        pager: fit.paged.then(|| pager_in(tray, gap)),
         tray,
         tray_cell: tray_cell(input, card, cell),
-        reset: bottom.reset,
-        counters: bottom.counters,
+        reset,
+        counters,
         tab_hint: None,
-        new: bottom.new,
+        new,
         banner,
         next,
     }
+}
+
+/// The tray of the tall arrangement and the board cell that goes with it.
+///
+/// Up to four cards make one row, more make two. The board gets the largest
+/// cell for which the cards stay touch targets and their piece cells stay
+/// between a third and a half of the board cell. When no board size allows
+/// that, the cards are split into the fewest pages that do.
+fn tall_tray(input: &LayoutInput, width: f32, region: f32, gap: f32) -> (TrayFit, f32) {
+    let n = input.pieces.max(1);
+    let side = to_f32(input.max_piece_side.max(1));
+    let shape = |pages: usize| {
+        let per_page = n.div_ceil(pages);
+        let (cols, rows) = if per_page <= 4 {
+            (per_page, 1)
+        } else {
+            (per_page.div_ceil(2), 2)
+        };
+        TrayFit {
+            per_page,
+            cols,
+            rows,
+            card: 0.0,
+            paged: pages > 1,
+        }
+    };
+    let card_for = |fit: TrayFit, cell: f32| {
+        let (_, block_h) = board_size(input, cell);
+        let pager = if fit.paged { PAGER_H + gap } else { 0.0 };
+        let room = region - block_h - gap - to_f32(fit.rows + 1) * gap - pager;
+        let by_width = (width - to_f32(fit.cols + 1) * gap) / to_f32(fit.cols);
+        by_width.min(room / to_f32(fit.rows))
+    };
+    let fits = |fit: TrayFit, cell: f32| {
+        let (block_w, _) = board_size(input, cell);
+        let card = card_for(fit, cell);
+        block_w <= width
+            && card >= MIN_TARGET
+            && card * TRAY_FILL / side >= MIN_TRAY_CELL
+            && card * TRAY_FILL / side >= cell * TRAY_MIN_SCALE - 0.01
+    };
+    let fit = (1..=n)
+        .map(shape)
+        .find(|&fit| fits(fit, MIN_CELL))
+        .unwrap_or_else(|| shape(n));
+    let cell = largest(|cell| fits(fit, cell));
+    let card = card_for(fit, cell).max(1.0);
+    (TrayFit { card, ..fit }, cell)
 }
 
 // ---- low wide ----
@@ -894,7 +1053,7 @@ struct RightColumn {
     tray: Rect,
     /// Height available to the tray (and to the banner after a win).
     tray_room: f32,
-    card: f32,
+    fit: TrayFit,
 }
 
 /// Tray (two cards per row) on top, then the counter switch, then new at
@@ -914,16 +1073,15 @@ fn right_column(
     let x1 = rx + side;
     let new_w = button_width(t(Text::New), font);
     let ideal_counters = switch_width(t(Text::Grid), t(Text::Numbers), font).min(side);
-    let rows = input.pieces.max(1).div_ceil(2);
     // Cards sit close; a card's touch zone is grown to a full target, so a
     // card plus its gap must reach that size.
     let tgap = LOW_TRAY_GAP;
-    let card_in = |room: f32| {
-        ((side - 3.0 * tgap) / 2.0).min((room - to_f32(rows + 1) * tgap) / to_f32(rows))
-    };
+    let min = min_card(input, tgap);
+    let card_in = |room: f32| column_fit(input.pieces, side, room, tgap, min);
     let stacked_room = (y1 - y0) - 2.0 * button - 2.0 * gap;
     let one_row_counters = ideal_counters.min(side - gap - new_w);
-    let one_row = card_in(stacked_room) + tgap < MIN_TARGET && one_row_counters >= 2.0 * MIN_TARGET;
+    let one_row =
+        card_in(stacked_room).card + tgap < MIN_TARGET && one_row_counters >= 2.0 * MIN_TARGET;
     let new = Rect::new(x1 - new_w, y1 - button, new_w, button);
     let counters_w = ideal_counters;
     let (counters, tray_room) = if one_row {
@@ -942,16 +1100,19 @@ fn right_column(
             stacked_room,
         )
     };
-    let card = card_in(tray_room).max(1.0);
-    let tray_w = 2.0 * card + 3.0 * tgap;
-    let tray_h = to_f32(rows) * card + to_f32(rows + 1) * tgap;
-    let tray = Rect::new(rx + (side - tray_w) / 2.0, y0, tray_w, tray_h);
+    let fit = card_in(tray_room);
+    let tray_w = if fit.paged {
+        side
+    } else {
+        2.0 * fit.card + 3.0 * tgap
+    };
+    let tray = Rect::new(rx + (side - tray_w) / 2.0, y0, tray_w, fit.height(tgap));
     RightColumn {
         counters,
         new,
         tray,
         tray_room,
-        card,
+        fit,
     }
 }
 
@@ -991,13 +1152,14 @@ fn low_wide(input: &LayoutInput) -> Layout {
 
     // Right column: tray, then the counter switch, then new at the bottom.
     let right = right_column(input, x1 - side, side, y0, y1, gap, font);
-    let (counters, new, tray, tray_room, card) = (
+    let (counters, new, tray, tray_room, fit) = (
         right.counters,
         right.new,
         right.tray,
         right.tray_room,
-        right.card,
+        right.fit,
     );
+    let card = fit.card;
     let column_axis = x1 - side / 2.0;
     let rx = x1 - side;
 
@@ -1037,6 +1199,7 @@ fn low_wide(input: &LayoutInput) -> Layout {
         help: Vec::new(),
         tabs,
         lang,
+        compact: false,
         share,
         share_short: true,
         notice: banner.center(),
@@ -1046,7 +1209,9 @@ fn low_wide(input: &LayoutInput) -> Layout {
         row_counters: board.row_counters,
         col_counters: board.col_counters,
         right_band: board.right_band,
-        cards: cards_at(input.pieces, 2, card, LOW_TRAY_GAP, column_axis, y0),
+        cards: cards_at(fit.per_page, 2, card, LOW_TRAY_GAP, column_axis, y0),
+        per_page: fit.per_page,
+        pager: fit.paged.then(|| pager_in(tray, LOW_TRAY_GAP)),
         tray,
         tray_cell: tray_cell(input, card, cell),
         reset,

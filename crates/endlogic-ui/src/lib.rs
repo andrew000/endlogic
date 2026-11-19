@@ -26,7 +26,7 @@ pub use board::{Board, Line, LineState, PieceState, Turned};
 pub use counters::{CounterView, MAX_TICKS, MAX_TWO_LINES, MIN_SQUARE, counter_view};
 pub use layout::{
     Arrangement, BAND, COUNTER_GAP, HelpRow, LOW_WIDE_HEIGHT, Layout, LayoutInput, MAX_TRAY_SHARE,
-    MIN_TARGET, TRAY_MIN_SCALE, TRAY_SCALE, TextBlock,
+    MIN_TARGET, MIN_TRAY_CELL, Pager, TRAY_MIN_SCALE, TRAY_SCALE, TextBlock,
 };
 pub use painter::{Align, Font, FontFamily, Painter, Point, Rect, Rgba};
 pub use shell::{

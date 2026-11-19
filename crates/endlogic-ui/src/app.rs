@@ -85,6 +85,10 @@ pub enum Control {
     New,
     /// The next button on the win banner.
     Next,
+    /// The previous tray page.
+    PagePrev,
+    /// The next tray page.
+    PageNext,
 }
 
 /// A short message over the board.
@@ -205,6 +209,8 @@ pub struct App {
     /// Last mouse position, for hover, `R` and the cursor.
     pub(crate) hover: Option<Point>,
     pub(crate) toast: Option<Toast>,
+    /// The tray page on screen.
+    pub(crate) tray_page: usize,
     effects: Vec<Effect>,
     cursor: Cursor,
     pub(crate) layout: Layout,
@@ -248,6 +254,7 @@ impl App {
             gesture: Gesture::Idle,
             hover: None,
             toast: None,
+            tray_page: 0,
             effects: Vec::new(),
             cursor: Cursor::Default,
             layout: Layout::compute(&LayoutInput {
@@ -424,9 +431,49 @@ impl App {
             );
             (center, cell)
         } else {
-            let card = self.layout.cards.get(i).copied().unwrap_or_default();
-            (card.center(), self.layout.tray_cell)
+            // A piece on another tray page rests behind the page number.
+            let rest = self
+                .card_of(i)
+                .or_else(|| self.layout.pager.map(|p| p.label))
+                .unwrap_or(self.layout.tray);
+            (rest.center(), self.layout.tray_cell)
         }
+    }
+
+    /// The card of piece `i`, if it is on the tray page on screen.
+    #[must_use]
+    pub fn card_of(&self, i: usize) -> Option<Rect> {
+        let per_page = self.layout.per_page.max(1);
+        (i / per_page == self.tray_page)
+            .then(|| self.layout.cards.get(i % per_page).copied())
+            .flatten()
+    }
+
+    /// The tray page on screen, from 0.
+    #[must_use]
+    pub fn tray_page(&self) -> usize {
+        self.tray_page
+    }
+
+    /// Number of tray pages.
+    #[must_use]
+    pub fn tray_pages(&self) -> usize {
+        self.layout
+            .pages(self.board().map_or(0, Board::piece_count))
+    }
+
+    /// Shows the tray page that holds piece `i`.
+    fn show_card(&mut self, i: usize) {
+        self.tray_page = i / self.layout.per_page.max(1);
+    }
+
+    fn turn_page(&mut self, forward: bool) {
+        let pages = self.tray_pages();
+        self.tray_page = if forward {
+            (self.tray_page + 1) % pages
+        } else {
+            (self.tray_page + pages - 1) % pages
+        };
     }
 
     /// Screen center and cell size at which piece `i` is drawn right now.
@@ -581,6 +628,7 @@ impl App {
 
     fn relayout(&mut self) {
         self.layout = Layout::compute(&self.layout_input());
+        self.tray_page = self.tray_page.min(self.tray_pages() - 1);
     }
 
     fn show_toast(&mut self, text: Text, error: bool) {
@@ -638,6 +686,7 @@ impl App {
             anims: vec![PieceAnim::default(); pieces],
         });
         self.gesture = Gesture::Idle;
+        self.tray_page = 0;
         self.effects.push(Effect::SetCode(code));
         self.relayout();
     }
@@ -748,17 +797,34 @@ impl App {
         for (d, rect) in Difficulty::ALL.into_iter().zip(l.tabs) {
             controls.push((Control::Tab(d), rect, true));
         }
-        let (en, ua) = Layout::halves(l.lang);
-        let (grid, numbers) = Layout::halves(l.counters);
+        if l.compact {
+            // One button each, switching to the other choice.
+            controls.extend([
+                (Control::Lang(self.lang.other()), l.lang, true),
+                (Control::Counters(self.counters.toggled()), l.counters, true),
+            ]);
+        } else {
+            let (en, ua) = Layout::halves(l.lang);
+            let (grid, numbers) = Layout::halves(l.counters);
+            controls.extend([
+                (Control::Lang(Lang::En), en, true),
+                (Control::Lang(Lang::Ua), ua, true),
+                (Control::Counters(CounterMode::Grid), grid, true),
+                (Control::Counters(CounterMode::Numbers), numbers, true),
+            ]);
+        }
         controls.extend([
-            (Control::Lang(Lang::En), en, true),
-            (Control::Lang(Lang::Ua), ua, true),
             (Control::Share, l.share, has_game),
             (Control::Reset, l.reset, self.can_move()),
-            (Control::Counters(CounterMode::Grid), grid, true),
-            (Control::Counters(CounterMode::Numbers), numbers, true),
             (Control::New, l.new, true),
         ]);
+        if let Some(pager) = l.pager {
+            let paging = self.game.as_ref().is_some_and(|g| !g.won);
+            controls.extend([
+                (Control::PagePrev, pager.prev, paging),
+                (Control::PageNext, pager.next, paging),
+            ]);
+        }
         controls
     }
 
@@ -815,9 +881,9 @@ impl App {
         }
         (0..game.board.piece_count()).find(|&i| {
             game.board.piece(i).at.is_none()
-                && l.cards
-                    .get(i)
-                    .is_some_and(|&card| Layout::zone(card).contains(p))
+                && self
+                    .card_of(i)
+                    .is_some_and(|card| Layout::zone(card).contains(p))
         })
     }
 
@@ -992,6 +1058,8 @@ impl App {
             Control::Reset => self.reset(),
             Control::Counters(mode) => self.set_counters(mode),
             Control::New | Control::Next => self.start_generation(),
+            Control::PagePrev => self.turn_page(false),
+            Control::PageNext => self.turn_page(true),
         }
     }
 
@@ -1067,6 +1135,12 @@ impl App {
         } else {
             theme::RETURN_TIME
         };
+        if self
+            .board()
+            .is_some_and(|b| b.piece(drag.piece).at.is_none())
+        {
+            self.show_card(drag.piece);
+        }
         self.fly_from(drag.piece, from, duration);
         self.check_win();
     }
@@ -1084,6 +1158,9 @@ impl App {
             }
         }
         self.gesture = Gesture::Idle;
+        if drag.origin.at.is_none() {
+            self.show_card(drag.piece);
+        }
         self.fly_from(drag.piece, from, theme::RETURN_TIME);
     }
 

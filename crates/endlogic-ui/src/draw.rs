@@ -259,14 +259,19 @@ fn draw_top_controls(app: &App, p: &mut dyn Painter) {
             );
         }
     }
-    let lang = [Lang::En, Lang::Ua];
-    segmented(
-        p,
-        l.lang,
-        &[Lang::En.label(), Lang::Ua.label()],
-        lang.iter().position(|&x| x == app.lang),
-        l.font * 0.9,
-    );
+    if l.compact {
+        button(p, l.lang, app.lang.label(), Style::Normal, l.font * 0.9);
+        counter_toggle(p, l.counters, app.counters, l.font * 0.9);
+    } else {
+        let lang = [Lang::En, Lang::Ua];
+        segmented(
+            p,
+            l.lang,
+            &[Lang::En.label(), Lang::Ua.label()],
+            lang.iter().position(|&x| x == app.lang),
+            l.font * 0.9,
+        );
+    }
     let style = if app.game.is_some() {
         Style::Normal
     } else {
@@ -292,18 +297,45 @@ fn draw_bottom_controls(app: &App, p: &mut dyn Painter) {
     if let Some(hint) = l.tab_hint {
         keycap(p, hint, "TAB", l.font * 0.7);
     }
-    let active = match app.counters {
-        CounterMode::Grid => 0,
-        CounterMode::Numbers => 1,
-    };
-    segmented(
-        p,
-        l.counters,
-        &[text(app.lang, Text::Grid), text(app.lang, Text::Numbers)],
-        Some(active),
-        l.font * 0.9,
-    );
+    if !l.compact {
+        let active = match app.counters {
+            CounterMode::Grid => 0,
+            CounterMode::Numbers => 1,
+        };
+        segmented(
+            p,
+            l.counters,
+            &[text(app.lang, Text::Grid), text(app.lang, Text::Numbers)],
+            Some(active),
+            l.font * 0.9,
+        );
+    }
     button(p, l.new, text(app.lang, Text::New), Style::Primary, l.font);
+}
+
+/// The one-button counter switch: three ticks for the grid display, `123`
+/// for numbers.
+fn counter_toggle(p: &mut dyn Painter, rect: Rect, mode: CounterMode, font: f32) {
+    let radius = rect.h / 2.0;
+    p.fill_rect(rect, radius, theme::PANEL);
+    p.stroke_rect(rect.inset(0.5), radius, 1.0, theme::CELL_MARK);
+    match mode {
+        CounterMode::Grid => {
+            let c = rect.center();
+            let (h, step) = (rect.h * 0.45, rect.h * 0.18);
+            for k in [-1.0, 0.0, 1.0] {
+                let x = c.x + k * step;
+                p.fill_rect(
+                    Rect::centered(Point::new(x, c.y), 2.0, h),
+                    0.0,
+                    theme::ACCENT,
+                );
+            }
+        }
+        CounterMode::Numbers => {
+            centered_text(p, "123", rect, mono(font, true), theme::ACCENT);
+        }
+    }
 }
 
 // ---- board ----
@@ -452,17 +484,25 @@ fn line_color(line: Line) -> Rgba {
     }
 }
 
+/// What all counters of a board share.
+#[derive(Clone, Copy)]
+struct CounterLook {
+    mode: CounterMode,
+    cell: f32,
+    /// The largest clue, which sizes the squares.
+    largest: usize,
+    font: f32,
+}
+
 /// Draws one counter in `area`: for a row (`row`), the band part left of
 /// the row; for a column, the band part above it.
-fn counter(
-    p: &mut dyn Painter,
-    area: Rect,
-    line: Line,
-    mode: CounterMode,
-    row: bool,
-    cell: f32,
-    font: f32,
-) {
+fn counter(p: &mut dyn Painter, area: Rect, line: Line, row: bool, look: &CounterLook) {
+    let CounterLook {
+        mode,
+        cell,
+        largest,
+        font,
+    } = *look;
     let zero_color = if line.filled == 0 {
         theme::MUTED
     } else {
@@ -477,7 +517,7 @@ fn counter(
         number(p, area, line, color, row, font);
         return;
     }
-    match counter_view(line, area, row, cell) {
+    match counter_view(line, area, row, cell, largest) {
         CounterView::Empty { center, radius } => {
             empty_sign(p, center, radius, (cell * 0.05).max(1.5), zero_color);
         }
@@ -517,15 +557,22 @@ fn number(p: &mut dyn Painter, area: Rect, line: Line, color: Rgba, row: bool, f
 fn draw_counters(app: &App, game: &Game, p: &mut dyn Painter) {
     let l = &app.layout;
     let font = l.font;
-    for (row, line) in game.board.rows().into_iter().enumerate() {
+    let (rows, cols) = (game.board.rows(), game.board.cols());
+    let look = CounterLook {
+        mode: app.counters,
+        cell: l.cell,
+        largest: rows.iter().chain(&cols).map(|l| l.clue).max().unwrap_or(0),
+        font,
+    };
+    for (row, line) in rows.into_iter().enumerate() {
         let cell = l.cell_rect(row, 0);
         let area = Rect::new(l.row_counters.x, cell.y, l.row_counters.w, cell.h);
-        counter(p, area, line, app.counters, true, l.cell, font);
+        counter(p, area, line, true, &look);
     }
-    for (col, line) in game.board.cols().into_iter().enumerate() {
+    for (col, line) in cols.into_iter().enumerate() {
         let cell = l.cell_rect(0, col);
         let area = Rect::new(cell.x, l.col_counters.y, cell.w, l.col_counters.h);
-        counter(p, area, line, app.counters, false, l.cell, font);
+        counter(p, area, line, false, &look);
     }
 }
 
@@ -542,7 +589,11 @@ fn draw_tray(app: &App, game: &Game, p: &mut dyn Painter) {
     let hovered = app
         .hover
         .filter(|_| app.gesture == Gesture::Idle && !game.won && !app.is_generating());
-    for (i, &card) in l.cards.iter().enumerate() {
+    draw_pager(app, game.board.piece_count(), p);
+    for i in 0..game.board.piece_count() {
+        let Some(card) = app.card_of(i) else {
+            continue;
+        };
         let away = game.board.piece(i).at.is_some() || dragged == Some(i);
         if away {
             p.fill_rect(card, 8.0, theme::CARD.alpha(0.45));
@@ -555,6 +606,25 @@ fn draw_tray(app: &App, game: &Game, p: &mut dyn Painter) {
     }
 }
 
+/// The page switcher, when the tray has pages.
+pub(crate) fn draw_pager(app: &App, cards: usize, p: &mut dyn Painter) {
+    let l = &app.layout;
+    let Some(pager) = l.pager else {
+        return;
+    };
+    let font = l.font;
+    button(p, pager.prev, "‹", Style::Normal, font * 1.2);
+    button(p, pager.next, "›", Style::Normal, font * 1.2);
+    let label = format!("{} / {}", app.tray_page + 1, l.pages(cards));
+    centered_text(
+        p,
+        &label,
+        pager.label,
+        mono(font * 0.9, false),
+        theme::MUTED,
+    );
+}
+
 fn draw_pieces(app: &App, game: &Game, p: &mut dyn Painter) {
     let win = if game.won {
         ease_out(game.win_elapsed / theme::WIN_TIME)
@@ -564,8 +634,11 @@ fn draw_pieces(app: &App, game: &Game, p: &mut dyn Painter) {
     let dragged = app.dragged_piece();
     let moving = |i: usize| game.anims.get(i).is_some_and(|a| a.fly.is_some());
     let count = game.board.piece_count();
+    // Tray pieces on other pages are hidden once they have landed.
+    let shown =
+        |i: usize| game.board.piece(i).at.is_some() || app.card_of(i).is_some() || moving(i);
     let order = (0..count)
-        .filter(|&i| Some(i) != dragged && !moving(i))
+        .filter(|&i| Some(i) != dragged && !moving(i) && shown(i))
         .chain((0..count).filter(|&i| Some(i) != dragged && moving(i)))
         .chain(dragged);
     for i in order {

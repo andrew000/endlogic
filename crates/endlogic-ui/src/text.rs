@@ -43,6 +43,15 @@ impl Lang {
         }
     }
 
+    /// The other language.
+    #[must_use]
+    pub const fn other(self) -> Lang {
+        match self {
+            Lang::En => Lang::Ua,
+            Lang::Ua => Lang::En,
+        }
+    }
+
     /// Label on the language switch.
     #[must_use]
     pub const fn label(self) -> &'static str {
