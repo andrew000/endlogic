@@ -44,13 +44,21 @@ fn stepwise_and_convenience_agree() {
 #[test]
 fn every_level_gives_unique_valid_puzzles_within_parameters() {
     println!(
-        "{:<7} {:>6} {:>12} {:>12} {:>12} {:>12} {:>6}",
-        "level", "seeds", "attempts avg", "attempts max", "nodes avg", "nodes max", "failed"
+        "{:<7} {:>6} {:>9} {:>9} {:>9} {:>9} {:>9} {:>9} {:>6}",
+        "level",
+        "seeds",
+        "att avg",
+        "att max",
+        "nodes avg",
+        "nodes max",
+        "total avg",
+        "total max",
+        "failed"
     );
     for difficulty in Difficulty::ALL {
         let params = difficulty.params();
-        let (mut attempts, mut max_attempts, mut nodes, mut max_nodes, mut failed) =
-            (0u64, 0u32, 0u64, 0u64, 0u32);
+        let (mut attempts, mut max_attempts, mut failed) = (0u64, 0u32, 0u32);
+        let (mut nodes, mut max_nodes, mut total, mut max_total) = (0u64, 0u64, 0u64, 0u64);
         for seed in 0..SEEDS {
             let generated = match generate(params, seed) {
                 Ok(generated) => generated,
@@ -64,6 +72,8 @@ fn every_level_gives_unique_valid_puzzles_within_parameters() {
             max_attempts = max_attempts.max(generated.attempt);
             nodes += generated.nodes;
             max_nodes = max_nodes.max(generated.nodes);
+            total += generated.total_nodes;
+            max_total = max_total.max(generated.total_nodes);
 
             let puzzle = &generated.puzzle;
             assert_eq!(verify(puzzle, &generated.solution), Ok(()));
@@ -92,13 +102,15 @@ fn every_level_gives_unique_valid_puzzles_within_parameters() {
         }
         let ok = SEEDS - u64::from(failed);
         println!(
-            "{:<7} {:>6} {:>12.1} {:>12} {:>12.0} {:>12} {:>6}",
+            "{:<7} {:>6} {:>9.1} {:>9} {:>9.0} {:>9} {:>9.0} {:>9} {:>6}",
             difficulty.name(),
             SEEDS,
             ratio(attempts, ok),
             max_attempts,
             ratio(nodes, ok),
             max_nodes,
+            ratio(total, ok),
+            max_total,
             failed
         );
         assert_eq!(failed, 0, "{} failed on {failed} seeds", difficulty.name());
