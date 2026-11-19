@@ -541,7 +541,7 @@ fn ticks(p: &mut dyn Painter, area: Rect, line: Line, rows: bool, cell: f32) {
     let depth = if rows { area.w } else { area.h };
     let room = depth * 0.85;
     let spacing = (cell * 0.18).min(room / to_f32(n));
-    let thick = (spacing * 0.55).clamp(1.5, cell * 0.08);
+    let thick = (spacing * 0.55).min(cell * 0.08).max(1.5);
     let long = cell * 0.5;
     let state = line.state();
     for k in 0..n {

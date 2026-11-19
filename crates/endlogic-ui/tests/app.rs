@@ -1004,3 +1004,43 @@ fn layout_of_real_puzzles_fits() {
         }
     }
 }
+
+#[test]
+fn any_window_size_draws_without_panicking() {
+    let puzzle = sample("wln006-2.txt");
+    let mut app = open(&puzzle);
+    let mut sizes = vec![(800.0, 600.0), (1.0, 1.0), (200.0, 120.0), (3840.0, 2160.0)];
+    for w in (240..=2600).step_by(173) {
+        for h in (200..=1600).step_by(139) {
+            sizes.push((
+                f32::from(u16::try_from(w).unwrap()),
+                f32::from(u16::try_from(h).unwrap()),
+            ));
+        }
+    }
+    for (w, h) in sizes {
+        app.handle(Event::Resize {
+            width: w,
+            height: h,
+        });
+        settle(&mut app);
+        let from = card(&app, 0);
+        app.start_drag(from, cell(&app, 1, 1), PointerKind::Touch);
+        app.frame(0.016, &mut Recorder::default());
+        app.handle(Event::Key(Key::Escape));
+        app.handle(Event::PointerUp(pointer(FINGER, from, PointerKind::Touch)));
+        settle(&mut app);
+    }
+    // Ordinary desktop windows still get a usable board.
+    for (w, h) in [(800.0, 600.0), (1024.0, 768.0), (1280.0, 720.0)] {
+        app.handle(Event::Resize {
+            width: w,
+            height: h,
+        });
+        assert!(
+            app.layout().cell >= 24.0,
+            "{w}x{h}: cell {}",
+            app.layout().cell
+        );
+    }
+}
