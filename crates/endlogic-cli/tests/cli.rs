@@ -113,3 +113,85 @@ fn help_and_usage_errors() {
     let output = run(&["solve", "a.txt", "--bogus"]);
     assert_eq!(output.status.code(), Some(2));
 }
+
+#[test]
+fn exhausted_budget_exits_with_3() {
+    let output = solve("wln006-2.txt", &["--budget", "1"]);
+    assert_eq!(output.status.code(), Some(3));
+    assert_eq!(
+        stdout(&output),
+        "search budget of 1 nodes exhausted after 0 solution(s)\n"
+    );
+    let output = solve("permutations-4.txt", &["--count", "--budget", "10"]);
+    assert_eq!(output.status.code(), Some(3));
+}
+
+#[test]
+fn gen_with_fixed_seed_is_stable() {
+    let args = [
+        "gen",
+        "--difficulty",
+        "hard",
+        "--seed",
+        "1",
+        "--solution",
+        "--code",
+    ];
+    let first = run(&args);
+    let second = run(&args);
+    assert_eq!(first.status.code(), Some(0));
+    assert_eq!(first.stdout, second.stdout);
+    assert_eq!(first.stderr, second.stderr);
+
+    let text = stdout(&first);
+    assert!(text.starts_with("endlogic 1\ngrid\n"), "{text}");
+    assert!(text.contains("\n// solution:\n"), "{text}");
+    assert!(stderr(&first).starts_with("seed 1, attempt "));
+
+    // The whole output, comments included, is a valid puzzle file whose
+    // code line decodes to the same puzzle.
+    let puzzle = endlogic_core::format::parse(&text).unwrap();
+    let code = text
+        .lines()
+        .find_map(|line| line.strip_prefix("// code: "))
+        .unwrap();
+    assert_eq!(endlogic_core::code::decode(code).unwrap(), puzzle);
+
+    let other = run(&["gen", "--difficulty", "hard", "--seed", "2"]);
+    assert_ne!(stdout(&other), text);
+}
+
+#[test]
+fn encode_and_decode_are_inverse() {
+    for name in [
+        "wln006-2.txt",
+        "wlh9000-1.txt",
+        "dead-cells.txt",
+        "no-solution.txt",
+        "permutations-4.txt",
+    ] {
+        let path = puzzle_path(name);
+        let encoded = run(&["encode", path.to_str().unwrap()]);
+        assert_eq!(encoded.status.code(), Some(0), "{name}");
+        let code = stdout(&encoded).trim().to_owned();
+        let decoded = run(&["decode", &code]);
+        assert_eq!(decoded.status.code(), Some(0), "{name}");
+        let original = std::fs::read_to_string(&path).unwrap();
+        assert_eq!(
+            endlogic_core::format::parse(&stdout(&decoded)).unwrap(),
+            endlogic_core::format::parse(&original).unwrap(),
+            "{name}"
+        );
+    }
+}
+
+#[test]
+fn decode_rejects_bad_codes() {
+    let output = run(&["decode", "not*a*code"]);
+    assert_eq!(output.status.code(), Some(2));
+    assert!(
+        stderr(&output).contains("invalid character `*`"),
+        "{}",
+        stderr(&output)
+    );
+}
