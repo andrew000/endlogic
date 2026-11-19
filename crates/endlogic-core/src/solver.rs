@@ -15,7 +15,6 @@
 
 use alloc::vec;
 use alloc::vec::Vec;
-use core::ops::ControlFlow;
 
 use crate::color::Color;
 use crate::grid::{Cell, MAX_GRID_SIZE};
@@ -65,34 +64,181 @@ pub struct SearchResult {
 /// within both limits reports [`StopReason::Exhausted`], so `Exhausted` always
 /// means the solution list is complete. `max_solutions == 0` returns
 /// immediately with `SolutionLimit`.
+///
+/// This is a single [`Search::step`] of `max_nodes` nodes.
 #[must_use]
 pub fn search(puzzle: &Puzzle, max_solutions: usize, max_nodes: u64) -> SearchResult {
-    let mut solutions = Vec::new();
-    if max_solutions == 0 {
-        return SearchResult {
-            solutions,
+    let mut search = Search::new(puzzle, max_solutions);
+    match search.step(max_nodes) {
+        Progress::Done(result) => result,
+        Progress::Working => SearchResult {
+            solutions: search.solutions,
+            nodes: search.nodes,
+            stop: StopReason::NodeBudget,
+        },
+    }
+}
+
+/// Result of one [`Search::step`].
+#[derive(Debug, Clone, PartialEq, Eq, Hash)]
+pub enum Progress {
+    /// The step used up its nodes; call `step` again to continue.
+    Working,
+    /// The search has finished. Further calls return the same result.
+    Done(SearchResult),
+}
+
+/// A search that runs a limited number of nodes at a time.
+///
+/// Running it to the end in steps of any size gives exactly what [`search`]
+/// gives with a large enough budget: the same solutions in the same order,
+/// the same node count and the same [`StopReason`]. A front end can call
+/// [`step`](Search::step) once per frame so a long search never blocks.
+pub struct Search {
+    board: Option<Board>,
+    stack: Vec<Frame>,
+    solutions: Vec<Solution>,
+    max_solutions: usize,
+    nodes: u64,
+    finished: Option<StopReason>,
+}
+
+impl Search {
+    /// Prepares a search for up to `max_solutions` solutions. No nodes are
+    /// spent until [`step`](Search::step) is called.
+    #[must_use]
+    pub fn new(puzzle: &Puzzle, max_solutions: usize) -> Search {
+        let mut search = Search {
+            board: None,
+            stack: Vec::new(),
+            solutions: Vec::new(),
+            max_solutions,
             nodes: 0,
-            stop: StopReason::SolutionLimit,
+            finished: None,
         };
-    }
-    let (nodes, flow) = run(puzzle, max_nodes, &mut |solution| {
-        solutions.push(solution);
-        if solutions.len() >= max_solutions {
-            ControlFlow::Break(Halt::Solutions)
-        } else {
-            ControlFlow::Continue(())
+        if max_solutions == 0 {
+            search.finished = Some(StopReason::SolutionLimit);
+            return search;
         }
-    });
-    let stop = match flow {
-        ControlFlow::Continue(()) => StopReason::Exhausted,
-        ControlFlow::Break(Halt::Solutions) => StopReason::SolutionLimit,
-        ControlFlow::Break(Halt::Budget) => StopReason::NodeBudget,
-    };
-    SearchResult {
-        solutions,
-        nodes,
-        stop,
+        let Some(board) = Board::new(puzzle) else {
+            search.finished = Some(StopReason::Exhausted);
+            return search;
+        };
+        let all: Vec<Vec<usize>> = board
+            .types
+            .iter()
+            .map(|t| (0..t.candidates.len()).collect())
+            .collect();
+        match board.filter(&all) {
+            Some(candidates) => {
+                search.board = Some(board);
+                search.enter(candidates);
+            }
+            None => search.finished = Some(StopReason::Exhausted),
+        }
+        search
     }
+
+    /// Nodes spent so far.
+    #[must_use]
+    pub fn nodes(&self) -> u64 {
+        self.nodes
+    }
+
+    /// Solutions found so far.
+    #[must_use]
+    pub fn solutions(&self) -> &[Solution] {
+        &self.solutions
+    }
+
+    /// Continues the search, trying at most `max_nodes` more placements.
+    ///
+    /// The step stops right before the placement that would exceed
+    /// `max_nodes`, so a search that can end without another placement ends
+    /// in this step.
+    pub fn step(&mut self, max_nodes: u64) -> Progress {
+        if self.finished.is_none() {
+            self.finished = self.advance(max_nodes);
+        }
+        match self.finished {
+            Some(stop) => Progress::Done(SearchResult {
+                solutions: self.solutions.clone(),
+                nodes: self.nodes,
+                stop,
+            }),
+            None => Progress::Working,
+        }
+    }
+
+    /// Starts on a board whose valid candidates are `candidates`: records a
+    /// solution if every piece is placed, otherwise pushes a frame.
+    fn enter(&mut self, candidates: Vec<Vec<usize>>) {
+        let Some(board) = &self.board else { return };
+        let next = (0..board.types.len())
+            .filter(|&t| board.remaining[t] > 0)
+            .min_by_key(|&t| candidates[t].len());
+        match next {
+            // Every piece is placed, and `filter` has confirmed every line
+            // is at its clue.
+            None => self.solutions.push(board.solution()),
+            Some(t) => self.stack.push(Frame {
+                saved_min: board.min_index[t],
+                candidates,
+                t,
+                next: 0,
+                applied: None,
+            }),
+        }
+    }
+
+    /// Runs the depth-first search for at most `max_nodes` placements.
+    /// Returns why the search ended, or `None` if it is still going.
+    fn advance(&mut self, max_nodes: u64) -> Option<StopReason> {
+        let mut spent = 0u64;
+        loop {
+            if self.solutions.len() >= self.max_solutions {
+                return Some(StopReason::SolutionLimit);
+            }
+            let Some(board) = self.board.as_mut() else {
+                return Some(StopReason::Exhausted);
+            };
+            let Some(frame) = self.stack.last_mut() else {
+                return Some(StopReason::Exhausted);
+            };
+            let t = frame.t;
+            if let Some(i) = frame.applied.take() {
+                board.undo(t, i, frame.saved_min);
+            }
+            let Some(&i) = frame.candidates[t].get(frame.next) else {
+                self.stack.pop();
+                continue;
+            };
+            if spent >= max_nodes {
+                return None;
+            }
+            spent += 1;
+            self.nodes += 1;
+            frame.next += 1;
+            frame.applied = Some(i);
+            board.place(t, i);
+            if let Some(child) = board.filter(&frame.candidates) {
+                self.enter(child);
+            }
+        }
+    }
+}
+
+/// One level of the depth-first search: the type placed at this level and
+/// the candidates still valid on the board when the level was entered.
+struct Frame {
+    candidates: Vec<Vec<usize>>,
+    t: usize,
+    /// Position in `candidates[t]` of the next candidate to try.
+    next: usize,
+    /// `min_index[t]` before this level changed it.
+    saved_min: usize,
+    /// The candidate currently on the board, to be taken back.
+    applied: Option<usize>,
 }
 
 /// Answer of [`check_uniqueness`].
@@ -135,12 +281,6 @@ pub fn check_uniqueness(puzzle: &Puzzle, max_nodes: u64) -> UniquenessCheck {
     }
 }
 
-/// Why the internal search loop stopped early.
-enum Halt {
-    Solutions,
-    Budget,
-}
-
 /// One way to put a piece type on the board.
 struct Candidate {
     /// Index into the type's orientations.
@@ -168,7 +308,8 @@ struct PieceType {
 
 type Lines = [usize; MAX_GRID_SIZE];
 
-struct Search {
+/// The board during a search: what is placed and what each line holds.
+struct Board {
     width: usize,
     height: usize,
     piece_count: usize,
@@ -183,33 +324,12 @@ struct Search {
     min_index: Vec<usize>,
     /// Candidate indices chosen so far for each type, ascending.
     chosen: Vec<Vec<usize>>,
-    nodes: u64,
-    max_nodes: u64,
 }
 
-type Visit<'a> = dyn FnMut(Solution) -> ControlFlow<Halt> + 'a;
-
-/// Runs the search, returning the nodes spent and how it ended.
-fn run(puzzle: &Puzzle, max_nodes: u64, visit: &mut Visit<'_>) -> (u64, ControlFlow<Halt>) {
-    let Some(mut state) = Search::new(puzzle, max_nodes) else {
-        return (0, ControlFlow::Continue(()));
-    };
-    let all: Vec<Vec<usize>> = state
-        .types
-        .iter()
-        .map(|t| (0..t.candidates.len()).collect())
-        .collect();
-    let flow = match state.filter(&all) {
-        Some(candidates) => state.descend(&candidates, visit),
-        None => ControlFlow::Continue(()),
-    };
-    (state.nodes, flow)
-}
-
-impl Search {
-    /// Builds the search state, or returns `None` if a quick check already
+impl Board {
+    /// Builds the empty board, or returns `None` if a quick check already
     /// shows there is no solution.
-    fn new(puzzle: &Puzzle, max_nodes: u64) -> Option<Search> {
+    fn new(puzzle: &Puzzle) -> Option<Board> {
         let grid = puzzle.grid();
         let (width, height) = (grid.width(), grid.height());
         let colors: Vec<Color> = puzzle.colors();
@@ -265,7 +385,7 @@ impl Search {
 
         let types = build_types(puzzle, &color_index, &free);
         let type_count = types.len();
-        Some(Search {
+        Some(Board {
             width,
             height,
             piece_count: puzzle.pieces().len(),
@@ -278,8 +398,6 @@ impl Search {
             occupied: [0; MAX_GRID_SIZE],
             min_index: vec![0; type_count],
             chosen: vec![Vec::new(); type_count],
-            nodes: 0,
-            max_nodes,
         })
     }
 
@@ -365,39 +483,20 @@ impl Search {
         }
     }
 
-    fn descend(&mut self, candidates: &[Vec<usize>], visit: &mut Visit<'_>) -> ControlFlow<Halt> {
-        let next = (0..self.types.len())
-            .filter(|&t| self.remaining[t] > 0)
-            .min_by_key(|&t| candidates[t].len());
-        let Some(t) = next else {
-            // Every piece is placed, and `filter` has confirmed every line
-            // is at its clue.
-            return visit(self.solution());
-        };
+    /// Puts candidate `i` of type `t` on the board.
+    fn place(&mut self, t: usize, i: usize) {
+        self.apply(t, i, true);
+        self.remaining[t] -= 1;
+        self.min_index[t] = i + 1;
+        self.chosen[t].push(i);
+    }
 
-        let saved_min = self.min_index[t];
-        for &i in &candidates[t] {
-            if self.nodes >= self.max_nodes {
-                return ControlFlow::Break(Halt::Budget);
-            }
-            self.nodes += 1;
-            self.apply(t, i, true);
-            self.remaining[t] -= 1;
-            self.min_index[t] = i + 1;
-            self.chosen[t].push(i);
-
-            let flow = match self.filter(candidates) {
-                Some(child) => self.descend(&child, visit),
-                None => ControlFlow::Continue(()),
-            };
-
-            self.chosen[t].pop();
-            self.min_index[t] = saved_min;
-            self.remaining[t] += 1;
-            self.apply(t, i, false);
-            flow?;
-        }
-        ControlFlow::Continue(())
+    /// Takes back [`place`](Board::place) and restores `min_index[t]`.
+    fn undo(&mut self, t: usize, i: usize, saved_min: usize) {
+        self.chosen[t].pop();
+        self.min_index[t] = saved_min;
+        self.remaining[t] += 1;
+        self.apply(t, i, false);
     }
 
     fn solution(&self) -> Solution {

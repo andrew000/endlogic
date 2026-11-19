@@ -5,7 +5,8 @@ use std::fmt::Write as _;
 
 use endlogic_core::format::{parse, render_solution};
 use endlogic_core::solver::{
-    DEFAULT_NODE_BUDGET, StopReason, Uniqueness, check_uniqueness, search,
+    DEFAULT_NODE_BUDGET, Progress, Search, SearchResult, StopReason, Uniqueness, check_uniqueness,
+    search,
 };
 use endlogic_core::{Cell, Color, Grid, LineClues, Piece, Puzzle, Shape, Solution, verify};
 
@@ -389,4 +390,75 @@ fn locked_cell_of_reference_is_kept() {
         assert_eq!(puzzle.grid().get(0, col), Some(Cell::Lock(Color::DEFAULT)));
         assert_eq!(*owner, None);
     }
+}
+
+fn sample_names() -> Vec<String> {
+    let dir = format!("{}/../../puzzles", env!("CARGO_MANIFEST_DIR"));
+    let mut names: Vec<String> = std::fs::read_dir(dir)
+        .unwrap()
+        .map(|e| e.unwrap().file_name().into_string().unwrap())
+        .collect();
+    names.sort();
+    names
+}
+
+/// Runs a [`Search`] to the end in steps of `step` nodes.
+fn stepped(p: &Puzzle, max_solutions: usize, step: u64) -> SearchResult {
+    let mut search = Search::new(p, max_solutions);
+    let mut calls = 0u64;
+    loop {
+        calls += 1;
+        assert!(calls <= DEFAULT_NODE_BUDGET, "search never finished");
+        let before = search.nodes();
+        match search.step(step) {
+            Progress::Working => assert_eq!(search.nodes() - before, step),
+            Progress::Done(result) => {
+                assert!(result.nodes - before <= step);
+                // Finished searches keep returning the same result.
+                assert_eq!(search.step(step), Progress::Done(result.clone()));
+                return result;
+            }
+        }
+    }
+}
+
+#[test]
+fn stepwise_search_matches_search_for_any_step() {
+    let mut puzzles: Vec<(String, Puzzle)> = sample_names()
+        .into_iter()
+        .map(|name| {
+            let p = sample(&name);
+            (name, p)
+        })
+        .collect();
+    puzzles.push(("permutations-3".into(), permutations(3)));
+    puzzles.push(("empty".into(), puzzle(&["."], &[0], &[0], &[])));
+    for (name, p) in &puzzles {
+        for max_solutions in [0, 1, 2, 3, usize::MAX] {
+            let expected = search(p, max_solutions, DEFAULT_NODE_BUDGET);
+            assert_ne!(expected.stop, StopReason::NodeBudget, "{name}");
+            for step in [1, 7, 1000] {
+                assert_eq!(
+                    stepped(p, max_solutions, step),
+                    expected,
+                    "{name}, {max_solutions} solutions, step {step}"
+                );
+            }
+        }
+    }
+}
+
+#[test]
+fn stepwise_search_reports_progress() {
+    let p = sample("wlh9000-1.txt");
+    let mut stepper = Search::new(&p, usize::MAX);
+    assert_eq!(stepper.nodes(), 0);
+    assert_eq!(stepper.step(0), Progress::Working);
+    assert_eq!(stepper.nodes(), 0);
+    while stepper.solutions().is_empty() {
+        assert_eq!(stepper.step(1), Progress::Working);
+    }
+    let first = stepper.solutions()[0].clone();
+    assert_eq!(verify(&p, &first), Ok(()));
+    assert_eq!(stepper.nodes(), search(&p, 1, DEFAULT_NODE_BUDGET).nodes);
 }
