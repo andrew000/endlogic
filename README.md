@@ -116,7 +116,8 @@ just web-serve
 `web/dist` is a plain static site and can be served by any web server.
 
 The `Deploy to GitHub Pages` workflow builds the same site and publishes it;
-it and the `CI` workflow run only when started by hand from the Actions tab.
+like the `CI` and `Release` workflows, it runs only when started by hand
+from the Actions tab.
 
 ## Windows app
 
@@ -150,6 +151,10 @@ arguments give the same picture):
 ```sh
 just win-shot out.png 1366x768 --code "<link or code>" --lang uk --touch
 ```
+
+The `Release` workflow, started by hand with a version number, builds
+`endlogic-win-x64.exe` with its SHA-256 file and publishes both as a GitHub
+release.
 
 ## License
 
