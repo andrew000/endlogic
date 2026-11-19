@@ -1,0 +1,62 @@
+name: Deploy to GitHub Pages
+
+# Run by hand from the Actions tab; nothing deploys on push.
+on:
+  workflow_dispatch:
+
+permissions:
+  contents: read
+
+concurrency:
+  group: pages
+  cancel-in-progress: false
+
+jobs:
+  build:
+    runs-on: ubuntu-latest
+    permissions:
+      contents: read
+      pages: read
+    steps:
+      - name: Check out the code
+        uses: actions/checkout@v7
+        with:
+          persist-credentials: false
+
+      - name: Install the toolchain from rust-toolchain.toml
+        run: rustup toolchain install
+
+      - name: Install wasm-bindgen-cli of the version in Cargo.lock
+        run: |
+          version="$(awk '$1 == "name" && $3 == "\"wasm-bindgen\"" { getline; gsub(/"/, "", $3); print $3 }' Cargo.lock)"
+          test -n "$version"
+          echo "wasm-bindgen $version"
+          cargo install wasm-bindgen-cli --version "$version" --locked
+
+      - name: Build the web version
+        run: |
+          cargo build -p endlogic-web --release --target wasm32-unknown-unknown --locked
+          wasm-bindgen --target web --no-typescript --out-dir web/dist target/wasm32-unknown-unknown/release/endlogic_web.wasm
+          cp web/index.html web/dist/index.html
+
+      - name: Configure Pages
+        uses: actions/configure-pages@v6
+
+      - name: Upload the site
+        uses: actions/upload-pages-artifact@v5
+        with:
+          path: web/dist
+
+  deploy:
+    needs: build
+    runs-on: ubuntu-latest
+    permissions:
+      pages: write
+      id-token: write
+    environment:
+      name: github-pages
+      url: ${{ steps.deployment.outputs.page_url }}
+    steps:
+      - name: Deploy to GitHub Pages
+        id: deployment
+        uses: actions/deploy-pages@v5

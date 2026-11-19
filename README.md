@@ -1,5 +1,7 @@
 # endlogic
 
+**Play it in the browser: https://andrew000.github.io/endlogic/**
+
 Solver, generator and trainer for the "mechanism repair" puzzles from
 Arknights: Endfield.
 
@@ -102,6 +104,9 @@ just web-serve
 ```
 
 `web/dist` is a plain static site and can be served by any web server.
+
+The `Deploy to GitHub Pages` workflow builds the same site and publishes it;
+it and the `CI` workflow run only when started by hand from the Actions tab.
 
 ## License
 

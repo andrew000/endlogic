@@ -1,0 +1,35 @@
+name: CI
+
+# Run by hand from the Actions tab: the same checks as `just ci`.
+on:
+  workflow_dispatch:
+
+permissions:
+  contents: read
+
+jobs:
+  ci:
+    runs-on: ubuntu-latest
+    steps:
+      - name: Check out the code
+        uses: actions/checkout@v7
+        with:
+          persist-credentials: false
+
+      - name: Install the toolchain from rust-toolchain.toml
+        run: rustup toolchain install
+
+      - name: Check formatting
+        run: cargo fmt --all --check
+
+      - name: Lint
+        run: cargo clippy --workspace --all-targets -- -D warnings
+
+      - name: Test
+        run: cargo test --workspace
+
+      - name: Build the core and UI for wasm
+        run: cargo build -p endlogic-core -p endlogic-ui --target wasm32-unknown-unknown
+
+      - name: Build the web shell for wasm
+        run: cargo build -p endlogic-web --target wasm32-unknown-unknown
