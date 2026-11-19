@@ -7,7 +7,7 @@ use endlogic_core::{Cell, Shape};
 
 use crate::app::{App, CounterMode, Game, Gesture};
 use crate::board::{Line, LineState};
-use crate::layout::{Layout, to_f32};
+use crate::layout::{Layout, TextBlock, to_f32};
 use crate::painter::{Align, Font, FontFamily, Painter, Point, Rect, Rgba};
 use crate::text::{Lang, Text, difficulty_label, text};
 use crate::theme::{self, ease_out};
@@ -73,37 +73,16 @@ fn centered_text(p: &mut dyn Painter, text: &str, rect: Rect, font: Font, color:
     p.text(text, rect.center(), font, Align::Center, color);
 }
 
-/// Splits `text` into lines no wider than `max_width`, breaking at spaces.
-fn wrap(p: &mut dyn Painter, text: &str, font: Font, max_width: f32) -> Vec<String> {
-    let mut lines: Vec<String> = Vec::new();
-    let mut line = String::new();
-    for word in text.split(' ') {
-        let candidate = if line.is_empty() {
-            word.to_owned()
-        } else {
-            format!("{line} {word}")
-        };
-        if line.is_empty() || p.text_width(&candidate, font) <= max_width {
-            line = candidate;
-        } else {
-            lines.push(std::mem::replace(&mut line, word.to_owned()));
-        }
+/// Draws the lines the layout broke `block` into, each shrunk if the real
+/// font turns out wider than the estimate.
+fn paragraph(p: &mut dyn Painter, block: &TextBlock, color: Rgba) {
+    let line_h = block.line_height();
+    let font = sans(block.size, false);
+    for (k, line) in block.lines.iter().enumerate() {
+        let y = block.rect.y + line_h * (to_f32(k) + 0.5);
+        let font = fit(p, line, font, block.rect.w);
+        p.text(line, Point::new(block.rect.x, y), font, Align::Left, color);
     }
-    if !line.is_empty() {
-        lines.push(line);
-    }
-    lines
-}
-
-/// Draws wrapped text from the top of `rect`, clipped to it.
-fn paragraph(p: &mut dyn Painter, text: &str, rect: Rect, font: Font, color: Rgba) {
-    let line_h = font.size * 1.35;
-    p.push_clip(rect);
-    for (k, line) in wrap(p, text, font, rect.w).iter().enumerate() {
-        let y = rect.y + line_h * (to_f32(k) + 0.5);
-        p.text(line, Point::new(rect.x, y), font, Align::Left, color);
-    }
-    p.pop_clip();
 }
 
 #[derive(Clone, Copy, PartialEq, Eq)]
@@ -230,59 +209,31 @@ fn draw_header(app: &App, p: &mut dyn Painter) {
         theme::MUTED,
     );
 
-    if let Some(rect) = l.subtitle {
-        paragraph(
-            p,
-            text(app.lang, Text::Subtitle),
-            rect,
-            sans(l.font * 0.85, false),
-            theme::MUTED,
-        );
+    if let Some(block) = &l.subtitle {
+        paragraph(p, block, theme::MUTED);
     }
-    if let Some(rect) = l.help {
-        draw_help(app, rect, p);
-    }
+    draw_help(l, p);
 }
 
-fn draw_help(app: &App, rect: Rect, p: &mut dyn Painter) {
-    let l = &app.layout;
-    let row_h = rect.h / 3.0;
-    let icon_w = (l.font * 2.8).min(rect.w * 0.3);
-    let small = l.font * 0.85;
-    let rows = [
-        (Text::HelpDrag, None),
-        (Text::HelpRotate, Some("R")),
-        (Text::HelpDisplay, Some("TAB")),
-    ];
-    for (k, (key, cap)) in rows.into_iter().enumerate() {
-        let row = Rect::new(rect.x, rect.y + row_h * to_f32(k), rect.w, row_h);
-        let icon = Rect::new(row.x, row.y + row_h * 0.15, icon_w, row_h * 0.6);
+/// The help rows: every icon centered in its box, which the layout puts in
+/// one column and centers on the row's text.
+fn draw_help(l: &Layout, p: &mut dyn Painter) {
+    let caps = [None, Some("R"), Some("TAB")];
+    for (row, cap) in l.help.iter().zip(caps) {
+        let icon = row.icon;
         match cap {
             Some(label) => {
-                let w = (p.text_width(label, mono(small, true)) + 12.0).min(icon_w);
-                let cap = Rect::new(
-                    icon.x,
-                    icon.center().y - small,
-                    w.max(small * 2.0),
-                    small * 2.0,
-                );
-                keycap(p, cap, label, small * 0.9);
+                let size = row.text.size;
+                let font = mono(size, true);
+                let w = (p.text_width(label, font) + size * 1.2)
+                    .max(size * 2.0)
+                    .min(icon.w);
+                let cap = Rect::centered(icon.center(), w, size * 2.0);
+                keycap(p, cap, label, size * 0.9);
             }
             None => mouse_icon(p, icon),
         }
-        let text_rect = Rect::new(
-            row.x + icon_w + 8.0,
-            row.y + row_h * 0.15 - small * 0.1,
-            row.w - icon_w - 8.0,
-            row_h * 0.85,
-        );
-        paragraph(
-            p,
-            text(app.lang, key),
-            text_rect,
-            sans(small, false),
-            theme::TEXT,
-        );
+        paragraph(p, &row.text, theme::TEXT);
     }
 }
 
@@ -359,7 +310,7 @@ fn brackets(p: &mut dyn Painter, frame: Rect, len: f32, color: Rgba) {
 }
 
 fn draw_empty_board(l: &Layout, p: &mut dyn Painter) {
-    brackets(p, l.frame, l.cell * 0.5, theme::ACCENT.alpha(0.5));
+    brackets(p, l.frame, l.cell * 0.25, theme::ACCENT.alpha(0.5));
     p.fill_rect(l.cells, 0.0, theme::GRID_LINE);
     p.fill_rect(l.tray, 12.0, theme::TRAY);
 }
@@ -436,7 +387,7 @@ fn draw_board(app: &App, game: &Game, p: &mut dyn Painter) {
     brackets(
         p,
         l.frame,
-        l.cell * 0.5,
+        l.cell * 0.25,
         theme::ACCENT.mix(theme::BRIGHT, win),
     );
     p.fill_rect(l.cells, 0.0, theme::GRID_LINE);
@@ -589,6 +540,10 @@ fn draw_counters(app: &App, game: &Game, p: &mut dyn Painter) {
 
 fn draw_tray(app: &App, game: &Game, p: &mut dyn Painter) {
     let l = &app.layout;
+    if game.won && !l.wide && !app.is_generating() {
+        // The banner takes the empty tray's place.
+        return;
+    }
     p.fill_rect(l.tray, 12.0, theme::TRAY);
     let dragged = app.dragged_piece();
     let hovered = app
@@ -736,9 +691,10 @@ fn draw_overlays(app: &App, p: &mut dyn Painter) {
         let banner = l.banner;
         p.fill_rect(banner, 12.0, theme::PANEL.alpha(0.97 * t));
         p.stroke_rect(banner.inset(0.75), 12.0, 1.5, theme::BRIGHT.alpha(t));
-        let title_area = Rect::new(banner.x, banner.y, banner.w, l.next.y - banner.y);
+        // The text fills the part left of the button.
+        let title_area = Rect::new(banner.x, banner.y, l.next.x - banner.x, banner.h);
         let label = text(app.lang, Text::Complete);
-        let font = fit(p, label, mono(l.font * 1.3, true), banner.w - 24.0);
+        let font = fit(p, label, mono(l.font * 1.2, true), title_area.w - 16.0);
         p.text(
             label,
             title_area.center(),

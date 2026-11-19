@@ -729,10 +729,36 @@ fn share_copies_a_link() {
         .filter(|e| matches!(e, Effect::CopyText(_)))
         .collect();
     assert_eq!(copied, vec![Effect::CopyText(format!("{SHARE}{code}"))]);
-    assert_eq!(app.toast().unwrap().text, Text::LinkCopied);
-    let drawing = settle(&mut app);
-    drop(drawing);
+    // No toast until the shell reports the result.
+    assert_eq!(app.toast(), None);
+    app.handle(Event::CopyFinished(true));
+    let toast = app.toast().unwrap();
+    assert_eq!((toast.text, toast.error), (Text::LinkCopied, false));
+    settle(&mut app);
     assert!(app.toast().is_none());
+
+    app.click(app.layout().share.center());
+    app.handle(Event::CopyFinished(false));
+    let toast = app.toast().unwrap();
+    assert_eq!((toast.text, toast.error), (Text::CopyFailed, true));
+    let mut recorder = Recorder::default();
+    app.frame(0.2, &mut recorder);
+    assert!(
+        texts(&recorder)
+            .iter()
+            .any(|t| t == "Couldn't copy the link")
+    );
+    let mut ua = config_with_lang("uk-UA");
+    ua.code = Some(code);
+    let mut app = App::new(ua);
+    app.handle(Event::CopyFinished(false));
+    let mut recorder = Recorder::default();
+    app.frame(0.2, &mut recorder);
+    assert!(
+        texts(&recorder)
+            .iter()
+            .any(|t| t == "Не вдалося скопіювати посилання")
+    );
 }
 
 #[test]
@@ -769,7 +795,7 @@ fn settings_are_saved_and_restored() {
     assert_eq!(saves, expected.map(|(k, v)| (k, v.to_owned())).to_vec());
     let drawing = settle(&mut app);
     assert!(texts(&drawing).iter().any(|t| t == "ЕКСПЕРТ"));
-    assert_eq!(app.puzzle_id().unwrap().chars().nth(2), Some('E'));
+    assert!(app.puzzle_id().unwrap().starts_with("Δ-X-"));
     assert_eq!(app.board().unwrap().width(), 8);
 
     let mut config = config(1366.0, 768.0);
@@ -841,6 +867,10 @@ fn idle_frames_are_not_requested() {
     assert!(!app.frame(0.016, &mut Recorder::default()));
     let from = card(&app, 0);
     app.start_drag(from, cell(&app, 2, 2), PointerKind::Mouse);
+    // The piece grows to board size, then nothing moves while it is held.
+    assert!(app.frame(0.016, &mut Recorder::default()), "growing");
+    settle(&mut app);
+    assert_eq!(app.dragged_piece(), Some(0));
     assert!(
         !app.frame(0.016, &mut Recorder::default()),
         "a held piece does not animate"
@@ -882,14 +912,20 @@ fn same_entropy_and_events_give_the_same_state() {
 
 // ---- layout ----
 
-const SIZES: [(f32, f32); 4] = [
+const SIZES: [(f32, f32); 5] = [
     (1366.0, 768.0),
     (1920.0, 1080.0),
+    (2560.0, 1440.0),
     (390.0, 844.0),
     (844.0, 390.0),
 ];
 
-fn check_layout(layout: &Layout, w: f32, h: f32, what: &str) {
+fn assert_close(a: f32, b: f32, what: &str) {
+    assert!((a - b).abs() < 0.5, "{what}: {a} != {b}");
+}
+
+fn check_layout(layout: &Layout, input: &LayoutInput, what: &str) {
+    let (w, h) = (input.width, input.height);
     let screen = Rect::new(0.0, 0.0, w, h);
     let rects = layout.static_rects();
     for (name, rect) in &rects {
@@ -914,37 +950,106 @@ fn check_layout(layout: &Layout, w: f32, h: f32, what: &str) {
         );
     }
     if let Some(panel) = layout.panel {
-        for rect in [
-            Some(layout.title),
-            Some(layout.puzzle_id),
-            layout.subtitle,
-            layout.help,
-        ]
-        .into_iter()
-        .flatten()
-        {
+        let mut inner = vec![layout.title, layout.puzzle_id];
+        inner.extend(layout.subtitle.iter().map(|b| b.rect));
+        for row in &layout.help {
+            inner.push(row.icon);
+            inner.push(row.text.rect);
+        }
+        for rect in inner {
             assert!(
                 panel.contains_rect(rect),
                 "{what}: {rect:?} outside the panel"
             );
         }
     }
+    // Counters sit right next to the grid.
     assert!(layout.frame.contains_rect(layout.cells), "{what}: cells");
-    for card in &layout.cards {
+    assert_close(
+        layout.row_counters.right(),
+        layout.cells.x - 0.15 * layout.cell,
+        what,
+    );
+    assert_close(
+        layout.col_counters.bottom(),
+        layout.cells.y - 0.15 * layout.cell,
+        what,
+    );
+
+    check_tray(layout, input, what);
+    check_banner(layout, &rects, what);
+
+    if layout.wide {
+        assert!(
+            layout.tray.w <= w * 0.24 + 0.01,
+            "{what}: tray {} of {w}",
+            layout.tray.w
+        );
+        // One vertical axis.
+        let axis = layout.axis;
+        assert_close(axis, w / 2.0, what);
+        for (name, rect) in [
+            ("tabs", layout.tab_bar()),
+            ("board", layout.board_block()),
+            ("counters", layout.counters),
+            ("banner", layout.banner),
+        ] {
+            assert_close(rect.center().x, axis, &format!("{what}: {name} axis"));
+        }
+    }
+    assert!(layout.cell >= 20.0, "{what}: cell {}", layout.cell);
+    assert_eq!(layout.wide, w > h, "{what}: arrangement");
+}
+
+fn check_tray(layout: &Layout, input: &LayoutInput, what: &str) {
+    // The tray: every piece fits, cards share one size and one scale.
+    assert_eq!(layout.cards.len(), input.pieces, "{what}: cards");
+    let first = layout.cards[0];
+    for (k, card) in layout.cards.iter().enumerate() {
         assert!(
             layout.tray.contains_rect(*card),
             "{what}: card outside the tray"
         );
-    }
-    for (k, a) in layout.cards.iter().enumerate() {
-        for b in &layout.cards[k + 1..] {
-            assert!(!a.intersects(*b), "{what}: cards overlap");
+        assert_close(card.w, first.w, what);
+        assert_close(card.h, first.h, what);
+        for other in &layout.cards[k + 1..] {
+            assert!(!card.intersects(*other), "{what}: cards overlap");
         }
     }
+    assert!(
+        layout.tray_cell <= layout.cell * 0.5 + 0.01,
+        "{what}: tray cell {} board cell {}",
+        layout.tray_cell,
+        layout.cell
+    );
+    let longest = f32::from(u8::try_from(input.max_piece_side).unwrap());
+    assert!(
+        layout.tray_cell * longest <= first.w,
+        "{what}: piece wider than its card"
+    );
+}
+
+fn check_banner(layout: &Layout, rects: &[(&str, Rect)], what: &str) {
+    let screen = Rect::new(0.0, 0.0, layout.axis * 2.0, f32::MAX);
+    // The banner: on screen, clear of the board, counters and buttons.
     assert!(screen.contains_rect(layout.banner), "{what}: banner");
     assert!(layout.banner.contains_rect(layout.next), "{what}: next");
-    assert!(layout.cell >= 20.0, "{what}: cell {}", layout.cell);
-    assert_eq!(layout.wide, w > h, "{what}: arrangement");
+    for (name, rect) in rects {
+        if *name != "banner" && (*name != "tray" || layout.wide) {
+            assert!(
+                !layout.banner.intersects(*rect),
+                "{what}: banner overlaps {name}"
+            );
+        }
+    }
+    if !layout.wide {
+        // Where the tray was; it may be wider than a narrow tray.
+        assert!(
+            layout.banner.y >= layout.tray.y - 0.01
+                && layout.banner.bottom() <= layout.tray.bottom() + 0.01,
+            "{what}: banner not on the tray"
+        );
+    }
 }
 
 #[test]
@@ -969,16 +1074,83 @@ fn layout_fits_every_size_and_difficulty() {
                         let what =
                             format!("{w}x{h} {difficulty:?} {lang:?} touch={touch} side={side}");
                         let layout = Layout::compute(&input);
-                        check_layout(&layout, w, h, &what);
+                        check_layout(&layout, &input, &what);
                         if touch || !layout.wide {
-                            assert!(layout.help.is_none(), "{what}: help");
+                            assert!(layout.help.is_empty(), "{what}: help");
                         }
                         if !touch && layout.wide && h >= 700.0 {
-                            assert!(layout.help.is_some(), "{what}: no help");
+                            assert_eq!(layout.help.len(), 3, "{what}: no help");
                         }
                     }
                 }
             }
+        }
+    }
+}
+
+#[test]
+fn a_big_screen_gives_easy_a_big_board() {
+    let params = Difficulty::Easy.params();
+    let layout = Layout::compute(&LayoutInput {
+        width: 1920.0,
+        height: 1080.0,
+        touch: false,
+        lang: Lang::En,
+        grid_width: params.width,
+        grid_height: params.height,
+        pieces: params.pieces.max,
+        max_piece_side: 3,
+    });
+    assert!(layout.cell > 64.0, "cell {}", layout.cell);
+}
+
+#[test]
+fn help_icons_share_an_axis_and_center_on_their_text() {
+    for (w, h) in [(1366.0, 768.0), (1920.0, 1080.0), (2560.0, 1440.0)] {
+        for lang in [Lang::En, Lang::Ua] {
+            let layout = Layout::compute(&LayoutInput {
+                width: w,
+                height: h,
+                touch: false,
+                lang,
+                grid_width: 6,
+                grid_height: 6,
+                pieces: 5,
+                max_piece_side: 4,
+            });
+            let what = format!("{w}x{h} {lang:?}");
+            assert_eq!(layout.help.len(), 3, "{what}");
+            let axis = layout.help[0].icon.center().x;
+            let mut gaps = Vec::new();
+            for (k, row) in layout.help.iter().enumerate() {
+                assert_close(row.icon.center().x, axis, &what);
+                assert_close(row.icon.w, layout.help[0].icon.w, &what);
+                assert_close(row.icon.center().y, row.text.rect.center().y, &what);
+                assert_ne!(row.text.lines, Vec::<String>::new());
+                if let Some(next) = layout.help.get(k + 1) {
+                    let bottom = row.text.rect.bottom().max(row.icon.bottom());
+                    let top = next.text.rect.y.min(next.icon.y);
+                    gaps.push(top - bottom);
+                }
+            }
+            // Equal spacing between rows, and about the same above the help.
+            assert_close(gaps[0], gaps[1], &what);
+            let subtitle = layout.subtitle.as_ref().unwrap();
+            let first = &layout.help[0];
+            let above = first.text.rect.y.min(first.icon.y) - subtitle.rect.bottom();
+            assert!(
+                above <= gaps[0] * 1.5 + 0.5,
+                "{what}: {above} vs {}",
+                gaps[0]
+            );
+            // The panel ends with its content.
+            let panel = layout.panel.unwrap();
+            let last = &layout.help[2];
+            let bottom = last.text.rect.bottom().max(last.icon.bottom());
+            assert!(
+                panel.bottom() - bottom < layout.font * 1.5,
+                "{what}: panel too tall"
+            );
         }
     }
 }
@@ -992,7 +1164,18 @@ fn layout_of_real_puzzles_fits() {
             config.entropy = u64::try_from(k).unwrap();
             config.settings = vec![("difficulty".to_owned(), difficulty.name().to_owned())];
             let mut app = generated(config);
-            check_layout(app.layout(), w, h, &format!("{w}x{h} {difficulty:?}"));
+            let board = app.board().unwrap();
+            let input = LayoutInput {
+                width: w,
+                height: h,
+                touch: w < h,
+                lang: Lang::En,
+                grid_width: board.width(),
+                grid_height: board.height(),
+                pieces: board.piece_count(),
+                max_piece_side: board.max_piece_side(),
+            };
+            check_layout(app.layout(), &input, &format!("{w}x{h} {difficulty:?}"));
             // Everything drawn stays on screen.
             let drawing = settle(&mut app);
             let screen = Rect::new(-1.0, -1.0, w + 2.0, h + 2.0);
@@ -1043,4 +1226,39 @@ fn any_window_size_draws_without_panicking() {
             app.layout().cell
         );
     }
+}
+
+#[test]
+fn a_piece_grows_when_taken_from_the_tray_and_shrinks_back() {
+    let mut app = open(&sample("wlh9000-1.txt"));
+    let tray_cell = app.layout().tray_cell;
+    let board_cell = app.layout().cell;
+    assert!(tray_cell <= board_cell * 0.5);
+    assert_eq!(app.piece_visual(0).1, tray_cell);
+    let from = card(&app, 0);
+    let id = app.start_drag(from, Point::new(from.x - 30.0, from.y), PointerKind::Mouse);
+    assert_eq!(
+        app.piece_visual(0).1,
+        tray_cell,
+        "growth starts at tray size"
+    );
+    app.frame(0.04, &mut Recorder::default());
+    let middle = app.piece_visual(0).1;
+    assert!(tray_cell < middle && middle < board_cell, "{middle}");
+    app.frame(0.05, &mut Recorder::default());
+    assert_eq!(app.piece_visual(0).1, board_cell);
+    // Dropped off the board it shrinks back on its way to the tray.
+    app.handle(Event::PointerUp(pointer(
+        id,
+        Point::new(2.0, 2.0),
+        PointerKind::Mouse,
+    )));
+    app.frame(0.09, &mut Recorder::default());
+    let shrinking = app.piece_visual(0).1;
+    assert!(
+        tray_cell < shrinking && shrinking < board_cell,
+        "{shrinking}"
+    );
+    settle(&mut app);
+    assert_eq!(app.piece_visual(0).1, tray_cell);
 }

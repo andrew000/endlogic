@@ -94,6 +94,9 @@ pub enum Event {
     Key(Key),
     /// The puzzle code in the address changed (e.g. a pasted link).
     CodeChanged(String),
+    /// The result of an [`Effect::CopyText`]: `true` if the text reached
+    /// the clipboard.
+    CopyFinished(bool),
 }
 
 /// The mouse cursor the UI wants.
@@ -115,7 +118,8 @@ pub enum Cursor {
 pub enum Effect {
     /// Show this puzzle code in the address, without adding history.
     SetCode(String),
-    /// Copy text to the clipboard.
+    /// Copy text to the clipboard, then report the result with
+    /// [`Event::CopyFinished`].
     CopyText(String),
     /// Store a setting so it can be passed back in [`Config::settings`].
     SaveSetting {

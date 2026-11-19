@@ -1,4 +1,10 @@
 //! Screen layout, computed from the area size alone.
+//!
+//! In the wide arrangement the left panel and the tray column have the same
+//! width, so the difficulty tabs, the board with its counters, the counter
+//! switch and the win banner all share one vertical axis: the middle of the
+//! area. In the tall arrangement everything is stacked and centered on the
+//! same axis.
 
 use crate::painter::{Point, Rect};
 use crate::text::{Lang, Text, difficulty_label, text};
@@ -9,14 +15,20 @@ pub const MIN_TARGET: f32 = 44.0;
 
 /// Width of the counter band beside the board, in cells.
 const BAND: f32 = 1.0;
-/// Space between the cells and the board frame, in cells.
-const FRAME_PAD: f32 = 0.35;
+/// Space between the grid and its counters, in cells.
+const COUNTER_GAP: f32 = 0.15;
+/// Space between the grid and the corner brackets, in cells.
+const FRAME_PAD: f32 = 0.1;
 /// Largest board cell, in logical pixels.
-const MAX_CELL: f32 = 64.0;
-/// Smallest board cell the search for a cell size considers.
+const MAX_CELL: f32 = 96.0;
+/// Smallest board cell.
 const MIN_CELL: f32 = 6.0;
 /// Smallest tray card.
 const MIN_CARD: f32 = 56.0;
+/// Widest the tray may be in the wide arrangement, as a share of the width.
+pub const MAX_TRAY_SHARE: f32 = 0.24;
+/// Largest piece cell in the tray, as a share of the board cell.
+pub const TRAY_SCALE: f32 = 0.5;
 
 /// What the layout depends on besides the area size.
 #[derive(Debug, Clone, Copy, PartialEq)]
@@ -27,7 +39,7 @@ pub struct LayoutInput {
     pub height: f32,
     /// Main input is touch: no keyboard help or key hints.
     pub touch: bool,
-    /// Language of the labels, which decides button widths.
+    /// Language of the labels, which decides widths and line breaks.
     pub lang: Lang,
     /// Board width in cells.
     pub grid_width: usize,
@@ -39,6 +51,35 @@ pub struct LayoutInput {
     pub max_piece_side: usize,
 }
 
+/// Text broken into lines, drawn from the top of `rect`.
+#[derive(Debug, Clone, PartialEq)]
+pub struct TextBlock {
+    /// Where the lines go.
+    pub rect: Rect,
+    /// The lines, top to bottom.
+    pub lines: Vec<String>,
+    /// Font size.
+    pub size: f32,
+}
+
+impl TextBlock {
+    /// Height of one line.
+    #[must_use]
+    pub fn line_height(&self) -> f32 {
+        self.size * LINE
+    }
+}
+
+/// One row of the controls help.
+#[derive(Debug, Clone, PartialEq)]
+pub struct HelpRow {
+    /// Box the icon is centered in. All rows share its horizontal position,
+    /// and it is centered vertically on the text.
+    pub icon: Rect,
+    /// The explanation.
+    pub text: TextBlock,
+}
+
 /// Where everything goes.
 #[derive(Debug, Clone, PartialEq)]
 pub struct Layout {
@@ -48,37 +89,40 @@ pub struct Layout {
     pub font: f32,
     /// Height of buttons, tabs and switches.
     pub button_height: f32,
-    /// The left column panel, in the wide arrangement.
+    /// The shared vertical axis.
+    pub axis: f32,
+    /// The left panel, in the wide arrangement; as tall as its content.
     pub panel: Option<Rect>,
     /// `// ENDLOGIC`.
     pub title: Rect,
     /// The puzzle id line.
     pub puzzle_id: Rect,
     /// The subtitle, when there is room.
-    pub subtitle: Option<Rect>,
-    /// The three help rows, when shown.
-    pub help: Option<Rect>,
+    pub subtitle: Option<TextBlock>,
+    /// The three help rows; empty when the help is not shown.
+    pub help: Vec<HelpRow>,
     /// Difficulty tabs, easiest first.
     pub tabs: [Rect; 4],
     /// Language switch, `EN | UA`.
     pub lang: Rect,
     /// Share button.
     pub share: Rect,
-    /// Board frame: the cells plus a margin, with corner brackets.
+    /// Board frame: the cells plus a small margin, marked by corner brackets.
     pub frame: Rect,
     /// The cells.
     pub cells: Rect,
     /// Side of one cell.
     pub cell: f32,
-    /// Row counters, left of the frame.
+    /// Row counters, left of the cells.
     pub row_counters: Rect,
-    /// Column counters, above the frame.
+    /// Column counters, above the cells.
     pub col_counters: Rect,
     /// Tray background.
     pub tray: Rect,
-    /// One card per piece, in piece order.
+    /// One card per piece, in piece order, all the same size.
     pub cards: Vec<Rect>,
-    /// Side of one cell of a piece drawn in the tray.
+    /// Side of one cell of a piece drawn in the tray, the same for every
+    /// card and at most half the board cell.
     pub tray_cell: f32,
     /// Reset button.
     pub reset: Rect,
@@ -88,13 +132,16 @@ pub struct Layout {
     pub tab_hint: Option<Rect>,
     /// New puzzle button.
     pub new: Rect,
-    /// Win banner (drawn over the board).
+    /// Win banner: under the board (wide) or over the empty tray (tall).
     pub banner: Rect,
     /// Next button inside the banner.
     pub next: Rect,
-    /// Center of toasts and the generating indicator (drawn over the board).
+    /// Center of toasts.
     pub notice: Point,
 }
+
+/// Line height as a multiple of the font size.
+const LINE: f32 = 1.35;
 
 impl Layout {
     /// Lays the screen out.
@@ -134,6 +181,13 @@ impl Layout {
         Rect::new(x, y, self.frame.right() - x, self.frame.bottom() - y)
     }
 
+    /// The difficulty tabs as one rectangle.
+    #[must_use]
+    pub fn tab_bar(&self) -> Rect {
+        let first = self.tabs[0];
+        Rect::new(first.x, first.y, self.tabs[3].right() - first.x, first.h)
+    }
+
     /// Screen rectangle of the cell at `(row, col)`.
     #[must_use]
     pub fn cell_rect(&self, row: usize, col: usize) -> Rect {
@@ -146,7 +200,8 @@ impl Layout {
     }
 
     /// The elements that must neither overlap nor leave the screen, with
-    /// names for test messages. Overlays (banner, toasts) are not included.
+    /// names for test messages. Toasts are not included; the banner is
+    /// included in the wide arrangement, where it has a place of its own.
     #[must_use]
     pub fn static_rects(&self) -> Vec<(&'static str, Rect)> {
         let mut rects = vec![];
@@ -170,6 +225,9 @@ impl Layout {
         ]);
         if let Some(hint) = self.tab_hint {
             rects.push(("tab hint", hint));
+        }
+        if self.wide {
+            rects.push(("banner", self.banner));
         }
         rects
     }
@@ -225,11 +283,48 @@ impl Metrics {
     fn hint_width(&self) -> f32 {
         estimate_width("TAB", self.font * 0.75) + self.font
     }
+
+    /// Height of the win banner: one row with the text and the button.
+    fn banner_height(&self) -> f32 {
+        self.button + 2.0 * self.gap
+    }
 }
 
-/// A rough text width for layout; drawing shrinks text that does not fit.
+/// A cautious text width for layout; drawing shrinks text that is wider.
 fn estimate_width(text: &str, size: f32) -> f32 {
     to_f32(text.chars().count()) * size * 0.62
+}
+
+/// Breaks `text` into lines whose estimated width fits `max_width`.
+fn wrap(text: &str, size: f32, max_width: f32) -> Vec<String> {
+    let mut lines: Vec<String> = Vec::new();
+    let mut line = String::new();
+    for word in text.split(' ') {
+        let candidate = if line.is_empty() {
+            word.to_owned()
+        } else {
+            format!("{line} {word}")
+        };
+        if line.is_empty() || estimate_width(&candidate, size) <= max_width {
+            line = candidate;
+        } else {
+            lines.push(std::mem::replace(&mut line, word.to_owned()));
+        }
+    }
+    if !line.is_empty() {
+        lines.push(line);
+    }
+    lines
+}
+
+fn text_block(text: &str, x: f32, y: f32, width: f32, size: f32) -> TextBlock {
+    let lines = wrap(text, size, width);
+    let height = to_f32(lines.len()) * size * LINE;
+    TextBlock {
+        rect: Rect::new(x, y, width, height),
+        lines,
+        size,
+    }
 }
 
 /// Converts a small count to `f32`.
@@ -251,35 +346,19 @@ fn squeeze(ideal: &[f32], available: f32) -> Vec<f32> {
     ideal.iter().map(|&w| (w * scale).max(MIN_TARGET)).collect()
 }
 
-/// Lays `widths` out left to right from `x`, `gap` apart.
-fn row(x: f32, y: f32, h: f32, widths: &[f32], gap: f32) -> Vec<Rect> {
-    let mut x = x;
-    widths
-        .iter()
-        .map(|&w| {
-            let r = Rect::new(x, y, w, h);
-            x += w + gap;
-            r
-        })
-        .collect()
-}
-
-fn tab_rects(input: &LayoutInput, m: &Metrics, x0: f32, x1: f32, y: f32) -> [Rect; 4] {
-    let ideal: Vec<f32> = Difficulty::ALL
+/// Four equal tabs centered on `axis`, no wider than `2 * half`.
+fn tab_rects(input: &LayoutInput, m: &Metrics, axis: f32, half: f32, y: f32) -> [Rect; 4] {
+    let widest = Difficulty::ALL
         .iter()
         .map(|&d| estimate_width(difficulty_label(input.lang, d), m.font) + 1.6 * m.pad())
-        .map(|w| w.max(MIN_TARGET))
-        .collect();
-    let widest = ideal.iter().copied().fold(0.0, f32::max);
-    let widths = squeeze(&[widest; 4], x1 - x0);
-    let total: f32 = widths.iter().sum();
-    let start = x0 + ((x1 - x0) - total).max(0.0) / 2.0;
-    let rects = row(start, y, m.button, &widths, 0.0);
-    [rects[0], rects[1], rects[2], rects[3]]
+        .fold(MIN_TARGET, f32::max);
+    let tab = squeeze(&[widest * 4.0], 2.0 * half)[0].max(4.0 * MIN_TARGET) / 4.0;
+    let start = axis - 2.0 * tab;
+    core::array::from_fn(|k| Rect::new(start + tab * to_f32(k), y, tab, m.button))
 }
 
-/// The bottom row: reset on the left, the counter switch (with its key hint)
-/// in the middle, new on the right.
+/// The bottom row: reset on the left, the counter switch centered on the
+/// axis (with its key hint to its left), new on the right.
 struct BottomRow {
     reset: Rect,
     counters: Rect,
@@ -289,95 +368,41 @@ struct BottomRow {
 
 fn bottom_row(input: &LayoutInput, m: &Metrics, x0: f32, x1: f32, y: f32) -> BottomRow {
     let t = |key| text(input.lang, key);
+    let axis = f32::midpoint(x0, x1);
     let ideal = [
         m.button_width(t(Text::Reset)),
         m.switch_width(t(Text::Grid), t(Text::Numbers)),
         m.button_width(t(Text::New)),
     ];
-    let widths = squeeze(&ideal, x1 - x0 - 2.0 * m.gap);
-    let reset = Rect::new(x0, y, widths[0], m.button);
-    let new = Rect::new(x1 - widths[2], y, widths[2], m.button);
-    let (lo, hi) = (reset.right() + m.gap, new.x - m.gap);
+    // The switch is centered, so each side gets half of what is left.
+    let side = ideal[0].max(ideal[2]);
+    let widths = squeeze(&[side, ideal[1], side], x1 - x0 - 2.0 * m.gap);
+    let reset = Rect::new(x0, y, ideal[0].min(widths[0]), m.button);
+    let new_w = ideal[2].min(widths[2]);
+    let new = Rect::new(x1 - new_w, y, new_w, m.button);
+    let counters = Rect::new(axis - widths[1] / 2.0, y, widths[1], m.button);
     let hint_w = m.hint_width();
-    let with_hint = widths[1] + m.gap * 0.5 + hint_w;
-    let center = f32::midpoint(x0, x1);
-    let fits_centered = |w: f32| center - w / 2.0 >= lo && center + w / 2.0 <= hi;
-    let place = |w: f32| {
-        if fits_centered(w) {
-            center - w / 2.0
-        } else {
-            lo + ((hi - lo) - w).max(0.0) / 2.0
-        }
-    };
-    if !input.touch && with_hint <= hi - lo {
-        let start = place(with_hint);
-        let hint = Rect::new(start, y + m.button * 0.2, hint_w, m.button * 0.6);
-        let counters = Rect::new(hint.right() + m.gap * 0.5, y, widths[1], m.button);
-        BottomRow {
-            reset,
-            counters,
-            hint: Some(hint),
-            new,
-        }
-    } else {
-        let counters = Rect::new(place(widths[1]), y, widths[1], m.button);
-        BottomRow {
-            reset,
-            counters,
-            hint: None,
-            new,
-        }
+    let hint_x = counters.x - m.gap * 0.5 - hint_w;
+    let hint = (!input.touch && hint_x >= reset.right() + m.gap)
+        .then(|| Rect::new(hint_x, y + m.button * 0.2, hint_w, m.button * 0.6));
+    BottomRow {
+        reset,
+        counters,
+        hint,
+        new,
     }
 }
 
-/// The best square card size for `n` cards in a `w`×`h` area.
-fn card_grid(n: usize, w: f32, h: f32, gap: f32) -> (usize, usize, f32) {
-    let n = n.max(1);
-    let mut best = (n, 1, 0.0);
-    for cols in 1..=n {
-        let rows = n.div_ceil(cols);
-        let side = ((w - gap * to_f32(cols - 1)) / to_f32(cols))
-            .min((h - gap * to_f32(rows - 1)) / to_f32(rows));
-        if side > best.2 {
-            best = (cols, rows, side);
-        }
-    }
-    best
-}
-
-/// Smallest acceptable card for pieces with this longest side.
-fn min_card(input: &LayoutInput) -> f32 {
-    MIN_CARD.max(to_f32(input.max_piece_side) * 9.0)
-}
-
-/// Board block size for a cell size: `(width, height)` including counters.
+/// Board size for a cell size: `(width, height)` including counters.
 fn board_size(input: &LayoutInput, cell: f32) -> (f32, f32) {
-    let extra = (BAND + 2.0 * FRAME_PAD) * cell;
+    let extra = (BAND + COUNTER_GAP + FRAME_PAD) * cell;
     (
         to_f32(input.grid_width) * cell + extra,
         to_f32(input.grid_height) * cell + extra,
     )
 }
 
-/// The largest cell size in `MIN_CELL..=MAX_CELL` for which `fits` holds,
-/// or `MIN_CELL` if none does.
-fn largest_cell(fits: impl Fn(f32) -> bool) -> f32 {
-    if fits(MAX_CELL) {
-        return MAX_CELL;
-    }
-    let (mut lo, mut hi) = (MIN_CELL, MAX_CELL);
-    for _ in 0..24 {
-        let mid = f32::midpoint(lo, hi);
-        if fits(mid) {
-            lo = mid;
-        } else {
-            hi = mid;
-        }
-    }
-    lo.floor()
-}
-
-/// Board rectangles for a block whose top-left corner is `origin`.
+/// Board rectangles.
 struct Board {
     frame: Rect,
     cells: Rect,
@@ -385,172 +410,234 @@ struct Board {
     col_counters: Rect,
 }
 
-fn board_at(input: &LayoutInput, origin: Point, cell: f32) -> Board {
+/// The board block of `cell` centered on `axis` with its top at `top`.
+fn board_at(input: &LayoutInput, axis: f32, top: f32, cell: f32) -> Board {
+    let (block_w, _) = board_size(input, cell);
     let band = BAND * cell;
-    let pad = FRAME_PAD * cell;
-    let cells_w = to_f32(input.grid_width) * cell;
-    let cells_h = to_f32(input.grid_height) * cell;
-    let frame = Rect::new(
-        origin.x + band,
-        origin.y + band,
-        cells_w + 2.0 * pad,
-        cells_h + 2.0 * pad,
+    let offset = band + COUNTER_GAP * cell;
+    let cells = Rect::new(
+        axis - block_w / 2.0 + offset,
+        top + offset,
+        to_f32(input.grid_width) * cell,
+        to_f32(input.grid_height) * cell,
     );
     Board {
-        frame,
-        cells: Rect::new(frame.x + pad, frame.y + pad, cells_w, cells_h),
-        row_counters: Rect::new(origin.x, frame.y, band, frame.h),
-        col_counters: Rect::new(frame.x, origin.y, frame.w, band),
+        frame: cells.inset(-FRAME_PAD * cell),
+        row_counters: Rect::new(cells.x - offset, cells.y, band, cells.h),
+        col_counters: Rect::new(cells.x, cells.y - offset, cells.w, band),
+        cells,
     }
 }
 
-/// The tray: background and cards, top-left at `origin`.
+/// Smallest acceptable card for pieces with this longest side.
+fn min_card(input: &LayoutInput) -> f32 {
+    MIN_CARD.max(to_f32(input.max_piece_side) * 9.0)
+}
+
+/// Cards laid out `cols` per row, top-left at `origin`.
 struct Tray {
     rect: Rect,
     cards: Vec<Rect>,
-    cell: f32,
 }
 
-fn tray_size(input: &LayoutInput, w: f32, h: f32, gap: f32, cell: f32) -> (usize, usize, f32) {
-    let pad = gap;
-    let (cols, rows, side) = card_grid(input.pieces, w - 2.0 * pad, h - 2.0 * pad, gap);
-    let longest = to_f32(input.max_piece_side.max(1));
-    let largest = (longest * cell * 0.8 + cell).max(min_card(input));
-    (cols, rows, side.min(largest))
-}
-
-fn tray_at(
-    input: &LayoutInput,
-    origin: Point,
-    grid: (usize, usize, f32),
-    gap: f32,
-    cell: f32,
-) -> Tray {
-    let (cols, rows, side) = grid;
-    let pad = gap;
-    let w = to_f32(cols) * side + to_f32(cols - 1) * gap + 2.0 * pad;
-    let h = to_f32(rows) * side + to_f32(rows.saturating_sub(1)) * gap + 2.0 * pad;
-    let cards = (0..input.pieces)
+fn tray_at(origin: Point, n: usize, cols: usize, card: f32, gap: f32) -> Tray {
+    let cols = cols.max(1);
+    let rows = n.div_ceil(cols).max(1);
+    let rect = Rect::new(
+        origin.x,
+        origin.y,
+        to_f32(cols) * card + to_f32(cols + 1) * gap,
+        to_f32(rows) * card + to_f32(rows + 1) * gap,
+    );
+    let cards = (0..n)
         .map(|i| {
-            let (r, c) = (i / cols, i % cols);
             Rect::new(
-                origin.x + pad + to_f32(c) * (side + gap),
-                origin.y + pad + to_f32(r) * (side + gap),
-                side,
-                side,
+                origin.x + gap + to_f32(i % cols) * (card + gap),
+                origin.y + gap + to_f32(i / cols) * (card + gap),
+                card,
+                card,
             )
         })
         .collect();
-    let longest = to_f32(input.max_piece_side.max(1));
-    Tray {
-        rect: Rect::new(origin.x, origin.y, w, h),
-        cards,
-        cell: (side * 0.8 / longest).min(cell),
+    Tray { rect, cards }
+}
+
+/// The best `(cols, card)` for `n` square cards in a `w`×`h` area, with
+/// `gap` around and between them.
+fn card_grid(n: usize, w: f32, h: f32, gap: f32) -> (usize, f32) {
+    let n = n.max(1);
+    let mut best = (n, 0.0);
+    for cols in 1..=n {
+        let rows = n.div_ceil(cols);
+        let side = ((w - gap * to_f32(cols + 1)) / to_f32(cols))
+            .min((h - gap * to_f32(rows + 1)) / to_f32(rows));
+        if side > best.1 {
+            best = (cols, side);
+        }
     }
+    best
 }
 
-fn tray_extent(grid: (usize, usize, f32), gap: f32) -> (f32, f32) {
-    let (cols, rows, side) = grid;
-    (
-        to_f32(cols) * side + to_f32(cols - 1) * gap + 2.0 * gap,
-        to_f32(rows) * side + to_f32(rows.saturating_sub(1)) * gap + 2.0 * gap,
-    )
+fn tray_cell(input: &LayoutInput, card: f32, cell: f32) -> f32 {
+    (card * 0.8 / to_f32(input.max_piece_side.max(1))).min(cell * TRAY_SCALE)
 }
 
-/// Banner and next button centered on the frame.
-fn banner(m: &Metrics, frame: Rect) -> (Rect, Rect) {
-    let w = (frame.w * 0.92).clamp(MIN_TARGET * 4.0, 420.0);
-    let h = m.button * 2.6;
-    let banner = Rect::centered(frame.center(), w, h);
-    let next_w = (m.font * 8.0).max(MIN_TARGET * 2.0);
+/// The banner with its next button, `rect` given.
+fn banner_parts(m: &Metrics, rect: Rect) -> (Rect, Rect) {
+    let next_w = (m.font * 7.0).max(MIN_TARGET * 2.0).min(rect.w * 0.45);
     let next = Rect::new(
-        banner.center().x - next_w / 2.0,
-        banner.bottom() - m.button - m.gap,
+        rect.right() - m.gap - next_w,
+        rect.center().y - m.button / 2.0,
         next_w,
         m.button,
     );
-    (banner, next)
+    (rect, next)
+}
+
+/// The left panel content: title, id, subtitle and (when it fits) help.
+struct Panel {
+    rect: Rect,
+    title: Rect,
+    puzzle_id: Rect,
+    subtitle: Option<TextBlock>,
+    help: Vec<HelpRow>,
+}
+
+fn panel(input: &LayoutInput, m: &Metrics, x: f32, width: f32, max_bottom: f32) -> Panel {
+    let pad = m.font * 0.9;
+    let inner_x = x + pad;
+    let inner_w = (width - 2.0 * pad).max(1.0);
+    let title = Rect::new(inner_x, m.margin + pad * 0.5, inner_w, m.font * 2.2);
+    let puzzle_id = Rect::new(inner_x, title.bottom(), inner_w, m.font * 1.6);
+    let small = m.font * 0.85;
+    let mut bottom = puzzle_id.bottom();
+
+    let subtitle = text_block(
+        text(input.lang, Text::Subtitle),
+        inner_x,
+        bottom + m.gap,
+        inner_w,
+        small,
+    );
+    let subtitle = (subtitle.rect.bottom() + pad <= max_bottom).then(|| {
+        bottom = subtitle.rect.bottom();
+        subtitle
+    });
+
+    let mut help = Vec::new();
+    if !input.touch && subtitle.is_some() {
+        let icon_w = (m.font * 2.8).min(inner_w * 0.3);
+        let icon_h = m.font * 1.9;
+        let text_x = inner_x + icon_w + m.gap;
+        let text_w = (inner_w - icon_w - m.gap).max(1.0);
+        let mut y = bottom + m.gap;
+        for key in [Text::HelpDrag, Text::HelpRotate, Text::HelpDisplay] {
+            let block = text_block(text(input.lang, key), text_x, y, text_w, small);
+            let row_h = block.rect.h.max(icon_h);
+            // The text is centered in the row, the icon on the text.
+            let text_y = y + (row_h - block.rect.h) / 2.0;
+            let block = TextBlock {
+                rect: Rect::new(text_x, text_y, text_w, block.rect.h),
+                ..block
+            };
+            let icon = Rect::new(
+                inner_x,
+                block.rect.center().y - icon_h / 2.0,
+                icon_w,
+                icon_h,
+            );
+            help.push(HelpRow { icon, text: block });
+            y += row_h + m.gap;
+        }
+        let help_bottom = y - m.gap;
+        if help_bottom + pad <= max_bottom {
+            bottom = help_bottom;
+        } else {
+            help.clear();
+        }
+    }
+    Panel {
+        rect: Rect::new(x, m.margin, width, bottom + pad - m.margin),
+        title,
+        puzzle_id,
+        subtitle,
+        help,
+    }
 }
 
 fn wide(input: &LayoutInput, m: &Metrics) -> Layout {
     let (w, h) = (input.width, input.height);
     let t = |key| text(input.lang, key);
-    let column = (w * 0.2).clamp(150.0, 300.0);
+    let axis = w / 2.0;
+    // Equal side columns keep the axis in the middle of the area.
+    let side = (w * 0.19).clamp(150.0, 340.0).min(w * MAX_TRAY_SHARE);
     let bottom_y = h - m.margin - m.button;
 
     let share_w = m.button_width(t(Text::Share));
     let share = Rect::new(w - m.margin - share_w, m.margin, share_w, m.button);
     let lang_w = m.switch_width("EN", "UA");
     let lang = Rect::new(share.x - m.gap - lang_w, m.margin, lang_w, m.button);
-    let tabs = tab_rects(
-        input,
-        m,
-        m.margin + column + m.gap,
-        lang.x - m.gap,
-        m.margin,
-    );
-
+    let half = (axis - (m.margin + side + m.gap)).min(lang.x - m.gap - axis);
+    let tabs = tab_rects(input, m, axis, half, m.margin);
     let bottom = bottom_row(input, m, m.margin, w - m.margin, bottom_y);
-    let panel = Rect::new(m.margin, m.margin, column, bottom_y - m.gap - m.margin);
-    let pad = m.font * 0.9;
-    let inner_w = column - 2.0 * pad;
-    let title = Rect::new(panel.x + pad, panel.y + pad * 0.5, inner_w, m.font * 2.2);
-    let puzzle_id = Rect::new(panel.x + pad, title.bottom(), inner_w, m.font * 1.6);
-    let small = m.font * 0.85;
-    let subtitle = Rect::new(
-        panel.x + pad,
-        puzzle_id.bottom() + m.gap,
-        inner_w,
-        small * 1.35 * 3.0,
-    );
-    let help_h = 3.0 * (small * 1.35 * 2.0 + m.gap);
-    let help_y = subtitle.bottom() + m.gap * 2.0;
-    let help = (!input.touch && help_y + help_h <= panel.bottom() - pad)
-        .then(|| Rect::new(panel.x + pad, help_y, inner_w, help_h));
-    let subtitle = (subtitle.bottom() <= panel.bottom() - pad).then_some(subtitle);
+    let panel = panel(input, m, m.margin, side, bottom_y - m.gap);
 
+    // The board, with room for the banner under it, between the columns.
     let y0 = m.margin + m.button + m.gap;
     let y1 = bottom_y - m.gap;
-    let x0 = panel.right() + m.gap;
-    let x1 = w - m.margin;
-    let fits = |cell: f32| {
-        let (bw, bh) = board_size(input, cell);
-        let tray_w = x1 - x0 - bw - m.gap;
-        bh <= y1 - y0
-            && tray_w > 0.0
-            && tray_size(input, tray_w, y1 - y0, m.gap, cell).2 >= min_card(input)
-    };
-    let cell = largest_cell(fits);
-    let (bw, bh) = board_size(input, cell);
-    let grid = tray_size(input, x1 - x0 - bw - m.gap, y1 - y0, m.gap, cell);
-    let (tw, th) = tray_extent(grid, m.gap);
+    let center_w = w - 2.0 * (m.margin + side + m.gap);
+    let banner_h = m.banner_height();
+    let (unit_w, unit_h) = board_size(input, 1.0);
+    let cell = (center_w / unit_w)
+        .min((y1 - y0 - banner_h - m.gap) / unit_h)
+        .clamp(MIN_CELL, MAX_CELL)
+        .floor();
+    let (block_w, block_h) = board_size(input, cell);
+    let stack = block_h + m.gap + banner_h;
+    let top = y0 + ((y1 - y0) - stack).max(0.0) / 2.0;
+    let board = board_at(input, axis, top, cell);
+    let banner_w = block_w.max(MIN_TARGET * 7.0).min(center_w.max(block_w));
+    let (banner, next) = banner_parts(
+        m,
+        Rect::new(
+            axis - banner_w / 2.0,
+            top + block_h + m.gap,
+            banner_w,
+            banner_h,
+        ),
+    );
+
+    // The tray: two cards per row in the right column.
+    let rows = input.pieces.max(1).div_ceil(2);
+    let card = ((side - 3.0 * m.gap) / 2.0)
+        .min((y1 - y0 - to_f32(rows + 1) * m.gap) / to_f32(rows))
+        .max(1.0);
+    let tray_w = 2.0 * card + 3.0 * m.gap;
+    let tray_h = to_f32(rows) * card + to_f32(rows + 1) * m.gap;
     let tray = tray_at(
-        input,
-        Point::new(x1 - tw, y0 + ((y1 - y0) - th).max(0.0) / 2.0),
-        grid,
+        Point::new(
+            w - m.margin - side + (side - tray_w) / 2.0,
+            y0 + ((y1 - y0) - tray_h).max(0.0) / 2.0,
+        ),
+        input.pieces,
+        2,
+        card,
         m.gap,
-        cell,
     );
-    let board_x = x0 + ((x1 - tw - m.gap - x0) - bw).max(0.0) / 2.0;
-    let board = board_at(
-        input,
-        Point::new(board_x, y0 + ((y1 - y0) - bh).max(0.0) / 2.0),
-        cell,
-    );
-    let (banner, next) = banner(m, board.frame);
     Layout {
         wide: true,
         font: m.font,
         button_height: m.button,
-        panel: Some(panel),
-        title,
-        puzzle_id,
-        subtitle,
-        help,
+        axis,
+        panel: Some(panel.rect),
+        title: panel.title,
+        puzzle_id: panel.puzzle_id,
+        subtitle: panel.subtitle,
+        help: panel.help,
         tabs,
         lang,
         share,
-        notice: Point::new(board.frame.center().x, board.frame.bottom() - m.button),
+        notice: banner.center(),
         frame: board.frame,
         cells: board.cells,
         cell,
@@ -558,7 +645,7 @@ fn wide(input: &LayoutInput, m: &Metrics) -> Layout {
         col_counters: board.col_counters,
         tray: tray.rect,
         cards: tray.cards,
-        tray_cell: tray.cell,
+        tray_cell: tray_cell(input, card, cell),
         reset: bottom.reset,
         counters: bottom.counters,
         tab_hint: bottom.hint,
@@ -573,6 +660,7 @@ fn tall(input: &LayoutInput, m: &Metrics) -> Layout {
     let t = |key| text(input.lang, key);
     let x0 = m.margin;
     let x1 = w - m.margin;
+    let axis = w / 2.0;
 
     let share_w = m.button_width(t(Text::Share));
     let lang_w = m.switch_width("EN", "UA");
@@ -584,51 +672,64 @@ fn tall(input: &LayoutInput, m: &Metrics) -> Layout {
     let puzzle_id = Rect::new(x0, title.bottom(), title_w, m.button * 0.45);
 
     let tabs_y = m.margin + m.button + m.gap;
-    let tabs = tab_rects(input, m, x0, x1, tabs_y);
+    let tabs = tab_rects(input, m, axis, (x1 - x0) / 2.0, tabs_y);
     let bottom_y = h - m.margin - m.button;
     let bottom = bottom_row(input, m, x0, x1, bottom_y);
 
     let y0 = tabs_y + m.button + m.gap;
     let y1 = bottom_y - m.gap;
-    let fits = |cell: f32| {
-        let (bw, bh) = board_size(input, cell);
-        let tray_h = y1 - y0 - bh - m.gap;
-        bw <= x1 - x0
-            && tray_h > 0.0
-            && tray_size(input, x1 - x0, tray_h, m.gap, cell).2 >= min_card(input)
+    let tray_area = |cell: f32| {
+        let (_, block_h) = board_size(input, cell);
+        let tray_h = (y1 - y0 - block_h - m.gap).max(0.0);
+        card_grid(input.pieces, x1 - x0, tray_h, m.gap)
     };
-    let cell = largest_cell(fits);
-    let (bw, bh) = board_size(input, cell);
-    let grid = tray_size(input, x1 - x0, y1 - y0 - bh - m.gap, m.gap, cell);
-    let (tw, th) = tray_extent(grid, m.gap);
-    let stack = bh + m.gap + th;
+    let fits = |cell: f32| {
+        let (block_w, _) = board_size(input, cell);
+        block_w <= x1 - x0 && tray_area(cell).1 >= min_card(input)
+    };
+    let cell = largest(fits);
+    let (_, block_h) = board_size(input, cell);
+    let (cols, card) = tray_area(cell);
+    let card = card.max(1.0);
+    let rows = input.pieces.max(1).div_ceil(cols);
+    let tray_w = to_f32(cols) * card + to_f32(cols + 1) * m.gap;
+    let tray_h = to_f32(rows) * card + to_f32(rows + 1) * m.gap;
+    let stack = block_h + m.gap + tray_h;
     let top = y0 + ((y1 - y0) - stack).max(0.0) / 2.0;
-    let board = board_at(
-        input,
-        Point::new(x0 + ((x1 - x0) - bw).max(0.0) / 2.0, top),
-        cell,
-    );
+    let board = board_at(input, axis, top, cell);
     let tray = tray_at(
-        input,
-        Point::new(x0 + ((x1 - x0) - tw).max(0.0) / 2.0, top + bh + m.gap),
-        grid,
+        Point::new(axis - tray_w / 2.0, top + block_h + m.gap),
+        input.pieces,
+        cols,
+        card,
         m.gap,
-        cell,
     );
-    let (banner, next) = banner(m, board.frame);
+    // After a win the tray is empty: the banner takes its place.
+    let banner_h = m.banner_height().min(tray.rect.h);
+    let banner_w = tray.rect.w.max((x1 - x0).min(MIN_TARGET * 7.0));
+    let (banner, next) = banner_parts(
+        m,
+        Rect::new(
+            axis - banner_w / 2.0,
+            tray.rect.center().y - banner_h / 2.0,
+            banner_w,
+            banner_h,
+        ),
+    );
     Layout {
         wide: false,
         font: m.font,
         button_height: m.button,
+        axis,
         panel: None,
         title,
         puzzle_id,
         subtitle: None,
-        help: None,
+        help: Vec::new(),
         tabs,
         lang,
         share,
-        notice: Point::new(board.frame.center().x, board.frame.bottom() - m.button),
+        notice: banner.center(),
         frame: board.frame,
         cells: board.cells,
         cell,
@@ -636,7 +737,7 @@ fn tall(input: &LayoutInput, m: &Metrics) -> Layout {
         col_counters: board.col_counters,
         tray: tray.rect,
         cards: tray.cards,
-        tray_cell: tray.cell,
+        tray_cell: tray_cell(input, card, cell),
         reset: bottom.reset,
         counters: bottom.counters,
         tab_hint: bottom.hint,
@@ -644,4 +745,22 @@ fn tall(input: &LayoutInput, m: &Metrics) -> Layout {
         banner,
         next,
     }
+}
+
+/// The largest cell size in `MIN_CELL..=MAX_CELL` for which `fits` holds,
+/// or `MIN_CELL` if none does.
+fn largest(fits: impl Fn(f32) -> bool) -> f32 {
+    if fits(MAX_CELL) {
+        return MAX_CELL;
+    }
+    let (mut lo, mut hi) = (MIN_CELL, MAX_CELL);
+    for _ in 0..24 {
+        let mid = f32::midpoint(lo, hi);
+        if fits(mid) {
+            lo = mid;
+        } else {
+            hi = mid;
+        }
+    }
+    lo.floor()
 }

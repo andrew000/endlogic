@@ -80,6 +80,8 @@ pub enum Text {
     Generating,
     /// Toast after sharing.
     LinkCopied,
+    /// Toast when the clipboard refused the link.
+    CopyFailed,
     /// Toast for a bad code.
     InvalidLink,
     /// Share button.
@@ -103,6 +105,7 @@ pub const fn text(lang: Lang, key: Text) -> &'static str {
             Text::Complete => "REPAIR COMPLETE",
             Text::Generating => "Generating…",
             Text::LinkCopied => "Link copied",
+            Text::CopyFailed => "Couldn't copy the link",
             Text::InvalidLink => "Invalid puzzle link",
             Text::Share => "Share",
         },
@@ -119,6 +122,7 @@ pub const fn text(lang: Lang, key: Text) -> &'static str {
             Text::Complete => "РЕМОНТ ЗАВЕРШЕНО",
             Text::Generating => "Генерація…",
             Text::LinkCopied => "Посилання скопійовано",
+            Text::CopyFailed => "Не вдалося скопіювати посилання",
             Text::InvalidLink => "Некоректне посилання",
             Text::Share => "Поділитися",
         },

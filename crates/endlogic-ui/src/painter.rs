@@ -140,10 +140,12 @@ impl Rect {
     /// Whether the two rectangles share any area (touching edges do not count).
     #[must_use]
     pub fn intersects(self, other: Rect) -> bool {
-        self.x < other.right()
-            && other.x < self.right()
-            && self.y < other.bottom()
-            && other.y < self.bottom()
+        // Rectangles that only touch, up to rounding, do not intersect.
+        const EPS: f32 = 0.01;
+        self.x < other.right() - EPS
+            && other.x < self.right() - EPS
+            && self.y < other.bottom() - EPS
+            && other.y < self.bottom() - EPS
     }
 
     /// Whether `other` lies entirely inside this rectangle.

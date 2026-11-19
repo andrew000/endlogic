@@ -110,6 +110,9 @@ pub(crate) struct PieceAnim {
     pub fly: Option<Fly>,
     /// Seconds into a quarter turn.
     pub spin: Option<f32>,
+    /// Growth from tray to board scale after a pick-up: the starting cell
+    /// size and the seconds elapsed.
+    pub grow: Option<(f32, f32)>,
 }
 
 /// The puzzle being played.
@@ -284,6 +287,13 @@ impl App {
             }
             Event::Key(key) => self.key(key),
             Event::CodeChanged(code) => self.code_changed(&code),
+            Event::CopyFinished(ok) => {
+                if ok {
+                    self.show_toast(Text::LinkCopied, false);
+                } else {
+                    self.show_toast(Text::CopyFailed, true);
+                }
+            }
         }
         self.update_cursor();
     }
@@ -447,22 +457,37 @@ impl App {
         )
     }
 
+    /// Where the dragged piece is drawn: it grows from its tray size to
+    /// board size just after being picked up.
     pub(crate) fn drag_visual(&self, drag: &Drag) -> (Point, f32) {
+        let board = self.layout.cell;
+        let grow = self
+            .game
+            .as_ref()
+            .and_then(|g| g.anims.get(drag.piece))
+            .and_then(|a| a.grow);
+        let cell = grow.map_or(board, |(from, elapsed)| {
+            from + (board - from) * theme::ease_out(elapsed / theme::GROW_TIME)
+        });
+        (self.drag_center(drag, cell), cell)
+    }
+
+    /// Center of the dragged piece drawn with cells of `cell`, keeping the
+    /// grabbed point under the pointer.
+    fn drag_center(&self, drag: &Drag, cell: f32) -> Point {
         let Some(game) = &self.game else {
-            return (drag.pos, self.layout.cell);
+            return drag.pos;
         };
-        let cell = self.layout.cell;
         let shape = game.board.shape(drag.piece);
         let (w, h) = (to_f32(shape.width()) * cell, to_f32(shape.height()) * cell);
         let lift = match drag.kind {
             PointerKind::Mouse => 0.0,
-            PointerKind::Touch => TOUCH_LIFT * cell,
+            PointerKind::Touch => TOUCH_LIFT * self.layout.cell,
         };
-        let center = Point::new(
+        Point::new(
             drag.pos.x - drag.grab.x * w + w / 2.0,
             drag.pos.y - drag.grab.y * h + h / 2.0 - lift,
-        );
-        (center, cell)
+        )
     }
 
     /// The top-left cell the dragged piece would land on, if any of its
@@ -470,15 +495,13 @@ impl App {
     pub(crate) fn drop_target(&self, drag: &Drag) -> Option<(isize, isize)> {
         let game = self.game.as_ref()?;
         let shape = game.board.shape(drag.piece);
-        let rect = {
-            let (center, cell) = self.drag_visual(drag);
-            Rect::centered(
-                center,
-                to_f32(shape.width()) * cell,
-                to_f32(shape.height()) * cell,
-            )
-        };
+        // Where the piece lands does not depend on the growth animation.
         let cell = self.layout.cell;
+        let rect = Rect::centered(
+            self.drag_center(drag, cell),
+            to_f32(shape.width()) * cell,
+            to_f32(shape.height()) * cell,
+        );
         let col = ((rect.x - self.layout.cells.x) / cell).round();
         let row = ((rect.y - self.layout.cells.y) / cell).round();
         // Rounded to a whole cell and far inside `isize`.
@@ -507,7 +530,9 @@ impl App {
             || self.toast.is_some()
             || self.game.as_ref().is_some_and(|g| {
                 (g.won && g.win_elapsed < theme::WIN_TIME)
-                    || g.anims.iter().any(|a| a.fly.is_some() || a.spin.is_some())
+                    || g.anims
+                        .iter()
+                        .any(|a| a.fly.is_some() || a.spin.is_some() || a.grow.is_some())
             })
     }
 
@@ -646,6 +671,12 @@ impl App {
                 *spin += dt;
                 if *spin >= theme::ROTATE_TIME {
                     anim.spin = None;
+                }
+            }
+            if let Some((_, elapsed)) = &mut anim.grow {
+                *elapsed += dt;
+                if *elapsed >= theme::GROW_TIME {
+                    anim.grow = None;
                 }
             }
         }
@@ -890,8 +921,8 @@ impl App {
             Control::Share => {
                 if let Some(code) = self.code() {
                     let link = format!("{}{code}", self.share_prefix);
+                    // The toast waits for the shell's `CopyFinished`.
                     self.effects.push(Effect::CopyText(link));
-                    self.show_toast(Text::LinkCopied, false);
                 }
             }
             Control::Reset => self.reset(),
@@ -925,6 +956,8 @@ impl App {
     }
 
     fn begin_drag(&mut self, id: u32, kind: PointerKind, piece: usize, grab: Point, pos: Point) {
+        let (_, start_cell) = self.piece_visual(piece);
+        let board_cell = self.layout.cell;
         let Some(game) = &mut self.game else {
             return;
         };
@@ -932,6 +965,7 @@ impl App {
         game.board.remove(piece);
         if let Some(anim) = game.anims.get_mut(piece) {
             anim.fly = None;
+            anim.grow = ((start_cell - board_cell).abs() > 0.5).then_some((start_cell, 0.0));
         }
         self.gesture = Gesture::Dragging(Drag {
             id,
@@ -1005,10 +1039,12 @@ impl App {
     }
 }
 
-/// The letter used in puzzle ids: the first letter of the English name.
+/// The letter used in puzzle ids; Expert is `X` so it differs from Easy.
 fn difficulty_letter(d: Difficulty) -> char {
-    d.name()
-        .chars()
-        .next()
-        .map_or('?', |c| c.to_ascii_uppercase())
+    match d {
+        Difficulty::Easy => 'E',
+        Difficulty::Normal => 'N',
+        Difficulty::Hard => 'H',
+        Difficulty::Expert => 'X',
+    }
 }
