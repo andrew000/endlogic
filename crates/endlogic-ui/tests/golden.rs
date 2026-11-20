@@ -651,12 +651,22 @@ fn drawing() {
     for l in removed {
         differ.push(format!("  scene no longer drawn: {l}"));
     }
+    let shown = differ.len().min(10);
+    let more = if differ.len() > shown {
+        format!(
+            "\n  ... and {} more, with records in {}",
+            differ.len() - shown,
+            records.display()
+        )
+    } else {
+        String::new()
+    };
     assert!(
         differ.is_empty(),
-        "{} scenes draw differently:\n{}\nexpected: {}\nblessed records, if any: {}\n\
+        "{} scenes draw differently:\n{}{more}\nexpected: {}\nblessed records, if any: {}\n\
          if the change is intended, run `just bless`",
         differ.len(),
-        differ.join("\n"),
+        differ[..shown].join("\n"),
         golden::golden_path("draw.txt").display(),
         records.join("blessed").display()
     );
