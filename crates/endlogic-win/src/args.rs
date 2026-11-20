@@ -30,13 +30,17 @@ pub struct Shot {
     pub lang: String,
     /// Report a touch screen.
     pub touch: bool,
+    /// Pixels per logical pixel: 1, 2 or 3.
+    pub scale: u32,
+    /// Draw the font sample instead of the app.
+    pub font_sample: bool,
 }
 
 /// Largest side of a screenshot.
 const MAX_SIDE: u32 = 8192;
 
 /// The usage line of the screenshot mode.
-pub const USAGE: &str = "endlogic-win [LINK] | endlogic-win --screenshot <FILE.png> --size <W>x<H> [--code <LINK>] [--lang en|uk] [--touch]";
+pub const USAGE: &str = "endlogic-win [LINK] | endlogic-win --screenshot <FILE.png> --size <W>x<H> [--code <LINK>] [--lang en|uk] [--touch] [--scale 1|2|3] [--font-sample]";
 
 /// Parses the arguments after the program name.
 ///
@@ -58,6 +62,8 @@ pub fn parse(args: &[String]) -> Result<Command, String> {
     let mut code = None;
     let mut lang = "en".to_owned();
     let mut touch = false;
+    let mut scale = 1;
+    let mut font_sample = false;
     let mut it = args.iter();
     while let Some(arg) = it.next() {
         let mut value = |name: &str| {
@@ -76,11 +82,24 @@ pub fn parse(args: &[String]) -> Result<Command, String> {
                 }
             }
             "--touch" => touch = true,
+            "--scale" => {
+                let text = value("--scale")?;
+                scale = match text.as_str() {
+                    "1" => 1,
+                    "2" => 2,
+                    "3" => 3,
+                    _ => return Err(format!("--scale must be 1, 2 or 3, not {text}")),
+                };
+            }
+            "--font-sample" => font_sample = true,
             other => return Err(format!("unexpected argument {other}")),
         }
     }
     let file = file.ok_or("--screenshot <FILE.png> is required")?;
     let (width, height) = size.ok_or("--size <W>x<H> is required")?;
+    if width * scale > MAX_SIDE || height * scale > MAX_SIDE {
+        return Err(format!("--size times --scale must be at most {MAX_SIDE}"));
+    }
     Ok(Command::Screenshot(Shot {
         file,
         width,
@@ -88,6 +107,8 @@ pub fn parse(args: &[String]) -> Result<Command, String> {
         code,
         lang,
         touch,
+        scale,
+        font_sample,
     }))
 }
 
@@ -143,8 +164,27 @@ mod tests {
                 code: Some("#e=AQ".to_owned()),
                 lang: "uk".to_owned(),
                 touch: true,
+                scale: 1,
+                font_sample: false,
             }))
         );
+        let sample = parse(&args(&[
+            "--screenshot",
+            "f.png",
+            "--size",
+            "100x50",
+            "--scale",
+            "2",
+            "--font-sample",
+        ]));
+        assert!(matches!(
+            sample,
+            Ok(Command::Screenshot(Shot {
+                scale: 2,
+                font_sample: true,
+                ..
+            }))
+        ));
         let plain = parse(&args(&["--size", "10X20", "--screenshot", "a.png"]));
         assert!(
             matches!(plain, Ok(Command::Screenshot(Shot { width: 10, height: 20, ref lang, touch: false, code: None, .. })) if lang == "en")

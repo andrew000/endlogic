@@ -21,8 +21,8 @@ cells do not.
   generator, puzzle generator and puzzle codes. Builds for
   `wasm32-unknown-unknown`.
 - `crates/endlogic-cli` — the `endlogic` command-line tool.
-- `crates/endlogic-ui` — the trainer itself: state, rules, layout and
-  drawing, independent of any platform.
+- `crates/endlogic-ui` — the trainer itself: state, rules, layout,
+  drawing and its own stroke font, independent of any platform.
 - `crates/endlogic-web` — the browser shell for the trainer.
 - `crates/endlogic-win` — the Windows shell for the trainer.
 - `web/` — the web page.
@@ -74,9 +74,9 @@ intended, rewrite the golden files with
 just bless
 ```
 
-and review `git diff` before committing. The screenshots depend on the
-fonts installed; they were made on Windows 11 with Segoe UI and Cascadia
-Mono.
+and review `git diff` before committing. The screenshots come from
+Direct2D's software renderer on Windows 11; another Windows version may
+antialias differently.
 
 ## Release builds
 
@@ -194,8 +194,8 @@ from the Actions tab.
 
 ## Windows app
 
-`endlogic-win` is the same trainer in a native window (Win32, Direct2D,
-DirectWrite), for Windows 10 and 11 on x64. Build it on Windows with the
+`endlogic-win` is the same trainer in a native window (Win32 and
+Direct2D), for Windows 10 and 11 on x64. Build it on Windows with the
 toolchain from `rust-toolchain.toml`:
 
 ```sh
@@ -224,6 +224,14 @@ arguments give the same picture):
 
 ```sh
 just win-shot out.png 1366x768 --code "<link or code>" --lang uk --touch
+```
+
+`--scale 2` draws at twice the pixels (a 200% display), and `--font-sample`
+draws a sample of the font instead of the game: every glyph and some lines
+of the interface, regular and bold, with capitals from 8 to 48 pixels high:
+
+```sh
+just win-shot font.png 2400x1980 --font-sample --scale 2
 ```
 
 The `Release` workflow, started by hand with a version number, builds

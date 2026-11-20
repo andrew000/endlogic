@@ -8,12 +8,16 @@
 //! [`Effect`]s the app hands back. Time and randomness come from the shell.
 #![forbid(unsafe_code)]
 
+extern crate alloc;
+
 mod app;
 mod board;
 mod counters;
 mod draw;
 mod editor;
+mod font;
 mod hint;
+mod ink;
 mod layout;
 mod painter;
 mod shell;
@@ -29,12 +33,16 @@ pub use counters::{CounterView, MAX_TICKS, MAX_TWO_LINES, MIN_SQUARE, counter_vi
 pub use editor::{
     ClueRef, DRAFT_SIDE, Draft, DraftError, EditControl, Editor, SOLUTION_LIMIT, SolveState,
 };
+pub use font::{
+    Align, FONT_SAMPLE_SIZE, Font, MIN_CAP_HEIGHT, MIN_FONT_SIZE, draw_font_sample, draw_text,
+    has_glyph, repertoire, text_width,
+};
 pub use layout::{
     Arrangement, BAND, COUNTER_GAP, EditLayout, HelpRow, LOW_WIDE_HEIGHT, Layout, LayoutInput,
     MAX_TRAY_SHARE, MIN_TARGET, MIN_TRAY_CELL, Mode, Pager, PieceEditor, ResultPanel, Stepper,
     TRAY_MIN_SCALE, TRAY_SCALE, TextBlock, tab_label,
 };
-pub use painter::{Align, Font, FontFamily, Painter, Point, Rect, Rgba};
+pub use painter::{Painter, Point, Rect, Rgba};
 pub use shell::{
     Budgets, CodeKind, Config, Cursor, Effect, Event, Insets, Key, Pointer, PointerKind,
     SETTING_COUNTERS, SETTING_DIFFICULTY, SETTING_EDITOR, SETTING_KEYS, SETTING_LANG,

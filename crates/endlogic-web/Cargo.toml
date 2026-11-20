@@ -37,7 +37,6 @@ features = [
     "Navigator",
     "PointerEvent",
     "Storage",
-    "TextMetrics",
     "Window",
     "console",
 ]

@@ -12,13 +12,12 @@ use std::time::Instant;
 use endlogic_core::code::encode;
 use endlogic_core::format::parse;
 use endlogic_ui::{
-    Align, App, Budgets, CodeKind, Config, Font, Insets, Lang, Layout, LayoutInput, Mode, Painter,
-    Point, Rect, Rgba, SETTING_DIFFICULTY,
+    App, Budgets, CodeKind, Config, Insets, Lang, Layout, LayoutInput, Mode, Painter, Point, Rect,
+    Rgba, SETTING_DIFFICULTY,
 };
 use measure::{Table, show, time};
 
-/// A painter that draws nothing; text is measured like a font would be,
-/// at a little over half an em per character.
+/// A painter that draws nothing.
 struct Blank;
 
 impl Painter for Blank {
@@ -28,10 +27,7 @@ impl Painter for Blank {
     fn fill_circle(&mut self, _: Point, _: f32, _: Rgba) {}
     fn stroke_circle(&mut self, _: Point, _: f32, _: f32, _: Rgba) {}
     fn fill_polygon(&mut self, _: &[Point], _: Rgba) {}
-    fn text(&mut self, _: &str, _: Point, _: Font, _: Align, _: Rgba) {}
-    fn text_width(&mut self, text: &str, font: Font) -> f32 {
-        f32::from(u16::try_from(text.chars().count()).unwrap_or(u16::MAX)) * font.size * 0.55
-    }
+    fn polyline(&mut self, _: &[Point], _: f32, _: Rgba) {}
     fn push_clip(&mut self, _: Rect) {}
     fn pop_clip(&mut self) {}
 }

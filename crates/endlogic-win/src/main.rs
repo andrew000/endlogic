@@ -1,5 +1,5 @@
 //! Windows shell for the endlogic trainer: a Win32 window drawn with
-//! Direct2D and DirectWrite. The game itself (state, layout, colors, texts)
+//! Direct2D. The game itself (state, layout, colors, texts and the font)
 //! lives in `endlogic-ui`; this program passes events in, draws frames and
 //! carries out effects.
 //!

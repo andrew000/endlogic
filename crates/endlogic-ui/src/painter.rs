@@ -171,37 +171,6 @@ impl Rect {
     }
 }
 
-/// Which font family to use.
-#[derive(Debug, Clone, Copy, PartialEq, Eq, Hash)]
-pub enum FontFamily {
-    /// The system's default sans-serif font.
-    Sans,
-    /// The system's default monospaced font.
-    Mono,
-}
-
-/// A font request.
-#[derive(Debug, Clone, Copy, PartialEq)]
-pub struct Font {
-    /// Family.
-    pub family: FontFamily,
-    /// Size in logical pixels.
-    pub size: f32,
-    /// Bold weight instead of regular.
-    pub bold: bool,
-}
-
-/// Horizontal text alignment relative to the anchor point.
-#[derive(Debug, Clone, Copy, PartialEq, Eq, Hash)]
-pub enum Align {
-    /// The text starts at the anchor.
-    Left,
-    /// The text is centered on the anchor.
-    Center,
-    /// The text ends at the anchor.
-    Right,
-}
-
 /// Drawing primitives, implemented once per platform.
 ///
 /// Coordinates are logical pixels with the origin in the top-left corner;
@@ -228,12 +197,12 @@ pub trait Painter {
     /// Fills a closed polygon (non-zero winding).
     fn fill_polygon(&mut self, points: &[Point], color: Rgba);
 
-    /// Draws one line of text. `anchor.y` is the vertical middle of the text;
-    /// `align` says where `anchor.x` is.
-    fn text(&mut self, text: &str, anchor: Point, font: Font, align: Align, color: Rgba);
-
-    /// Width of `text` in logical pixels when drawn with `font`.
-    fn text_width(&mut self, text: &str, font: Font) -> f32;
+    /// Draws straight segments through `points` in order, as one line of
+    /// `width` centered on them: joins are mitered (sharp corners, not cut
+    /// off, up to a miter length of 10 line widths) and both ends are
+    /// square, reaching half the width past the first and last point. Text
+    /// is drawn with this.
+    fn polyline(&mut self, points: &[Point], width: f32, color: Rgba);
 
     /// Restricts drawing to `rect` intersected with the current clip, until
     /// the matching [`pop_clip`](Painter::pop_clip).

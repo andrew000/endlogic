@@ -21,8 +21,8 @@ use endlogic_core::format::parse;
 use endlogic_core::solver::{DEFAULT_NODE_BUDGET, search};
 use endlogic_core::{Puzzle, Solution};
 use endlogic_ui::{
-    Align, App, CodeKind, Config, Event, Font, FontFamily, Key, Painter, Point, PointerKind, Rect,
-    Rgba, SETTING_COUNTERS, SETTING_DIFFICULTY, SETTING_LANG,
+    App, CodeKind, Config, Event, Key, Painter, Point, PointerKind, Rect, Rgba, SETTING_COUNTERS,
+    SETTING_DIFFICULTY, SETTING_LANG,
 };
 
 /// Generated puzzles from the solver's fixed list in `endlogic-core`.
@@ -60,15 +60,6 @@ fn rect(r: Rect) -> String {
 
 fn color(c: Rgba) -> String {
     format!("#{:02x}{:02x}{:02x}{:02x}", c.r, c.g, c.b, c.a)
-}
-
-fn font(f: Font) -> String {
-    let family = match f.family {
-        FontFamily::Sans => "sans",
-        FontFamily::Mono => "mono",
-    };
-    let weight = if f.bold { "bold" } else { "regular" };
-    format!("{family} {} {weight}", num(f.size))
 }
 
 impl Writer {
@@ -128,18 +119,14 @@ impl Painter for Writer {
         let list: Vec<String> = points.iter().map(|&p| pt(p)).collect();
         self.line(&format!("fill_polygon {} {}", list.join(" "), color(c)));
     }
-    fn text(&mut self, text: &str, anchor: Point, f: Font, align: Align, c: Rgba) {
+    fn polyline(&mut self, points: &[Point], width: f32, c: Rgba) {
+        let list: Vec<String> = points.iter().map(|&p| pt(p)).collect();
         self.line(&format!(
-            "text {text:?} at {} {} {align:?} {}",
-            pt(anchor),
-            font(f),
+            "polyline {} w {} {}",
+            list.join(" "),
+            num(width),
             color(c)
         ));
-    }
-    fn text_width(&mut self, text: &str, f: Font) -> f32 {
-        self.line(&format!("text_width {text:?} {}", font(f)));
-        // A stand-in: every character a little over half an em wide.
-        f32::from(u16::try_from(text.chars().count()).unwrap()) * f.size * 0.55
     }
     fn push_clip(&mut self, r: Rect) {
         self.depth += 1;

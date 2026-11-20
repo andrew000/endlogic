@@ -370,6 +370,7 @@ fn clear_asks_twice() {
     app.click(clear.center());
     let mut drawing = Recorder::default();
     app.frame(0.1, &mut drawing);
+    drawing.texts = app.drawn_texts();
     assert!(texts(&drawing).contains(&"Sure?".to_owned()));
     assert_eq!(editor(&app), Editor::from_puzzle(&sample("wln006-2.txt")));
     app.click(clear.center());
@@ -558,6 +559,7 @@ fn solving_can_be_cancelled_and_any_change_clears_the_answer() {
     assert_eq!(app.solve_state(), Some(SolveState::Running));
     let mut drawing = Recorder::default();
     app.frame(0.01, &mut drawing);
+    drawing.texts = app.drawn_texts();
     assert!(texts(&drawing).contains(&"Solving…".to_owned()));
     app.click(answer(&app).action.center());
     assert_eq!(app.solve_state(), None);

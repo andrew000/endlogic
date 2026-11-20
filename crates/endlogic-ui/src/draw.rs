@@ -10,15 +10,17 @@ mod edit;
 use crate::app::{App, CounterMode, Game, Gesture};
 use crate::board::{Line, LineState};
 use crate::counters::{CounterView, counter_view};
-use crate::layout::{Arrangement, Layout, TextBlock, tab_label, to_f32};
-use crate::painter::{Align, Font, FontFamily, Painter, Point, Rect, Rgba};
+use crate::font::{Align, Font};
+use crate::ink::Ink;
+use crate::layout::{Arrangement, Layout, TITLE, TextBlock, tab_label, to_f32};
+use crate::painter::{Point, Rect, Rgba};
 use crate::text::{Lang, Text, text};
 use crate::theme::{self, ease_out};
 
 /// Text shown in place of the puzzle id while there is no puzzle.
 const NO_ID: &str = "Δ-…";
 
-pub(crate) fn draw(app: &App, p: &mut dyn Painter) {
+pub(crate) fn draw(app: &App, p: &mut Ink<'_>) {
     let l = &app.layout;
     p.fill_rect(
         Rect::new(0.0, 0.0, app.width, app.height),
@@ -46,29 +48,21 @@ pub(crate) fn draw(app: &App, p: &mut dyn Painter) {
 
 // ---- small helpers ----
 
-pub(crate) fn sans(size: f32, bold: bool) -> Font {
-    Font {
-        family: FontFamily::Sans,
-        size,
-        bold,
-    }
-}
-
-pub(crate) fn mono(size: f32, bold: bool) -> Font {
-    Font {
-        family: FontFamily::Mono,
-        size,
-        bold,
-    }
+/// A font of `size` (at least the smallest readable one).
+pub(crate) fn text_font(size: f32, bold: bool) -> Font {
+    Font::new(size, bold)
 }
 
 /// `font`, shrunk if needed so that `text` is at most `max_width` wide.
-pub(crate) fn fit(p: &mut dyn Painter, text: &str, font: Font, max_width: f32) -> Font {
+pub(crate) fn fit(p: &Ink<'_>, text: &str, font: Font, max_width: f32) -> Font {
     let width = p.text_width(text, font);
-    if width <= max_width || width <= 0.0 {
+    // A hair over is rounding, not text that does not fit.
+    if width <= max_width + 0.01 || width <= 0.0 {
         font
     } else {
         Font {
+            // Below the smallest readable size only where nothing else
+            // fits: a last resort, not a layout.
             size: (font.size * max_width / width).max(6.0),
             ..font
         }
@@ -76,16 +70,16 @@ pub(crate) fn fit(p: &mut dyn Painter, text: &str, font: Font, max_width: f32) -
 }
 
 /// Draws `text` centered in `rect`, shrinking it to fit.
-pub(crate) fn centered_text(p: &mut dyn Painter, text: &str, rect: Rect, font: Font, color: Rgba) {
+pub(crate) fn centered_text(p: &mut Ink<'_>, text: &str, rect: Rect, font: Font, color: Rgba) {
     let font = fit(p, text, font, rect.w - 8.0);
     p.text(text, rect.center(), font, Align::Center, color);
 }
 
 /// Draws the lines the layout broke `block` into, each shrunk if the real
 /// font turns out wider than the estimate.
-fn paragraph(p: &mut dyn Painter, block: &TextBlock, color: Rgba) {
+fn paragraph(p: &mut Ink<'_>, block: &TextBlock, color: Rgba) {
     let line_h = block.line_height();
-    let font = sans(block.size, false);
+    let font = text_font(block.size, false);
     for (k, line) in block.lines.iter().enumerate() {
         let y = block.rect.y + line_h * (to_f32(k) + 0.5);
         let font = fit(p, line, font, block.rect.w);
@@ -100,7 +94,7 @@ pub(crate) enum Style {
     Disabled,
 }
 
-pub(crate) fn button(p: &mut dyn Painter, rect: Rect, label: &str, style: Style, font: f32) {
+pub(crate) fn button(p: &mut Ink<'_>, rect: Rect, label: &str, style: Style, font: f32) {
     let radius = rect.h / 2.0;
     let (fill, stroke, color) = match style {
         Style::Normal => (theme::PANEL, theme::CELL_MARK, theme::TEXT),
@@ -113,11 +107,11 @@ pub(crate) fn button(p: &mut dyn Painter, rect: Rect, label: &str, style: Style,
     };
     p.fill_rect(rect, radius, fill);
     p.stroke_rect(rect.inset(0.5), radius, 1.0, stroke);
-    centered_text(p, label, rect, sans(font, true), color);
+    centered_text(p, label, rect, text_font(font, true), color);
 }
 
 /// A pill split into equal segments; `active` is highlighted.
-fn segmented(p: &mut dyn Painter, rect: Rect, labels: &[&str], active: Option<usize>, font: f32) {
+fn segmented(p: &mut Ink<'_>, rect: Rect, labels: &[&str], active: Option<usize>, font: f32) {
     let radius = rect.h / 2.0;
     p.fill_rect(rect, radius, theme::PANEL);
     p.stroke_rect(rect.inset(0.5), radius, 1.0, theme::CELL_MARK);
@@ -130,18 +124,18 @@ fn segmented(p: &mut dyn Painter, rect: Rect, labels: &[&str], active: Option<us
         } else {
             theme::MUTED
         };
-        centered_text(p, label, seg, sans(font, true), color);
+        centered_text(p, label, seg, text_font(font, true), color);
     }
 }
 
 /// A keyboard key cap with `label`.
-fn keycap(p: &mut dyn Painter, rect: Rect, label: &str, font: f32) {
+fn keycap(p: &mut Ink<'_>, rect: Rect, label: &str, font: f32) {
     p.stroke_rect(rect.inset(0.5), 4.0, 1.0, theme::MUTED);
-    centered_text(p, label, rect, mono(font, true), theme::TEXT);
+    centered_text(p, label, rect, text_font(font, true), theme::TEXT);
 }
 
 /// A mouse outline with the left button filled.
-fn mouse_icon(p: &mut dyn Painter, rect: Rect) {
+fn mouse_icon(p: &mut Ink<'_>, rect: Rect) {
     let h = rect.h.min(rect.w * 1.4);
     let body = Rect::centered(rect.center(), h * 0.62, h);
     let radius = body.w / 2.0;
@@ -166,7 +160,7 @@ fn mouse_icon(p: &mut dyn Painter, rect: Rect) {
 }
 
 /// The `∅` sign.
-fn empty_sign(p: &mut dyn Painter, center: Point, radius: f32, width: f32, color: Rgba) {
+fn empty_sign(p: &mut Ink<'_>, center: Point, radius: f32, width: f32, color: Rgba) {
     p.stroke_circle(center, radius, width, color);
     let d = radius * 1.25;
     p.line(
@@ -179,13 +173,13 @@ fn empty_sign(p: &mut dyn Painter, center: Point, radius: f32, width: f32, color
 
 // ---- header and controls ----
 
-fn draw_header(app: &App, p: &mut dyn Painter) {
+fn draw_header(app: &App, p: &mut Ink<'_>) {
     let l = &app.layout;
     if let Some(panel) = l.panel {
         p.fill_rect(panel, 10.0, theme::PANEL);
     }
     // Title: `//` in the accent color, then the name.
-    let title_font = fit(p, "// ENDLOGIC", mono(l.title_font, true), l.title.w);
+    let title_font = fit(p, TITLE, text_font(l.title_font, true), l.title.w);
     let y = l.title.center().y;
     p.text(
         "//",
@@ -208,7 +202,7 @@ fn draw_header(app: &App, p: &mut dyn Painter) {
     let r = l.puzzle_id;
     let marker = Rect::new(r.x, r.center().y - r.h * 0.3, 4.0, r.h * 0.6);
     p.fill_rect(marker, 1.0, theme::MARKER);
-    let font = fit(p, &id, mono(l.id_font, false), r.w - 12.0);
+    let font = fit(p, &id, text_font(l.id_font, false), r.w - 12.0);
     p.text(
         &id,
         Point::new(r.x + 12.0, r.center().y),
@@ -225,14 +219,14 @@ fn draw_header(app: &App, p: &mut dyn Painter) {
 
 /// The help rows: every icon centered in its box, which the layout puts in
 /// one column and centers on the row's text.
-fn draw_help(l: &Layout, p: &mut dyn Painter) {
+fn draw_help(l: &Layout, p: &mut Ink<'_>) {
     let caps = [None, Some("R"), Some("TAB")];
     for (row, cap) in l.help.iter().zip(caps) {
         let icon = row.icon;
         match cap {
             Some(label) => {
                 let size = row.text.size;
-                let font = mono(size, true);
+                let font = text_font(size, true);
                 let w = (p.text_width(label, font) + size * 1.2)
                     .max(size * 2.0)
                     .min(icon.w);
@@ -245,7 +239,7 @@ fn draw_help(l: &Layout, p: &mut dyn Painter) {
     }
 }
 
-fn draw_top_controls(app: &App, p: &mut dyn Painter) {
+fn draw_top_controls(app: &App, p: &mut Ink<'_>) {
     let l = &app.layout;
     let labels: Vec<&str> = (0..5).map(|k| tab_label(app.lang, k)).collect();
     let active = if app.is_custom() {
@@ -295,7 +289,7 @@ fn draw_top_controls(app: &App, p: &mut dyn Painter) {
     button(p, l.share, text(app.lang, label), style, l.font * 0.9);
 }
 
-fn draw_bottom_controls(app: &App, p: &mut dyn Painter) {
+fn draw_bottom_controls(app: &App, p: &mut Ink<'_>) {
     let l = &app.layout;
     let movable = app.game.as_ref().is_some_and(|g| !g.won) && !app.is_generating();
     let style = if movable {
@@ -339,7 +333,7 @@ fn draw_bottom_controls(app: &App, p: &mut dyn Painter) {
 
 /// The one-button counter switch: three ticks for the grid display, `123`
 /// for numbers.
-fn counter_toggle(p: &mut dyn Painter, rect: Rect, mode: CounterMode, font: f32) {
+fn counter_toggle(p: &mut Ink<'_>, rect: Rect, mode: CounterMode, font: f32) {
     let radius = rect.h / 2.0;
     p.fill_rect(rect, radius, theme::PANEL);
     p.stroke_rect(rect.inset(0.5), radius, 1.0, theme::CELL_MARK);
@@ -357,14 +351,14 @@ fn counter_toggle(p: &mut dyn Painter, rect: Rect, mode: CounterMode, font: f32)
             }
         }
         CounterMode::Numbers => {
-            centered_text(p, "123", rect, mono(font, true), theme::ACCENT);
+            centered_text(p, "123", rect, text_font(font, true), theme::ACCENT);
         }
     }
 }
 
 // ---- board ----
 
-pub(crate) fn brackets(p: &mut dyn Painter, frame: Rect, len: f32, color: Rgba) {
+pub(crate) fn brackets(p: &mut Ink<'_>, frame: Rect, len: f32, color: Rgba) {
     let w = 2.0;
     let corners = [
         (frame.x, frame.y, 1.0, 1.0),
@@ -378,13 +372,13 @@ pub(crate) fn brackets(p: &mut dyn Painter, frame: Rect, len: f32, color: Rgba) 
     }
 }
 
-fn draw_empty_board(l: &Layout, p: &mut dyn Painter) {
+fn draw_empty_board(l: &Layout, p: &mut Ink<'_>) {
     brackets(p, l.frame, l.cell * 0.25, theme::ACCENT.alpha(0.5));
     p.fill_rect(l.cells, 0.0, theme::GRID_LINE);
     p.fill_rect(l.tray, 12.0, theme::TRAY);
 }
 
-pub(crate) fn free_cell(p: &mut dyn Painter, r: Rect) {
+pub(crate) fn free_cell(p: &mut Ink<'_>, r: Rect) {
     p.fill_rect(r, 0.0, theme::CELL);
     let tick = r.w * 0.14;
     let off = r.w * 0.1;
@@ -407,7 +401,7 @@ pub(crate) fn free_cell(p: &mut dyn Painter, r: Rect) {
     p.fill_circle(r.center(), (r.w * 0.04).max(1.0), mark);
 }
 
-pub(crate) fn lock_cell(p: &mut dyn Painter, r: Rect) {
+pub(crate) fn lock_cell(p: &mut Ink<'_>, r: Rect) {
     p.fill_rect(r, 0.0, theme::LOCK);
     let w = (r.w * 0.05).max(1.5);
     p.stroke_rect(r.inset(w), 1.0, w, theme::BRIGHT);
@@ -421,7 +415,7 @@ pub(crate) fn lock_cell(p: &mut dyn Painter, r: Rect) {
     p.fill_rect(body, 1.5, icon);
 }
 
-pub(crate) fn dead_cell(p: &mut dyn Painter, r: Rect) {
+pub(crate) fn dead_cell(p: &mut Ink<'_>, r: Rect) {
     p.fill_rect(r, 0.0, theme::DEAD);
     p.push_clip(r);
     let step = r.w / 5.0;
@@ -445,7 +439,7 @@ pub(crate) fn dead_cell(p: &mut dyn Painter, r: Rect) {
     );
 }
 
-fn draw_board(app: &App, game: &Game, p: &mut dyn Painter) {
+fn draw_board(app: &App, game: &Game, p: &mut Ink<'_>) {
     let l = &app.layout;
     let board = &game.board;
     let win = if game.won {
@@ -501,7 +495,7 @@ fn draw_board(app: &App, game: &Game, p: &mut dyn Painter) {
 
 /// The hint silhouette: a faint hatched fill on every cell the solution
 /// covers, with no borders between pieces. It goes with the win.
-fn draw_silhouette(app: &App, game: &Game, p: &mut dyn Painter) {
+fn draw_silhouette(app: &App, game: &Game, p: &mut Ink<'_>) {
     if game.won {
         return;
     }
@@ -550,7 +544,7 @@ struct CounterLook {
 
 /// Draws one counter in `area`: for a row (`row`), the band part left of
 /// the row; for a column, the band part above it.
-fn counter(p: &mut dyn Painter, area: Rect, line: Line, row: bool, look: &CounterLook) {
+fn counter(p: &mut Ink<'_>, area: Rect, line: Line, row: bool, look: &CounterLook) {
     let CounterLook {
         mode,
         cell,
@@ -594,11 +588,11 @@ fn counter(p: &mut dyn Painter, area: Rect, line: Line, row: bool, look: &Counte
     }
 }
 
-fn number(p: &mut dyn Painter, area: Rect, line: Line, color: Rgba, row: bool, font: f32) {
+fn number(p: &mut Ink<'_>, area: Rect, line: Line, color: Rgba, row: bool, font: f32) {
     let label = format!("{}/{}", line.filled, line.clue);
     let size = (if row { area.h } else { area.w } * 0.36).min(font);
     let bold = line.state() == LineState::Exact;
-    let font = fit(p, &label, mono(size, bold), area.w * 0.92);
+    let font = fit(p, &label, text_font(size, bold), area.w * 0.92);
     if row {
         let anchor = Point::new(area.right() - area.w * 0.04, area.center().y);
         p.text(&label, anchor, font, Align::Right, color);
@@ -608,7 +602,7 @@ fn number(p: &mut dyn Painter, area: Rect, line: Line, color: Rgba, row: bool, f
     }
 }
 
-fn draw_counters(app: &App, game: &Game, p: &mut dyn Painter) {
+fn draw_counters(app: &App, game: &Game, p: &mut Ink<'_>) {
     let l = &app.layout;
     let font = l.font;
     let (rows, cols) = (game.board.rows(), game.board.cols());
@@ -632,7 +626,7 @@ fn draw_counters(app: &App, game: &Game, p: &mut dyn Painter) {
 
 // ---- tray and pieces ----
 
-fn draw_tray(app: &App, game: &Game, p: &mut dyn Painter) {
+fn draw_tray(app: &App, game: &Game, p: &mut Ink<'_>) {
     let l = &app.layout;
     if game.won && l.kind != Arrangement::Wide && !app.is_generating() {
         // The banner takes the empty tray's place.
@@ -661,7 +655,7 @@ fn draw_tray(app: &App, game: &Game, p: &mut dyn Painter) {
 }
 
 /// The page switcher, when the tray has pages.
-pub(crate) fn draw_pager(app: &App, cards: usize, p: &mut dyn Painter) {
+pub(crate) fn draw_pager(app: &App, cards: usize, p: &mut Ink<'_>) {
     let l = &app.layout;
     let Some(pager) = l.pager else {
         return;
@@ -674,12 +668,12 @@ pub(crate) fn draw_pager(app: &App, cards: usize, p: &mut dyn Painter) {
         p,
         &label,
         pager.label,
-        mono(font * 0.9, false),
+        text_font(font * 0.9, false),
         theme::MUTED,
     );
 }
 
-fn draw_pieces(app: &App, game: &Game, p: &mut dyn Painter) {
+fn draw_pieces(app: &App, game: &Game, p: &mut Ink<'_>) {
     let win = if game.won {
         ease_out(game.win_elapsed / theme::WIN_TIME)
     } else {
@@ -728,7 +722,7 @@ fn draw_pieces(app: &App, game: &Game, p: &mut dyn Painter) {
 /// Draws a piece centered on `center` with cells of side `cell`, turned by
 /// `angle` radians (clockwise) about its center.
 pub(crate) fn piece(
-    p: &mut dyn Painter,
+    p: &mut Ink<'_>,
     shape: &Shape,
     center: Point,
     cell: f32,
@@ -800,7 +794,7 @@ pub(crate) fn piece(
 
 // ---- overlays ----
 
-fn pill(p: &mut dyn Painter, center: Point, label: &str, font: Font, stroke: Rgba, alpha: f32) {
+fn pill(p: &mut Ink<'_>, center: Point, label: &str, font: Font, stroke: Rgba, alpha: f32) {
     let w = p.text_width(label, font) + font.size * 2.4;
     let rect = Rect::centered(center, w, font.size * 2.6);
     p.fill_rect(rect, rect.h / 2.0, theme::PANEL.alpha(0.96 * alpha));
@@ -808,7 +802,7 @@ fn pill(p: &mut dyn Painter, center: Point, label: &str, font: Font, stroke: Rgb
     p.text(label, center, font, Align::Center, theme::TEXT.alpha(alpha));
 }
 
-fn draw_overlays(app: &App, p: &mut dyn Painter) {
+fn draw_overlays(app: &App, p: &mut Ink<'_>) {
     let l = &app.layout;
     if app.is_generating() {
         p.fill_rect(l.board_block(), 6.0, theme::BACKGROUND.alpha(0.6));
@@ -817,7 +811,7 @@ fn draw_overlays(app: &App, p: &mut dyn Painter) {
             p,
             l.frame.center(),
             label,
-            sans(l.font, true),
+            text_font(l.font, true),
             theme::ACCENT,
             1.0,
         );
@@ -837,7 +831,7 @@ fn draw_overlays(app: &App, p: &mut dyn Painter) {
             Rect::new(banner.x, banner.y, banner.w, l.next.y - banner.y)
         };
         let label = text(app.lang, Text::Complete);
-        let font = fit(p, label, mono(l.font * 1.2, true), title_area.w - 16.0);
+        let font = fit(p, label, text_font(l.font * 1.2, true), title_area.w - 16.0);
         let used = game.hints.used;
         let center = title_area.center();
         let (title_y, hints_y) = if used > 0 {
@@ -854,7 +848,12 @@ fn draw_overlays(app: &App, p: &mut dyn Painter) {
         );
         if used > 0 {
             let line = format!("{} {used}", text(app.lang, Text::HintsUsed));
-            let font = fit(p, &line, sans(l.font * 0.85, false), title_area.w - 16.0);
+            let font = fit(
+                p,
+                &line,
+                text_font(l.font * 0.85, false),
+                title_area.w - 16.0,
+            );
             p.text(
                 &line,
                 Point::new(center.x, hints_y),
@@ -887,7 +886,7 @@ fn draw_overlays(app: &App, p: &mut dyn Painter) {
             theme::ACCENT
         };
         let label = text(app.lang, toast.text);
-        let font = fit(p, label, sans(l.font * 0.95, true), app.width * 0.8);
+        let font = fit(p, label, text_font(l.font * 0.95, true), app.width * 0.8);
         pill(p, l.notice, label, font, stroke, alpha);
     }
 }

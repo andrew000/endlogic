@@ -408,6 +408,7 @@ fn a_bad_code_shows_a_message_and_generates() {
     });
     let mut recorder = Recorder::default();
     app.frame(0.0, &mut recorder);
+    recorder.texts = app.drawn_texts();
     assert!(texts(&recorder).iter().any(|t| t == "Некоректне посилання"));
 }
 
@@ -455,6 +456,7 @@ fn generated_puzzles_publish_their_code() {
     assert!(app.is_generating());
     // The first frame may already finish; the indicator shows while it runs.
     let busy = app.frame(0.0, &mut recorder);
+    recorder.texts = app.drawn_texts();
     if app.is_generating() {
         assert!(busy);
         assert!(texts(&recorder).iter().any(|t| t == "Generating…"));
@@ -489,6 +491,7 @@ fn share_copies_a_link() {
     assert_eq!((toast.text, toast.error), (Text::CopyFailed, true));
     let mut recorder = Recorder::default();
     app.frame(0.2, &mut recorder);
+    recorder.texts = app.drawn_texts();
     assert!(
         texts(&recorder)
             .iter()
@@ -500,6 +503,7 @@ fn share_copies_a_link() {
     app.handle(Event::CopyFinished(false));
     let mut recorder = Recorder::default();
     app.frame(0.2, &mut recorder);
+    recorder.texts = app.drawn_texts();
     assert!(
         texts(&recorder)
             .iter()
@@ -645,6 +649,7 @@ fn same_entropy_and_events_give_the_same_state() {
         settle(app);
         let mut recorder = Recorder::default();
         app.frame(0.0, &mut recorder);
+        recorder.texts = app.drawn_texts();
         (format!("{app:?}"), recorder.calls, app.take_effects())
     };
     let mut a = App::new(config(844.0, 390.0));

@@ -10,8 +10,8 @@ use std::f64::consts::TAU;
 use std::rc::{Rc, Weak};
 
 use endlogic_ui::{
-    Align, App, Budgets, CodeKind, Config, Cursor, Effect, Event, Font, FontFamily, Insets, Key,
-    Painter, Point, Pointer, PointerKind, Rect, Rgba, SETTING_KEYS,
+    App, Budgets, CodeKind, Config, Cursor, Effect, Event, Insets, Key, Painter, Point, Pointer,
+    PointerKind, Rect, Rgba, SETTING_KEYS,
 };
 use wasm_bindgen::JsCast;
 use wasm_bindgen::prelude::*;
@@ -38,11 +38,6 @@ fn fragment(kind: CodeKind) -> &'static str {
         CodeKind::Custom => CUSTOM_FRAGMENT,
     }
 }
-
-const SANS: &str =
-    "system-ui, -apple-system, \"Segoe UI\", Roboto, \"Helvetica Neue\", Arial, sans-serif";
-const MONO: &str =
-    "ui-monospace, \"Cascadia Mono\", \"SF Mono\", Menlo, Consolas, \"Liberation Mono\", monospace";
 
 /// Entry point, run when the module is loaded.
 ///
@@ -118,33 +113,29 @@ fn inset_probe(window: &Window) -> Option<web_sys::Element> {
     probe
         .set_attribute(
             "style",
-            "position:fixed;left:0;top:0;width:0;height:0;visibility:hidden;pointer-events:none;\
-             padding:env(safe-area-inset-top) env(safe-area-inset-right) \
-             env(safe-area-inset-bottom) env(safe-area-inset-left)",
+            "position:fixed;visibility:hidden;pointer-events:none;             top:env(safe-area-inset-top);right:env(safe-area-inset-right);             bottom:env(safe-area-inset-bottom);left:env(safe-area-inset-left)",
         )
         .ok()?;
     document.body()?.append_child(&probe).ok()?;
     Some(probe)
 }
 
-/// The safe-area insets in CSS pixels, read from the probe's padding.
+/// The safe-area insets in CSS pixels: how far the probe, stretched to the
+/// safe area, stays from each edge of the viewport. Read as numbers, so no
+/// CSS text needs parsing.
 fn safe_insets(window: &Window, probe: &web_sys::Element) -> Insets {
-    let Ok(Some(style)) = window.get_computed_style(probe) else {
+    let rect = probe.get_bounding_client_rect();
+    let number = |v: Result<JsValue, JsValue>| v.ok().and_then(|v| v.as_f64());
+    let (Some(width), Some(height)) = (number(window.inner_width()), number(window.inner_height()))
+    else {
         return Insets::default();
     };
-    let side = |name: &str| {
-        style
-            .get_property_value(name)
-            .ok()
-            .and_then(|v| v.trim().trim_end_matches("px").parse::<f32>().ok())
-            .unwrap_or(0.0)
-            .max(0.0)
-    };
+    let side = |v: f64| to_f32(v).max(0.0);
     Insets {
-        top: side("padding-top"),
-        right: side("padding-right"),
-        bottom: side("padding-bottom"),
-        left: side("padding-left"),
+        top: side(rect.top()),
+        right: side(width - rect.right()),
+        bottom: side(height - rect.bottom()),
+        left: side(rect.left()),
     }
 }
 
@@ -488,23 +479,9 @@ struct CanvasPainter {
     ctx: CanvasRenderingContext2d,
 }
 
+/// A CSS color: `#rrggbbaa`, whole numbers only.
 fn css_color(c: Rgba) -> String {
-    format!(
-        "rgba({},{},{},{:.3})",
-        c.r,
-        c.g,
-        c.b,
-        f32::from(c.a) / 255.0
-    )
-}
-
-fn css_font(font: Font) -> String {
-    let family = match font.family {
-        FontFamily::Sans => SANS,
-        FontFamily::Mono => MONO,
-    };
-    let weight = if font.bold { 700 } else { 400 };
-    format!("{weight} {:.2}px {family}", font.size)
+    format!("#{:02x}{:02x}{:02x}{:02x}", c.r, c.g, c.b, c.a)
 }
 
 impl CanvasPainter {
@@ -609,24 +586,24 @@ impl Painter for CanvasPainter {
         ctx.fill();
     }
 
-    fn text(&mut self, text: &str, anchor: Point, font: Font, align: Align, color: Rgba) {
+    fn polyline(&mut self, points: &[Point], width: f32, color: Rgba) {
+        let Some((first, rest)) = points.split_first() else {
+            return;
+        };
         let ctx = &self.ctx;
-        ctx.set_font(&css_font(font));
-        ctx.set_fill_style_str(&css_color(color));
-        ctx.set_text_align(match align {
-            Align::Left => "left",
-            Align::Center => "center",
-            Align::Right => "right",
-        });
-        ctx.set_text_baseline("middle");
-        let _ = ctx.fill_text(text, f64::from(anchor.x), f64::from(anchor.y));
-    }
-
-    fn text_width(&mut self, text: &str, font: Font) -> f32 {
-        self.ctx.set_font(&css_font(font));
-        self.ctx
-            .measure_text(text)
-            .map_or(0.0, |m| to_f32(m.width()))
+        ctx.set_stroke_style_str(&css_color(color));
+        ctx.set_line_width(f64::from(width));
+        ctx.set_line_cap("square");
+        ctx.set_line_join("miter");
+        ctx.set_miter_limit(10.0);
+        ctx.begin_path();
+        ctx.move_to(f64::from(first.x), f64::from(first.y));
+        for p in rest {
+            ctx.line_to(f64::from(p.x), f64::from(p.y));
+        }
+        ctx.stroke();
+        // Other strokes (circles) rely on the default flat ends.
+        ctx.set_line_cap("butt");
     }
 
     fn push_clip(&mut self, rect: Rect) {

@@ -191,6 +191,7 @@ fn the_hint_button_waits_and_reports_a_spent_budget() {
     assert!(app.is_hinting());
     let mut drawing = Recorder::default();
     app.frame(0.0, &mut drawing);
+    drawing.texts = app.drawn_texts();
     assert!(texts(&drawing).contains(&"Hint…".to_owned()));
     // Pieces wait for the hint.
     let from = card(&app, 0);

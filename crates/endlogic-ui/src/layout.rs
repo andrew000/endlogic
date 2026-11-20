@@ -14,6 +14,7 @@
 //! row counters take a band on its left and an empty band of the same width
 //! is kept on its right.
 
+use crate::font::{Font, MIN_FONT_SIZE, text_width};
 use crate::painter::{Point, Rect};
 use crate::shell::Insets;
 use crate::text::{Lang, Text, difficulty_label, text};
@@ -409,12 +410,29 @@ impl Layout {
 
 // ---- shared helpers ----
 
-/// A cautious text width for layout; drawing shrinks text that is wider.
-fn estimate_width(text: &str, size: f32) -> f32 {
-    to_f32(text.chars().count()) * size * 0.62
+/// The title drawn in the header.
+pub(crate) const TITLE: &str = "// ENDLOGIC";
+/// Title font in the low wide arrangement, where it may share a row.
+const LOW_TITLE_FONT: f32 = 15.0;
+/// Puzzle id font in the low wide arrangement.
+pub(crate) const LOW_ID_FONT: f32 = 11.0;
+
+/// `size`, or smaller if the bold title would not fit `width`.
+pub(crate) fn title_size(size: f32, width: f32) -> f32 {
+    let w = text_width(TITLE, Font::new(size, true));
+    if w <= width {
+        size
+    } else {
+        (size * width / w).max(MIN_FONT_SIZE)
+    }
 }
 
-/// Breaks `text` into lines whose estimated width fits `max_width`.
+/// Width of `text` in the font of `size`, as it will be drawn.
+fn estimate_width(text: &str, size: f32) -> f32 {
+    text_width(text, Font::new(size, false))
+}
+
+/// Breaks `text` into lines whose width fits `max_width`.
 fn wrap(text: &str, size: f32, max_width: f32) -> Vec<String> {
     let mut lines: Vec<String> = Vec::new();
     let mut line = String::new();
@@ -492,6 +510,13 @@ fn share_label(lang: Lang, short: bool) -> &'static str {
 /// Width and height of the board block for a cell size: counters band,
 /// grid and reserved band across; counters band, grid and frame margin
 /// down.
+/// The largest cell for which the board takes at most `width` by `height`
+/// (before rounding and clamping).
+fn cell_to_fit(input: &LayoutInput, width: f32, height: f32) -> f32 {
+    let (unit_w, unit_h) = board_size(input, 1.0);
+    (width / unit_w).min(height / unit_h)
+}
+
 fn board_size(input: &LayoutInput, cell: f32) -> (f32, f32) {
     let side = BAND + COUNTER_GAP;
     (
@@ -869,9 +894,7 @@ fn wide(input: &LayoutInput) -> Layout {
     let y1 = bottom_y - m.gap;
     let center_w = (x1 - x0) - 2.0 * (side + m.gap);
     let banner_h = banner_height(400.0, m.gap);
-    let (unit_w, unit_h) = board_size(input, 1.0);
-    let cell = (center_w / unit_w)
-        .min((y1 - y0 - banner_h - m.gap) / unit_h)
+    let cell = cell_to_fit(input, center_w, y1 - y0 - banner_h - m.gap)
         .clamp(MIN_CELL, MAX_CELL)
         .floor();
     let (block_w, block_h) = board_size(input, cell);
@@ -1238,7 +1261,9 @@ fn left_top(
         let title = Rect::new(lx, y0, side, 22.0);
         (title, Rect::new(lx, title.bottom(), side, 16.0))
     } else {
-        let title_w = side * 0.55;
+        // The id keeps room for its widest letters; the title takes the rest.
+        let id_w = text_width("Δ-X-WWWWWW", Font::new(LOW_ID_FONT, false)) + 16.0;
+        let title_w = (side - id_w).clamp(side * 0.45, side * 0.55);
         (
             Rect::new(lx, y0, title_w, 22.0),
             Rect::new(lx + title_w, y0 + 3.0, side - title_w, 16.0),
@@ -1349,9 +1374,7 @@ fn low_wide(input: &LayoutInput) -> Layout {
 
     // The board takes the full height between the columns.
     let center_w = (x1 - x0) - 2.0 * (side + gap);
-    let (unit_w, unit_h) = board_size(input, 1.0);
-    let cell = (center_w / unit_w)
-        .min((y1 - y0) / unit_h)
+    let cell = cell_to_fit(input, center_w, y1 - y0)
         .clamp(MIN_CELL, MAX_CELL)
         .floor();
     let (_, block_h) = board_size(input, cell);
@@ -1372,8 +1395,8 @@ fn low_wide(input: &LayoutInput) -> Layout {
     Layout {
         kind: Arrangement::LowWide,
         font,
-        title_font: 15.0,
-        id_font: 11.0,
+        title_font: title_size(LOW_TITLE_FONT, title.w),
+        id_font: LOW_ID_FONT,
         safe,
         axis,
         panel: None,

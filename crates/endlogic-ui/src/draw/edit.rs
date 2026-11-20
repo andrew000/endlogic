@@ -3,17 +3,19 @@
 use endlogic_core::Cell;
 
 use super::{
-    Style, brackets, button, centered_text, dead_cell, draw_pager, fit, free_cell, lock_cell, mono,
-    piece, sans,
+    Style, brackets, button, centered_text, dead_cell, draw_pager, fit, free_cell, lock_cell,
+    piece, text_font,
 };
 use crate::app::App;
 use crate::editor::{ClueRef, Draft, DraftError, Editor, SolveState};
+use crate::font::{Align, Font};
+use crate::ink::Ink;
 use crate::layout::{EditLayout, Stepper, to_f32};
-use crate::painter::{Align, Painter, Point, Rect, Rgba};
+use crate::painter::{Point, Rect, Rgba};
 use crate::text::{Text, problem_text, solution_of, text};
 use crate::theme;
 
-pub(super) fn draw(app: &App, p: &mut dyn Painter) {
+pub(super) fn draw(app: &App, p: &mut Ink<'_>) {
     let l = &app.layout;
     let (Some(e), Some(editor)) = (l.edit, app.editor()) else {
         return;
@@ -45,12 +47,12 @@ pub(super) fn draw(app: &App, p: &mut dyn Painter) {
     }
 }
 
-fn panel(p: &mut dyn Painter, rect: Rect) {
+fn panel(p: &mut Ink<'_>, rect: Rect) {
     p.fill_rect(rect, 12.0, theme::PANEL);
     p.stroke_rect(rect.inset(0.5), 12.0, 1.0, theme::CELL_MARK);
 }
 
-fn draw_board(app: &App, editor: &Editor, p: &mut dyn Painter) {
+fn draw_board(app: &App, editor: &Editor, p: &mut Ink<'_>) {
     let l = &app.layout;
     brackets(p, l.frame, l.cell * 0.25, theme::ACCENT);
     p.fill_rect(l.cells, 0.0, theme::GRID_LINE);
@@ -68,7 +70,7 @@ fn draw_board(app: &App, editor: &Editor, p: &mut dyn Painter) {
 }
 
 /// The clues as plain numbers; the one being edited is highlighted.
-fn draw_clues(app: &App, editor: &Editor, p: &mut dyn Painter) {
+fn draw_clues(app: &App, editor: &Editor, p: &mut Ink<'_>) {
     let l = &app.layout;
     let selected = app.selected_clue();
     let mut one = |area: Rect, clue: ClueRef| {
@@ -87,7 +89,7 @@ fn draw_clues(app: &App, editor: &Editor, p: &mut dyn Painter) {
                 theme::ACCENT
             }
         };
-        centered_text(p, &label, area, mono(size, true), color);
+        centered_text(p, &label, area, text_font(size, true), color);
     };
     for row in 0..editor.height() {
         let cell = l.cell_rect(row, 0);
@@ -114,7 +116,7 @@ fn draw_clues(app: &App, editor: &Editor, p: &mut dyn Painter) {
 }
 
 /// The solution on view, its pieces laid out on the board.
-fn draw_solution(app: &App, p: &mut dyn Painter) {
+fn draw_solution(app: &App, p: &mut Ink<'_>) {
     let (Some(solution), Some(editor)) = (app.shown_solution(), app.editor()) else {
         return;
     };
@@ -130,7 +132,7 @@ fn draw_solution(app: &App, p: &mut dyn Painter) {
 }
 
 /// Breaks `text` into lines no wider than `width` in `font`.
-fn wrap(p: &mut dyn Painter, text: &str, font: crate::painter::Font, width: f32) -> Vec<String> {
+fn wrap(p: &mut Ink<'_>, text: &str, font: Font, width: f32) -> Vec<String> {
     let mut lines: Vec<String> = Vec::new();
     let mut line = String::new();
     for word in text.split(' ') {
@@ -153,8 +155,8 @@ fn wrap(p: &mut dyn Painter, text: &str, font: crate::painter::Font, width: f32)
 
 /// Text in `rect`, wrapped, as many lines as fit; the last one shrinks to
 /// fit the width.
-fn block(p: &mut dyn Painter, text: &str, rect: Rect, size: f32, color: Rgba, align: Align) {
-    let font = sans(size, false);
+fn block(p: &mut Ink<'_>, text: &str, rect: Rect, size: f32, color: Rgba, align: Align) {
+    let font = text_font(size, false);
     let line_h = size * 1.3;
     let room = (rect.h / line_h).floor().clamp(1.0, 8.0);
     let lines = wrap(p, text, font, rect.w);
@@ -180,7 +182,7 @@ fn block(p: &mut dyn Painter, text: &str, rect: Rect, size: f32, color: Rgba, al
     }
 }
 
-fn draw_status(app: &App, e: &EditLayout, p: &mut dyn Painter) {
+fn draw_status(app: &App, e: &EditLayout, p: &mut Ink<'_>) {
     if let Some(problem) = app.first_problem() {
         let font = app.layout.font * 0.9;
         block(
@@ -194,7 +196,7 @@ fn draw_status(app: &App, e: &EditLayout, p: &mut dyn Painter) {
     }
 }
 
-fn draw_tray(app: &App, editor: &Editor, p: &mut dyn Painter) {
+fn draw_tray(app: &App, editor: &Editor, p: &mut Ink<'_>) {
     let l = &app.layout;
     p.fill_rect(l.tray, 12.0, theme::TRAY);
     let cards = app.editor_cards();
@@ -212,14 +214,14 @@ fn draw_tray(app: &App, editor: &Editor, p: &mut dyn Painter) {
                 p,
                 "+",
                 card,
-                mono((card.h * 0.5).min(32.0), true),
+                text_font((card.h * 0.5).min(32.0), true),
                 theme::ACCENT,
             );
         }
     }
 }
 
-fn draw_answer(app: &App, e: &EditLayout, p: &mut dyn Painter) {
+fn draw_answer(app: &App, e: &EditLayout, p: &mut Ink<'_>) {
     let Some(state) = app.solve_state() else {
         return;
     };
@@ -252,7 +254,7 @@ fn draw_answer(app: &App, e: &EditLayout, p: &mut dyn Painter) {
             Some(Text::Done),
         ),
     };
-    let title_font = fit(p, &title, sans(font, true), parts.title.w);
+    let title_font = fit(p, &title, text_font(font, true), parts.title.w);
     p.text(
         &title,
         Point::new(parts.title.x, parts.title.center().y),
@@ -261,7 +263,7 @@ fn draw_answer(app: &App, e: &EditLayout, p: &mut dyn Painter) {
         theme::TEXT,
     );
     if let Some(detail) = detail {
-        let detail_font = fit(p, &detail, sans(font * 0.85, false), parts.detail.w);
+        let detail_font = fit(p, &detail, text_font(font * 0.85, false), parts.detail.w);
         p.text(
             &detail,
             Point::new(parts.detail.x, parts.detail.center().y),
@@ -279,9 +281,9 @@ fn draw_answer(app: &App, e: &EditLayout, p: &mut dyn Painter) {
     }
 }
 
-fn stepper(p: &mut dyn Painter, s: &Stepper, label: &str, value: usize, font: f32) {
+fn stepper(p: &mut Ink<'_>, s: &Stepper, label: &str, value: usize, font: f32) {
     if s.label.w > 0.0 {
-        let f = fit(p, label, sans(font * 0.9, false), s.label.w - 4.0);
+        let f = fit(p, label, text_font(font * 0.9, false), s.label.w - 4.0);
         p.text(
             label,
             Point::new(s.label.x, s.label.center().y),
@@ -305,13 +307,13 @@ fn stepper(p: &mut dyn Painter, s: &Stepper, label: &str, value: usize, font: f3
         p,
         &value.to_string(),
         s.value.inset(-4.0),
-        mono(font, true),
+        text_font(font, true),
         theme::TEXT,
     );
     button(p, s.plus, "+", plus, font * 1.2);
 }
 
-fn draw_controls(app: &App, e: &EditLayout, editor: &Editor, p: &mut dyn Painter) {
+fn draw_controls(app: &App, e: &EditLayout, editor: &Editor, p: &mut Ink<'_>) {
     let lang = app.lang;
     let font = app.layout.font;
     stepper(p, &e.width, text(lang, Text::Width), editor.width(), font);
@@ -323,7 +325,13 @@ fn draw_controls(app: &App, e: &EditLayout, editor: &Editor, p: &mut dyn Painter
         font,
     );
     if let Some(times) = e.times {
-        centered_text(p, "×", times.inset(-4.0), sans(font, false), theme::MUTED);
+        centered_text(
+            p,
+            "×",
+            times.inset(-4.0),
+            text_font(font, false),
+            theme::MUTED,
+        );
     }
     let has_pieces = !editor.pieces().is_empty();
     let enabled = |on: bool| if on { Style::Normal } else { Style::Disabled };
@@ -352,7 +360,7 @@ fn draw_controls(app: &App, e: &EditLayout, editor: &Editor, p: &mut dyn Painter
     }
 }
 
-fn draw_piece_editor(app: &App, e: &EditLayout, draft: &Draft, p: &mut dyn Painter) {
+fn draw_piece_editor(app: &App, e: &EditLayout, draft: &Draft, p: &mut Ink<'_>) {
     let lang = app.lang;
     let font = app.layout.font;
     let parts = e.piece_editor(draft.side);
@@ -429,7 +437,7 @@ fn draw_piece_editor(app: &App, e: &EditLayout, draft: &Draft, p: &mut dyn Paint
     }
 }
 
-fn draw_strip(app: &App, e: &EditLayout, editor: &Editor, clue: ClueRef, p: &mut dyn Painter) {
+fn draw_strip(app: &App, e: &EditLayout, editor: &Editor, clue: ClueRef, p: &mut Ink<'_>) {
     let font = app.layout.font;
     let len = if clue.row {
         editor.width()

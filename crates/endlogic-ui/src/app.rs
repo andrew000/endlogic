@@ -9,6 +9,7 @@ use crate::board::{Board, PieceState, Turned};
 use crate::draw;
 use crate::editor::{EditControl, EditState, Editor};
 use crate::hint::Hints;
+use crate::ink::{Ink, Nothing};
 use crate::layout::{Layout, LayoutInput, Mode, to_f32};
 use crate::painter::{Painter, Point, Rect};
 use crate::shell::{
@@ -360,8 +361,19 @@ impl App {
         self.step_hint();
         self.step_editor(dt);
         self.animate(dt);
-        draw::draw(self, painter);
+        draw::draw(self, &mut Ink::new(painter));
         self.busy()
+    }
+
+    /// Every line of text the next frame would draw, in drawing order,
+    /// without drawing anything or changing any state. For tests and other
+    /// tools that need to read the screen.
+    #[must_use]
+    pub fn drawn_texts(&self) -> Vec<String> {
+        let mut nothing = Nothing;
+        let mut ink = Ink::noting(&mut nothing);
+        draw::draw(self, &mut ink);
+        ink.into_texts()
     }
 
     /// Takes the effects produced since the last call, oldest first.

@@ -6,11 +6,13 @@
 //! where the win banner would be, and the piece editor takes the whole
 //! right column.
 
+use crate::font::{Font, text_width};
+
 use super::{
     Arrangement, LOW_TRAY_GAP, Layout, LayoutInput, MAX_CELL, MIN_CELL, MIN_TARGET, Metrics, Rect,
     TALL_BOTTOM, TALL_BUTTON, TALL_HEADER, TALL_HEADER_BUTTON, TALL_SIDE, TALL_TABS, Text,
-    board_at, board_size, button_width, cards_at, column_fit, count_in, min_card, pager_in,
-    safe_rect, share_label, tab_row, tall_tray_with, text, to_f32, tray_cell,
+    board_at, board_size, button_width, cards_at, cell_to_fit, column_fit, count_in, min_card,
+    pager_in, safe_rect, share_label, tab_row, tall_tray_with, text, to_f32, tray_cell,
 };
 
 /// Playing or editing.
@@ -59,6 +61,8 @@ pub struct EditLayout {
     pub piece: Rect,
     /// Where the solver's answer shows.
     pub result: Rect,
+    /// Width each of the piece editor's buttons needs for its label.
+    pub piece_button: f32,
 }
 
 /// The parts of the piece editor.
@@ -208,8 +212,9 @@ impl EditLayout {
         let inner = self.piece.inset(PAD);
         let buttons_h = 2.0 * MIN_TARGET + PAD;
         let reason_h = STATUS_H;
+        let buttons_w = 2.0 * self.piece_button + PAD;
         let (grid, rest) = if inner.w >= inner.h * 1.3 {
-            let grid_side = inner.h.min(inner.w - PAD - 160.0).max(1.0);
+            let grid_side = inner.h.min(inner.w - PAD - buttons_w).max(1.0);
             let grid = Rect::new(
                 inner.x,
                 inner.y + (inner.h - grid_side) / 2.0,
@@ -242,7 +247,7 @@ impl EditLayout {
             );
             (grid, rest)
         };
-        let bw = (rest.w - PAD) / 2.0;
+        let bw = ((rest.w - PAD) / 2.0).max(1.0);
         let row2 = rest.bottom() - MIN_TARGET;
         let row1 = row2 - PAD - MIN_TARGET;
         PieceEditor {
@@ -307,6 +312,15 @@ fn strip_height(width: f32, size: usize) -> f32 {
 }
 
 /// Height the solver's answer needs in an area `width` wide.
+/// Width of the widest of the piece editor's buttons in `lang`: its label
+/// in the bold button font with room at both ends.
+fn piece_button_width(lang: crate::text::Lang, font: f32) -> f32 {
+    [Text::Cancel, Text::Done, Text::Duplicate, Text::Delete]
+        .into_iter()
+        .map(|t| text_width(text(lang, t), Font::new(font, true)) + font)
+        .fold(MIN_TARGET, f32::max)
+}
+
 fn result_height(width: f32, font: f32) -> f32 {
     if width - 2.0 * PAD >= 360.0 {
         2.0 * PAD + MIN_TARGET.max(2.0 * font * 1.35)
@@ -442,7 +456,13 @@ pub(super) fn tall(input: &LayoutInput) -> Layout {
     // The board size under the tabs.
     let size_y = tabs_y + TALL_TABS + gap;
     let half = (width - gap) / 2.0;
-    let stepper = |x: f32| Stepper::at(x, size_y, half, MIN_TARGET, MIN_TARGET, 28.0);
+    // The number gives up a little room when a label needs it.
+    let label_w = [Text::Width, Text::Height]
+        .into_iter()
+        .map(|t| text_width(text(input.lang, t), Font::new(font * 0.9, false)) + 4.0)
+        .fold(0.0, f32::max);
+    let value_w = (half - 2.0 * MIN_TARGET - label_w).clamp(20.0, 28.0);
+    let stepper = |x: f32| Stepper::at(x, size_y, half, MIN_TARGET, MIN_TARGET, value_w);
     let width_stepper = stepper(x0);
     let height_stepper = stepper(x0 + half + gap);
 
@@ -471,6 +491,7 @@ pub(super) fn tall(input: &LayoutInput) -> Layout {
     let cards = cards_at(fit.per_page, fit.cols, fit.card, gap, axis, tray.y);
     let result_h = result_height(width, font).min(tray.h);
     let edit = EditLayout {
+        piece_button: piece_button_width(input.lang, font),
         width: width_stepper,
         height: height_stepper,
         times: None,
@@ -618,9 +639,7 @@ pub(super) fn wide(input: &LayoutInput) -> Layout {
     let center_w = (x1 - x0) - 2.0 * (side + m.gap);
     let longest = input.grid_width.max(input.grid_height);
     let under_h = strip_height(center_w, longest).max(result_height(center_w, m.font));
-    let (unit_w, unit_h) = board_size(input, 1.0);
-    let cell = (center_w / unit_w)
-        .min((y1 - y0 - under_h - m.gap) / unit_h)
+    let cell = cell_to_fit(input, center_w, y1 - y0 - under_h - m.gap)
         .clamp(MIN_CELL, MAX_CELL)
         .floor();
     let (_, block_h) = board_size(input, cell);
@@ -640,6 +659,7 @@ pub(super) fn wide(input: &LayoutInput) -> Layout {
     let column = Rect::new(x1 - side, y0, side, y1 - y0);
     let (fit, tray, cards) = column_tray(input, column, m.gap, true);
     let edit = EditLayout {
+        piece_button: piece_button_width(input.lang, m.font),
         width: left.width,
         height: left.height,
         times: None,
@@ -749,14 +769,13 @@ pub(super) fn low_wide(input: &LayoutInput) -> Layout {
 
     // The board takes the full height between the columns.
     let center_w = (x1 - x0) - 2.0 * (side + gap);
-    let (unit_w, unit_h) = board_size(input, 1.0);
-    let cell = (center_w / unit_w)
-        .min((y1 - y0) / unit_h)
+    let cell = cell_to_fit(input, center_w, y1 - y0)
         .clamp(MIN_CELL, MAX_CELL)
         .floor();
     let (_, block_h) = board_size(input, cell);
     let board = board_at(input, axis, y0 + ((y1 - y0) - block_h).max(0.0) / 2.0, cell);
     let edit = EditLayout {
+        piece_button: piece_button_width(input.lang, font),
         width: width_stepper,
         height: height_stepper,
         times: Some(times),
@@ -774,8 +793,8 @@ pub(super) fn low_wide(input: &LayoutInput) -> Layout {
     let common = Common {
         kind: Arrangement::LowWide,
         font,
-        title_font: 15.0,
-        id_font: 11.0,
+        title_font: super::title_size(15.0, top.title.w),
+        id_font: super::LOW_ID_FONT,
         safe,
         axis,
         panel: None,

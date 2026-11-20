@@ -13,7 +13,7 @@ use windows::Win32::Graphics::Direct2D::Common::{D2D_SIZE_U, D2D1_COLOR_F};
 use windows::Win32::Graphics::Direct2D::{
     D2D1_FACTORY_TYPE_SINGLE_THREADED, D2D1_HWND_RENDER_TARGET_PROPERTIES,
     D2D1_PRESENT_OPTIONS_NONE, D2D1_RENDER_TARGET_PROPERTIES, D2D1CreateFactory, ID2D1Factory,
-    ID2D1HwndRenderTarget, ID2D1SolidColorBrush,
+    ID2D1HwndRenderTarget, ID2D1SolidColorBrush, ID2D1StrokeStyle,
 };
 use windows::Win32::Graphics::Dwm::{
     DWMWA_CAPTION_COLOR, DWMWA_USE_IMMERSIVE_DARK_MODE, DwmSetWindowAttribute,
@@ -44,7 +44,7 @@ use windows::Win32::UI::WindowsAndMessaging::{
 };
 use windows::core::{BOOL, Result, w};
 
-use super::painter::{D2dPainter, Fonts};
+use super::painter::{D2dPainter, polyline_style};
 use super::system;
 use crate::keys::{self, Modifiers, Press};
 use crate::link;
@@ -79,7 +79,7 @@ struct Shell {
     app: App,
     hwnd: HWND,
     factory: ID2D1Factory,
-    fonts: Fonts,
+    polyline: ID2D1StrokeStyle,
     device: Option<Device>,
     dpi: u32,
     /// The left button is down and the mouse captured.
@@ -235,7 +235,7 @@ impl Shell {
         // SAFETY: starts drawing on our target; ended below.
         unsafe { target.BeginDraw() };
         let busy = {
-            let mut painter = D2dPainter::new(&base, &self.factory, &brush, &mut self.fonts);
+            let mut painter = D2dPainter::new(&base, &self.factory, &brush, &self.polyline);
             self.app.frame(dt, &mut painter)
         };
         // SAFETY: ends the drawing begun above.
@@ -644,7 +644,7 @@ fn open(start: Option<&str>) -> Result<()> {
     // SAFETY: plain factory creation.
     let factory: ID2D1Factory =
         unsafe { D2D1CreateFactory(D2D1_FACTORY_TYPE_SINGLE_THREADED, None)? };
-    let fonts = Fonts::new()?;
+    let polyline = polyline_style(&factory)?;
     let mut client = RECT::default();
     // SAFETY: our live window; `client` is a valid out pointer.
     unsafe { GetClientRect(hwnd, &raw mut client)? };
@@ -670,7 +670,7 @@ fn open(start: Option<&str>) -> Result<()> {
         app: App::new(config),
         hwnd,
         factory,
-        fonts,
+        polyline,
         device: None,
         dpi,
         mouse_down: false,

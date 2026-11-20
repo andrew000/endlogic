@@ -1,184 +1,38 @@
-//! [`Painter`] on a Direct2D render target, with DirectWrite text.
+//! [`Painter`] on a Direct2D render target.
 
-use std::collections::HashMap;
-
-use endlogic_ui::{Align, Font, FontFamily, Painter, Point, Rect, Rgba};
+use endlogic_ui::{Painter, Point, Rect, Rgba};
 use windows::Win32::Foundation::E_FAIL;
 use windows::Win32::Graphics::Direct2D::Common::{
-    D2D_RECT_F, D2D1_COLOR_F, D2D1_FIGURE_BEGIN_FILLED, D2D1_FIGURE_END_CLOSED,
-    D2D1_FILL_MODE_WINDING,
+    D2D_RECT_F, D2D1_COLOR_F, D2D1_FIGURE_BEGIN_FILLED, D2D1_FIGURE_BEGIN_HOLLOW,
+    D2D1_FIGURE_END_CLOSED, D2D1_FIGURE_END_OPEN, D2D1_FILL_MODE_WINDING,
 };
 use windows::Win32::Graphics::Direct2D::{
-    D2D1_ANTIALIAS_MODE_PER_PRIMITIVE, D2D1_DRAW_TEXT_OPTIONS_NONE, D2D1_ELLIPSE,
-    D2D1_ROUNDED_RECT, ID2D1Factory, ID2D1RenderTarget, ID2D1SolidColorBrush,
+    D2D1_ANTIALIAS_MODE_PER_PRIMITIVE, D2D1_CAP_STYLE_FLAT, D2D1_CAP_STYLE_SQUARE,
+    D2D1_DASH_STYLE_SOLID, D2D1_ELLIPSE, D2D1_LINE_JOIN_MITER, D2D1_ROUNDED_RECT,
+    D2D1_STROKE_STYLE_PROPERTIES, ID2D1Factory, ID2D1PathGeometry, ID2D1RenderTarget,
+    ID2D1SolidColorBrush, ID2D1StrokeStyle,
 };
-use windows::Win32::Graphics::DirectWrite::{
-    DWRITE_FACTORY_TYPE_SHARED, DWRITE_FONT_METRICS, DWRITE_FONT_STRETCH_NORMAL,
-    DWRITE_FONT_STYLE_NORMAL, DWRITE_FONT_WEIGHT, DWRITE_FONT_WEIGHT_BOLD,
-    DWRITE_FONT_WEIGHT_REGULAR, DWRITE_LINE_METRICS, DWRITE_TEXT_METRICS,
-    DWRITE_WORD_WRAPPING_NO_WRAP, DWriteCreateFactory, IDWriteFactory, IDWriteFontCollection,
-    IDWriteTextFormat, IDWriteTextLayout,
-};
-use windows::core::{BOOL, HSTRING, Result, w};
+use windows::core::Result;
 
-/// The sans-serif family.
-const SANS: &str = "Segoe UI";
-/// The monospaced family, and the one used when it is missing.
-const MONO: &str = "Cascadia Mono";
-const MONO_FALLBACK: &str = "Consolas";
-/// Room given to a line of text; it never wraps.
-const NO_LIMIT: f32 = 100_000.0;
-
-/// A text format with what is needed to place its lines.
-struct Format {
-    format: IDWriteTextFormat,
-    /// `(ascent - descent) / 2` in DIPs: how far above the baseline the
-    /// vertical middle of the text is.
-    middle: f32,
-}
-
-/// DirectWrite and the text formats made so far; independent of any render
-/// target, so it outlives lost targets.
-pub struct Fonts {
-    dwrite: IDWriteFactory,
-    collection: IDWriteFontCollection,
-    mono: HSTRING,
-    formats: HashMap<(FontFamily, u32, bool), Format>,
-}
-
-impl Fonts {
-    /// Opens DirectWrite and picks the monospaced family.
-    ///
-    /// # Errors
-    ///
-    /// When DirectWrite cannot be started.
-    pub fn new() -> Result<Fonts> {
-        // SAFETY: plain factory creation; the result is an owned interface.
-        let dwrite: IDWriteFactory = unsafe { DWriteCreateFactory(DWRITE_FACTORY_TYPE_SHARED)? };
-        let mut collection = None;
-        // SAFETY: `collection` is a valid out pointer for the call.
-        unsafe { dwrite.GetSystemFontCollection(&raw mut collection, false)? };
-        let collection = collection.ok_or_else(|| windows::core::Error::from(E_FAIL))?;
-        let mono = if family_exists(&collection, MONO) {
-            MONO
-        } else {
-            MONO_FALLBACK
-        };
-        Ok(Fonts {
-            dwrite,
-            collection,
-            mono: HSTRING::from(mono),
-            formats: HashMap::new(),
-        })
-    }
-
-    fn format(&mut self, font: Font) -> Result<&Format> {
-        let key = (font.family, font.size.to_bits(), font.bold);
-        if !self.formats.contains_key(&key) {
-            let family = match font.family {
-                FontFamily::Sans => HSTRING::from(SANS),
-                FontFamily::Mono => self.mono.clone(),
-            };
-            let weight = if font.bold {
-                DWRITE_FONT_WEIGHT_BOLD
-            } else {
-                DWRITE_FONT_WEIGHT_REGULAR
-            };
-            let size = font.size.max(0.5);
-            // SAFETY: the strings are valid for the call; the collection is
-            // the system one.
-            let format = unsafe {
-                self.dwrite.CreateTextFormat(
-                    &family,
-                    &self.collection,
-                    weight,
-                    DWRITE_FONT_STYLE_NORMAL,
-                    DWRITE_FONT_STRETCH_NORMAL,
-                    size,
-                    w!("en-us"),
-                )?
-            };
-            // SAFETY: a plain setter on the new format.
-            unsafe { format.SetWordWrapping(DWRITE_WORD_WRAPPING_NO_WRAP)? };
-            let metrics = font_metrics(&self.collection, &family, weight)?;
-            let em = f32::from(metrics.designUnitsPerEm.max(1));
-            let middle = (f32::from(metrics.ascent) - f32::from(metrics.descent)) / 2.0 * size / em;
-            self.formats.insert(key, Format { format, middle });
-        }
-        self.formats
-            .get(&key)
-            .ok_or_else(|| windows::core::Error::from(E_FAIL))
-    }
-
-    /// A one-line layout of `text`.
-    fn layout(&mut self, text: &str, font: Font) -> Result<(IDWriteTextLayout, f32)> {
-        let wide: Vec<u16> = text.encode_utf16().collect();
-        let dwrite = self.dwrite.clone();
-        let format = self.format(font)?;
-        let middle = format.middle;
-        // SAFETY: `wide` and the format live through the call.
-        let layout = unsafe { dwrite.CreateTextLayout(&wide, &format.format, NO_LIMIT, NO_LIMIT)? };
-        Ok((layout, middle))
-    }
-
-    /// Width of `text` in `font`, trailing spaces included, as drawn.
-    pub fn width(&mut self, text: &str, font: Font) -> f32 {
-        self.layout(text, font)
-            .and_then(|(layout, _)| layout_width(&layout))
-            .unwrap_or(0.0)
-    }
-}
-
-fn layout_width(layout: &IDWriteTextLayout) -> Result<f32> {
-    let mut metrics = DWRITE_TEXT_METRICS::default();
-    // SAFETY: `metrics` is a valid out pointer.
-    unsafe { layout.GetMetrics(&raw mut metrics)? };
-    Ok(metrics.widthIncludingTrailingWhitespace)
-}
-
-/// Distance from the top of the first line to its baseline.
-fn baseline(layout: &IDWriteTextLayout) -> Result<f32> {
-    let mut lines = [DWRITE_LINE_METRICS::default(); 1];
-    let mut count = 0;
-    // SAFETY: the buffer holds one line, which is all a layout without
-    // wrapping or line breaks has; `count` is a valid out pointer.
-    unsafe { layout.GetLineMetrics(Some(&mut lines), &raw mut count)? };
-    Ok(lines[0].baseline)
-}
-
-fn family_exists(collection: &IDWriteFontCollection, name: &str) -> bool {
-    let mut index = 0;
-    let mut exists = BOOL::default();
-    // SAFETY: both out pointers are valid locals.
-    let found =
-        unsafe { collection.FindFamilyName(&HSTRING::from(name), &raw mut index, &raw mut exists) };
-    found.is_ok() && exists.as_bool()
-}
-
-/// Design metrics of the font of `family` at `weight`, or of the first
-/// family when it is missing.
-fn font_metrics(
-    collection: &IDWriteFontCollection,
-    family: &HSTRING,
-    weight: DWRITE_FONT_WEIGHT,
-) -> Result<DWRITE_FONT_METRICS> {
-    let mut index = 0;
-    let mut exists = BOOL::default();
-    // SAFETY: both out pointers are valid locals.
-    unsafe { collection.FindFamilyName(family, &raw mut index, &raw mut exists)? };
-    if !exists.as_bool() {
-        index = 0;
-    }
-    // SAFETY: `index` is below the family count: found, or the first.
-    let family = unsafe { collection.GetFontFamily(index)? };
-    // SAFETY: plain lookup with valid enum values.
-    let font = unsafe {
-        family.GetFirstMatchingFont(weight, DWRITE_FONT_STRETCH_NORMAL, DWRITE_FONT_STYLE_NORMAL)?
+/// The stroke style of [`Painter::polyline`]: mitered joins up to 10 line
+/// widths, square ends. It belongs to the factory, so it outlives lost
+/// render targets.
+///
+/// # Errors
+///
+/// When Direct2D cannot make it.
+pub fn polyline_style(factory: &ID2D1Factory) -> Result<ID2D1StrokeStyle> {
+    let props = D2D1_STROKE_STYLE_PROPERTIES {
+        startCap: D2D1_CAP_STYLE_SQUARE,
+        endCap: D2D1_CAP_STYLE_SQUARE,
+        dashCap: D2D1_CAP_STYLE_FLAT,
+        lineJoin: D2D1_LINE_JOIN_MITER,
+        miterLimit: 10.0,
+        dashStyle: D2D1_DASH_STYLE_SOLID,
+        dashOffset: 0.0,
     };
-    let mut metrics = DWRITE_FONT_METRICS::default();
-    // SAFETY: `metrics` is a valid out pointer.
-    unsafe { font.GetMetrics(&raw mut metrics) };
-    Ok(metrics)
+    // SAFETY: `props` lives through the call; no dashes.
+    unsafe { factory.CreateStrokeStyle(&raw const props, None) }
 }
 
 fn color(c: Rgba) -> D2D1_COLOR_F {
@@ -222,22 +76,23 @@ pub struct D2dPainter<'a> {
     target: &'a ID2D1RenderTarget,
     factory: &'a ID2D1Factory,
     brush: &'a ID2D1SolidColorBrush,
-    fonts: &'a mut Fonts,
+    polyline: &'a ID2D1StrokeStyle,
 }
 
 impl<'a> D2dPainter<'a> {
-    /// A painter for `target`, whose solid brush is `brush`.
+    /// A painter for `target`, whose solid brush is `brush`; `polyline`
+    /// comes from [`polyline_style`].
     pub fn new(
         target: &'a ID2D1RenderTarget,
         factory: &'a ID2D1Factory,
         brush: &'a ID2D1SolidColorBrush,
-        fonts: &'a mut Fonts,
+        polyline: &'a ID2D1StrokeStyle,
     ) -> D2dPainter<'a> {
         D2dPainter {
             target,
             factory,
             brush,
-            fonts,
+            polyline,
         }
     }
 
@@ -256,10 +111,8 @@ impl<'a> D2dPainter<'a> {
         }
     }
 
-    fn polygon(
-        &self,
-        points: &[Point],
-    ) -> Result<windows::Win32::Graphics::Direct2D::ID2D1PathGeometry> {
+    /// A path through `points`, closed and filled or open and hollow.
+    fn path(&self, points: &[Point], closed: bool) -> Result<ID2D1PathGeometry> {
         // SAFETY: plain factory call.
         let geometry = unsafe { self.factory.CreatePathGeometry()? };
         // SAFETY: the geometry is new and not yet opened.
@@ -270,12 +123,17 @@ impl<'a> D2dPainter<'a> {
         let rest: Vec<_> = rest.iter().map(|&p| at(p).point).collect();
         // SAFETY: the sink is open; calls follow the documented order.
         unsafe { sink.SetFillMode(D2D1_FILL_MODE_WINDING) };
+        let (begin, end) = if closed {
+            (D2D1_FIGURE_BEGIN_FILLED, D2D1_FIGURE_END_CLOSED)
+        } else {
+            (D2D1_FIGURE_BEGIN_HOLLOW, D2D1_FIGURE_END_OPEN)
+        };
         // SAFETY: as above.
-        unsafe { sink.BeginFigure(at(*first).point, D2D1_FIGURE_BEGIN_FILLED) };
+        unsafe { sink.BeginFigure(at(*first).point, begin) };
         // SAFETY: `rest` lives through the call.
         unsafe { sink.AddLines(&rest) };
-        // SAFETY: closes the figure begun above.
-        unsafe { sink.EndFigure(D2D1_FIGURE_END_CLOSED) };
+        // SAFETY: ends the figure begun above.
+        unsafe { sink.EndFigure(end) };
         // SAFETY: closes the sink once.
         unsafe { sink.Close()? };
         Ok(geometry)
@@ -334,7 +192,7 @@ impl Painter for D2dPainter<'_> {
     }
 
     fn fill_polygon(&mut self, points: &[Point], c: Rgba) {
-        let Ok(geometry) = self.polygon(points) else {
+        let Ok(geometry) = self.path(points, true) else {
             return;
         };
         let brush = self.brush(c);
@@ -342,35 +200,17 @@ impl Painter for D2dPainter<'_> {
         unsafe { self.target.FillGeometry(&geometry, brush, None) };
     }
 
-    fn text(&mut self, text: &str, anchor: Point, font: Font, align: Align, c: Rgba) {
-        let Ok((layout, middle)) = self.fonts.layout(text, font) else {
+    fn polyline(&mut self, points: &[Point], width: f32, c: Rgba) {
+        let Ok(geometry) = self.path(points, false) else {
             return;
         };
-        let (Ok(width), Ok(base)) = (layout_width(&layout), baseline(&layout)) else {
-            return;
-        };
-        let x = match align {
-            Align::Left => anchor.x,
-            Align::Center => anchor.x - width / 2.0,
-            Align::Right => anchor.x - width,
-        };
-        // The middle between ascent and descent goes on the anchor, as with
-        // the canvas `middle` baseline.
-        let y = anchor.y - base + middle;
         let brush = self.brush(c);
-        // SAFETY: drawing a live layout with a live brush.
+        // SAFETY: drawing an open geometry with a live brush and the
+        // factory's stroke style.
         unsafe {
-            self.target.DrawTextLayout(
-                at(Point::new(x, y)).point,
-                &layout,
-                brush,
-                D2D1_DRAW_TEXT_OPTIONS_NONE,
-            );
+            self.target
+                .DrawGeometry(&geometry, brush, width, self.polyline);
         };
-    }
-
-    fn text_width(&mut self, text: &str, font: Font) -> f32 {
-        self.fonts.width(text, font)
     }
 
     fn push_clip(&mut self, rect: Rect) {

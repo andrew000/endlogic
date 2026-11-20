@@ -6,8 +6,8 @@ use endlogic_core::code::encode;
 use endlogic_core::format::parse;
 use endlogic_core::{Puzzle, Solution};
 use endlogic_ui::{
-    Align, App, Budgets, CodeKind, Config, Event, Font, Insets, Key, Painter, Point, Pointer,
-    PointerKind, Rect, Rgba,
+    App, Budgets, CodeKind, Config, Event, Insets, Key, Painter, Point, Pointer, PointerKind, Rect,
+    Rgba,
 };
 
 pub mod golden;
@@ -22,7 +22,7 @@ pub enum Call {
     FillCircle(Point, Rgba),
     StrokeCircle(Point, Rgba),
     Polygon(Vec<Point>, Rgba),
-    Text(String, Point, Rgba),
+    Polyline(Vec<Point>, Rgba),
     PushClip(Rect),
     PopClip,
 }
@@ -31,6 +31,9 @@ pub enum Call {
 pub struct Recorder {
     pub calls: Vec<Call>,
     pub depth: i32,
+    /// The text of the frame, from [`App::drawn_texts`]; filled by
+    /// [`settle`] and [`frame`].
+    pub texts: Vec<String>,
 }
 
 impl Painter for Recorder {
@@ -52,12 +55,8 @@ impl Painter for Recorder {
     fn fill_polygon(&mut self, points: &[Point], color: Rgba) {
         self.calls.push(Call::Polygon(points.to_vec(), color));
     }
-    fn text(&mut self, text: &str, anchor: Point, _font: Font, _align: Align, color: Rgba) {
-        self.calls.push(Call::Text(text.to_owned(), anchor, color));
-    }
-    fn text_width(&mut self, text: &str, font: Font) -> f32 {
-        // A stand-in: every character half an em wide.
-        f32::from(u16::try_from(text.chars().count()).unwrap()) * font.size * 0.55
+    fn polyline(&mut self, points: &[Point], _width: f32, color: Rgba) {
+        self.calls.push(Call::Polyline(points.to_vec(), color));
     }
     fn push_clip(&mut self, rect: Rect) {
         self.depth += 1;
@@ -104,10 +103,20 @@ pub fn settle(app: &mut App) -> Recorder {
         let busy = app.frame(0.05, &mut recorder);
         assert_eq!(recorder.depth, 0, "unbalanced clips");
         if !busy {
+            recorder.texts = app.drawn_texts();
             return recorder;
         }
     }
     panic!("the app never became idle");
+}
+
+/// One frame of `dt` seconds, with its text.
+pub fn frame(app: &mut App, dt: f32) -> Recorder {
+    let mut recorder = Recorder::default();
+    app.frame(dt, &mut recorder);
+    assert_eq!(recorder.depth, 0, "unbalanced clips");
+    recorder.texts = app.drawn_texts();
+    recorder
 }
 
 pub fn open(puzzle: &Puzzle) -> App {
@@ -253,14 +262,7 @@ pub fn turns(app: &App, i: usize) -> u8 {
 }
 
 pub fn texts(recorder: &Recorder) -> Vec<String> {
-    recorder
-        .calls
-        .iter()
-        .filter_map(|c| match c {
-            Call::Text(t, _, _) => Some(t.clone()),
-            _ => None,
-        })
-        .collect()
+    recorder.texts.clone()
 }
 
 pub fn count_color(recorder: &Recorder, color: Rgba) -> usize {
@@ -274,7 +276,7 @@ pub fn count_color(recorder: &Recorder, color: Rgba) -> usize {
             | Call::FillCircle(_, k)
             | Call::StrokeCircle(_, k)
             | Call::Polygon(_, k)
-            | Call::Text(_, _, k) => *k == color,
+            | Call::Polyline(_, k) => *k == color,
             Call::PushClip(_) | Call::PopClip => false,
         })
         .count()
