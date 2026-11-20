@@ -33,16 +33,17 @@ use windows::Win32::UI::Input::KeyboardAndMouse::{
 use windows::Win32::UI::Input::Pointer::GetPointerType;
 use windows::Win32::UI::WindowsAndMessaging::{
     CS_HREDRAW, CS_VREDRAW, CW_USEDEFAULT, CreateWindowExW, DefWindowProcW, DispatchMessageW,
-    GetClientRect, GetMessageW, HTCLIENT, IDC_ARROW, IDC_HAND, IDC_SIZEALL, LoadCursorW,
-    MINMAXINFO, MSG, PM_REMOVE, POINTER_INPUT_TYPE, PT_PEN, PT_TOUCH, PeekMessageW,
-    PostQuitMessage, RegisterClassW, SPI_GETWORKAREA, SW_SHOW, SWP_NOACTIVATE, SWP_NOZORDER,
-    SYSTEM_PARAMETERS_INFO_UPDATE_FLAGS, SetCursor, SetWindowPos, ShowWindow,
+    GetClientRect, GetMessageW, GetSystemMetrics, HICON, HTCLIENT, IDC_ARROW, IDC_HAND,
+    IDC_SIZEALL, IMAGE_ICON, LR_DEFAULTCOLOR, LoadCursorW, LoadImageW, MINMAXINFO, MSG, PM_REMOVE,
+    POINTER_INPUT_TYPE, PT_PEN, PT_TOUCH, PeekMessageW, PostQuitMessage, RegisterClassExW,
+    SM_CXICON, SM_CXSMICON, SM_CYICON, SM_CYSMICON, SPI_GETWORKAREA, SW_SHOW, SWP_NOACTIVATE,
+    SWP_NOZORDER, SYSTEM_PARAMETERS_INFO_UPDATE_FLAGS, SetCursor, SetWindowPos, ShowWindow,
     SystemParametersInfoW, TranslateMessage, WINDOW_EX_STYLE, WM_CAPTURECHANGED, WM_DESTROY,
     WM_DPICHANGED, WM_ERASEBKGND, WM_GETMINMAXINFO, WM_KEYDOWN, WM_LBUTTONDOWN, WM_LBUTTONUP,
     WM_MOUSEMOVE, WM_PAINT, WM_POINTERCAPTURECHANGED, WM_POINTERDOWN, WM_POINTERUP,
-    WM_POINTERUPDATE, WM_QUIT, WM_SETCURSOR, WM_SIZE, WNDCLASSW, WS_OVERLAPPEDWINDOW,
+    WM_POINTERUPDATE, WM_QUIT, WM_SETCURSOR, WM_SIZE, WNDCLASSEXW, WS_OVERLAPPEDWINDOW,
 };
-use windows::core::{BOOL, Result, w};
+use windows::core::{BOOL, PCWSTR, Result, w};
 
 use super::painter::{D2dPainter, polyline_style};
 use super::system;
@@ -73,6 +74,9 @@ struct Device {
     target: ID2D1HwndRenderTarget,
     brush: ID2D1SolidColorBrush,
 }
+
+/// Resource id of the program's icon group (see `examples/icon.rs`).
+const ICON_ID: usize = 1;
 
 /// Everything the window needs between messages.
 struct Shell {
@@ -567,15 +571,37 @@ fn dark_title(hwnd: HWND) {
 fn create_window() -> Result<(HWND, u32)> {
     // SAFETY: the module of this program.
     let instance = unsafe { GetModuleHandleW(None)? };
-    let class = WNDCLASSW {
+    let icon = |metric_x, metric_y| {
+        // SAFETY: a plain query of the system's icon width.
+        let w = unsafe { GetSystemMetrics(metric_x) };
+        // SAFETY: as above, the height.
+        let h = unsafe { GetSystemMetrics(metric_y) };
+        // SAFETY: loads icon group 1 of this program at that size; a
+        // missing icon gives an error and the default icon is used.
+        unsafe {
+            LoadImageW(
+                Some(instance.into()),
+                PCWSTR(std::ptr::without_provenance(ICON_ID)),
+                IMAGE_ICON,
+                w,
+                h,
+                LR_DEFAULTCOLOR,
+            )
+        }
+        .map_or_else(|_| HICON::default(), |h| HICON(h.0))
+    };
+    let class = WNDCLASSEXW {
+        cbSize: u32::try_from(std::mem::size_of::<WNDCLASSEXW>()).unwrap_or(0),
         style: CS_HREDRAW | CS_VREDRAW,
         lpfnWndProc: Some(window_proc),
         hInstance: instance.into(),
+        hIcon: icon(SM_CXICON, SM_CYICON),
+        hIconSm: icon(SM_CXSMICON, SM_CYSMICON),
         lpszClassName: w!("endlogic"),
         ..Default::default()
     };
     // SAFETY: the class struct and its static name outlive the call.
-    if unsafe { RegisterClassW(&raw const class) } == 0 {
+    if unsafe { RegisterClassExW(&raw const class) } == 0 {
         return Err(windows::core::Error::from_thread());
     }
     let (area, dpi) = primary_monitor();

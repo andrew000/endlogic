@@ -217,6 +217,11 @@ just win-run "https://andrew000.github.io/endlogic/#p=<code>"
 - "Share" copies a web link to the puzzle, so anyone can open it in a
   browser.
 - `Ctrl+V` opens the puzzle in a link or code on the clipboard.
+- The icon is `crates/endlogic-win/res/endlogic.ico`; `res/endlogic.res`
+  holds the same images compiled for the linker, which the build links in
+  as they are. Both come from `cargo run -p endlogic-win --example icon`,
+  which draws the icon with the app's own drawing code and also prints it
+  as SVG for the web page's tab icon.
 - The app writes nothing to disk and keeps no settings between runs.
 - A downloaded `.exe` is not signed, so Windows SmartScreen may warn before
   the first start; "More info", then "Run anyway" starts it.

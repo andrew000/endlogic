@@ -19,7 +19,7 @@ use crate::counters::{CounterView, counter_view};
 use crate::font::{Align, Font};
 use crate::ink::Ink;
 use crate::layout::{Arrangement, Layout, TITLE, TextBlock, tab_label, to_f32};
-use crate::painter::{Point, Rect, Rgba};
+use crate::painter::{Painter, Point, Rect, Rgba};
 use crate::text::{Lang, Text, text};
 use crate::theme::{self, ease_out};
 
@@ -735,6 +735,40 @@ pub(crate) fn piece(
     angle: f32,
     fill: Rgba,
 ) {
+    piece_with(p, shape, center, cell, angle, fill, true);
+}
+
+/// The app icon in the square from the origin to (`side`, `side`): a dark
+/// rounded square with a three-cell corner piece in the game's style. Below
+/// 20 pixels the seams between cells are left out; only the outline stays.
+pub fn draw_icon(painter: &mut dyn Painter, side: f32) {
+    let mut p = Ink::new(painter);
+    p.fill_rect(Rect::new(0.0, 0.0, side, side), side * 0.18, theme::PANEL);
+    let Ok(shape) = Shape::new([(0, 0), (1, 0), (1, 1)]) else {
+        return;
+    };
+    let center = Point::new(side / 2.0, side / 2.0);
+    piece_with(
+        &mut p,
+        &shape,
+        center,
+        side * 0.32,
+        0.0,
+        theme::PIECE,
+        side >= 20.0,
+    );
+}
+
+/// [`piece`], with or without the seams between cells.
+fn piece_with(
+    p: &mut Ink<'_>,
+    shape: &Shape,
+    center: Point,
+    cell: f32,
+    angle: f32,
+    fill: Rgba,
+    seams: bool,
+) {
     let (half_w, half_h) = (to_f32(shape.width()) / 2.0, to_f32(shape.height()) / 2.0);
     let (sin, cos) = math::sin_cos(angle);
     let map = |x: f32, y: f32| {
@@ -760,7 +794,7 @@ pub(crate) fn piece(
             fill,
         );
     }
-    for &(row, col) in shape.cells() {
+    for &(row, col) in shape.cells().iter().filter(|_| seams) {
         let (cx, cy) = (to_f32(col), to_f32(row));
         if has(row, col + 1) {
             p.line(map(cx + 1.0, cy), map(cx + 1.0, cy + 1.0), 1.0, seam);

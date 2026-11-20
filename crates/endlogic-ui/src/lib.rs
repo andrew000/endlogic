@@ -32,6 +32,7 @@ pub use app::{
 };
 pub use board::{Board, Line, LineState, PieceState, Turned};
 pub use counters::{CounterView, MAX_TICKS, MAX_TWO_LINES, MIN_SQUARE, counter_view};
+pub use draw::draw_icon;
 pub use editor::{
     ClueRef, DRAFT_SIDE, Draft, DraftError, EditControl, Editor, SOLUTION_LIMIT, SolveState,
 };
