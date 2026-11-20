@@ -1,5 +1,13 @@
 //! The trainer: game state, input handling and animation.
 
+use alloc::borrow::ToOwned;
+use alloc::format;
+use alloc::string::String;
+use alloc::vec;
+use alloc::vec::Vec;
+
+use crate::math;
+
 use endlogic_core::Puzzle;
 use endlogic_core::code::{decode, encode};
 use endlogic_core::generator::{Difficulty, Generator, Step};
@@ -378,7 +386,7 @@ impl App {
 
     /// Takes the effects produced since the last call, oldest first.
     pub fn take_effects(&mut self) -> Vec<Effect> {
-        std::mem::take(&mut self.effects)
+        core::mem::take(&mut self.effects)
     }
 
     /// The current board, if a puzzle is loaded.
@@ -617,8 +625,8 @@ impl App {
             to_f32(shape.width()) * cell,
             to_f32(shape.height()) * cell,
         );
-        let col = ((rect.x - self.layout.cells.x) / cell).round();
-        let row = ((rect.y - self.layout.cells.y) / cell).round();
+        let col = math::round((rect.x - self.layout.cells.x) / cell);
+        let row = math::round((rect.y - self.layout.cells.y) / cell);
         // Rounded to a whole cell and far inside `isize`.
         #[allow(clippy::cast_possible_truncation)]
         let (row, col) = (row as isize, col as isize);
@@ -976,8 +984,8 @@ impl App {
         let game = self.game.as_ref()?;
         let l = &self.layout;
         let cell_at = |p: Point| {
-            let col = ((p.x - l.cells.x) / l.cell).floor();
-            let row = ((p.y - l.cells.y) / l.cell).floor();
+            let col = math::floor((p.x - l.cells.x) / l.cell);
+            let row = math::floor((p.y - l.cells.y) / l.cell);
             // Callers check that `p` is inside the cells first.
             #[allow(clippy::cast_possible_truncation, clippy::cast_sign_loss)]
             let cell = (row as usize, col as usize);
@@ -1000,8 +1008,9 @@ impl App {
                     let r = l.cell_rect(row, col);
                     let dx = (r.x - p.x).max(p.x - r.right()).max(0.0);
                     let dy = (r.y - p.y).max(p.y - r.bottom()).max(0.0);
-                    let d = dx.hypot(dy);
-                    if d <= slack && best.is_none_or(|(b, _)| d < b) {
+                    // Squared distances compare like distances.
+                    let d = dx * dx + dy * dy;
+                    if d <= slack * slack && best.is_none_or(|(b, _)| d < b) {
                         best = Some((d, owner));
                     }
                 }
@@ -1081,7 +1090,8 @@ impl App {
                     PointerKind::Mouse => DRAG_THRESHOLD,
                     PointerKind::Touch => TOUCH_DRAG_THRESHOLD,
                 };
-                if (pos.x - start.x).hypot(pos.y - start.y) >= threshold {
+                let (dx, dy) = (pos.x - start.x, pos.y - start.y);
+                if dx * dx + dy * dy >= threshold * threshold {
                     self.begin_drag(id, kind, piece, grab, pos);
                 }
             }

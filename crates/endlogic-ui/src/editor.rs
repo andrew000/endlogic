@@ -1,6 +1,9 @@
 //! The custom tab: an editor for puzzles copied from the game, a solver
 //! that lists their solutions, and a way to play them.
 
+use alloc::vec;
+use alloc::vec::Vec;
+
 use endlogic_core::code::encode;
 use endlogic_core::diagnose::{Problem, diagnose};
 use endlogic_core::solver::{Progress, Search, StopReason};

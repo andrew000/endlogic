@@ -1,5 +1,11 @@
 //! Drawing the whole screen with [`Painter`] primitives.
 
+use alloc::borrow::ToOwned;
+use alloc::format;
+use alloc::vec::Vec;
+
+use crate::math;
+
 use core::f32::consts::{FRAC_PI_2, TAU};
 
 use endlogic_core::generator::Difficulty;
@@ -698,7 +704,7 @@ fn draw_pieces(app: &App, game: &Game, p: &mut Ink<'_>) {
         // A turn that did not fit: a short shake that dies down.
         let wobble = anim.and_then(|a| a.wobble).map_or(0.0, |t| {
             let left = 1.0 - (t / theme::WOBBLE_TIME).clamp(0.0, 1.0);
-            0.14 * left * (t / theme::WOBBLE_TIME * 3.0 * TAU).sin()
+            0.14 * left * math::sin(t / theme::WOBBLE_TIME * 3.0 * TAU)
         });
         let spin = spin + wobble;
         let blamed = anim.and_then(|a| a.blame).map_or(0.0, |t| {
@@ -730,7 +736,7 @@ pub(crate) fn piece(
     fill: Rgba,
 ) {
     let (half_w, half_h) = (to_f32(shape.width()) / 2.0, to_f32(shape.height()) / 2.0);
-    let (sin, cos) = angle.sin_cos();
+    let (sin, cos) = math::sin_cos(angle);
     let map = |x: f32, y: f32| {
         let (lx, ly) = ((x - half_w) * cell, (y - half_h) * cell);
         Point::new(

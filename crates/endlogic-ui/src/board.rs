@@ -1,5 +1,8 @@
 //! The player's board: where each piece is, line counts and the win test.
 
+use alloc::vec;
+use alloc::vec::Vec;
+
 use endlogic_core::{Cell, Placement, Puzzle, Rotation, Shape};
 
 /// Where a piece is and how it is turned.

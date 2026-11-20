@@ -6,6 +6,8 @@
 //! and a solution from scratch serves as the reference. Searches run a few
 //! nodes per frame, like the generator.
 
+use alloc::vec::Vec;
+
 use endlogic_core::Solution;
 use endlogic_core::solver::{Progress, Search};
 

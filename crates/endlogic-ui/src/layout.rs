@@ -14,6 +14,14 @@
 //! row counters take a band on its left and an empty band of the same width
 //! is kept on its right.
 
+use alloc::borrow::ToOwned;
+use alloc::format;
+use alloc::string::String;
+use alloc::vec;
+use alloc::vec::Vec;
+
+use crate::math;
+
 use crate::font::{Font, MIN_FONT_SIZE, text_width};
 use crate::painter::{Point, Rect};
 use crate::shell::Insets;
@@ -445,7 +453,7 @@ fn wrap(text: &str, size: f32, max_width: f32) -> Vec<String> {
         if line.is_empty() || estimate_width(&candidate, size) <= max_width {
             line = candidate;
         } else {
-            lines.push(std::mem::replace(&mut line, word.to_owned()));
+            lines.push(core::mem::replace(&mut line, word.to_owned()));
         }
     }
     if !line.is_empty() {
@@ -569,7 +577,7 @@ fn largest(fits: impl Fn(f32) -> bool) -> f32 {
             hi = mid;
         }
     }
-    lo.floor()
+    math::floor(lo)
 }
 
 /// `n` square cards of side `card`, `cols` per row, the grid centered on
@@ -621,7 +629,7 @@ impl TrayFit {
 
 /// Whole cells of `size` that fit in `room`, at least one.
 fn count_in(room: f32, size: f32) -> usize {
-    let n = (room / size).floor().max(1.0);
+    let n = math::floor(room / size).max(1.0);
     // A small positive count.
     #[allow(clippy::cast_possible_truncation, clippy::cast_sign_loss)]
     let n = n as usize;
@@ -894,9 +902,9 @@ fn wide(input: &LayoutInput) -> Layout {
     let y1 = bottom_y - m.gap;
     let center_w = (x1 - x0) - 2.0 * (side + m.gap);
     let banner_h = banner_height(400.0, m.gap);
-    let cell = cell_to_fit(input, center_w, y1 - y0 - banner_h - m.gap)
-        .clamp(MIN_CELL, MAX_CELL)
-        .floor();
+    let cell = math::floor(
+        cell_to_fit(input, center_w, y1 - y0 - banner_h - m.gap).clamp(MIN_CELL, MAX_CELL),
+    );
     let (block_w, block_h) = board_size(input, cell);
     let stack = block_h + m.gap + banner_h;
     let board_top = y0 + ((y1 - y0) - stack).max(0.0) / 2.0;
@@ -1374,9 +1382,7 @@ fn low_wide(input: &LayoutInput) -> Layout {
 
     // The board takes the full height between the columns.
     let center_w = (x1 - x0) - 2.0 * (side + gap);
-    let cell = cell_to_fit(input, center_w, y1 - y0)
-        .clamp(MIN_CELL, MAX_CELL)
-        .floor();
+    let cell = math::floor(cell_to_fit(input, center_w, y1 - y0).clamp(MIN_CELL, MAX_CELL));
     let (_, block_h) = board_size(input, cell);
     let board = board_at(input, axis, y0 + ((y1 - y0) - block_h).max(0.0) / 2.0, cell);
 

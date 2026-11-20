@@ -18,6 +18,8 @@
 //! spacing, set by the largest clue of the puzzle. When squares would be
 //! smaller than [`MIN_SQUARE`] every square counter shows a number instead.
 
+use alloc::vec::Vec;
+
 use crate::board::Line;
 use crate::layout::to_f32;
 use crate::painter::{Point, Rect};

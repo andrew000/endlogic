@@ -6,6 +6,7 @@
 //! [`App`] from a [`Config`], forwards [`Event`]s, calls [`App::frame`] with
 //! its [`Painter`] whenever a frame is needed, and carries out the
 //! [`Effect`]s the app hands back. Time and randomness come from the shell.
+#![no_std]
 #![forbid(unsafe_code)]
 
 extern crate alloc;
@@ -19,6 +20,7 @@ mod font;
 mod hint;
 mod ink;
 mod layout;
+mod math;
 mod painter;
 mod shell;
 mod text;

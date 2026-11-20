@@ -1,5 +1,12 @@
 //! Drawing the editor of the custom tab.
 
+use alloc::borrow::ToOwned;
+use alloc::format;
+use alloc::string::{String, ToString};
+use alloc::vec::Vec;
+
+use crate::math;
+
 use endlogic_core::Cell;
 
 use super::{
@@ -144,7 +151,7 @@ fn wrap(p: &mut Ink<'_>, text: &str, font: Font, width: f32) -> Vec<String> {
         if line.is_empty() || p.text_width(&candidate, font) <= width {
             line = candidate;
         } else {
-            lines.push(std::mem::replace(&mut line, word.to_owned()));
+            lines.push(core::mem::replace(&mut line, word.to_owned()));
         }
     }
     if !line.is_empty() {
@@ -158,7 +165,7 @@ fn wrap(p: &mut Ink<'_>, text: &str, font: Font, width: f32) -> Vec<String> {
 fn block(p: &mut Ink<'_>, text: &str, rect: Rect, size: f32, color: Rgba, align: Align) {
     let font = text_font(size, false);
     let line_h = size * 1.3;
-    let room = (rect.h / line_h).floor().clamp(1.0, 8.0);
+    let room = math::floor(rect.h / line_h).clamp(1.0, 8.0);
     let lines = wrap(p, text, font, rect.w);
     let mut y = rect.y + line_h / 2.0;
     for (k, line) in lines.iter().enumerate() {

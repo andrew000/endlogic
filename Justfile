@@ -34,8 +34,12 @@ check-wasm:
 check-web:
     cargo build -p endlogic-web --target wasm32-unknown-unknown
 
-# Check formatting, lint, test and build for wasm, in that order.
-ci: fmt-check lint test check-wasm check-web
+# Build the core and UI crates for a target without the standard library, so any use of std fails.
+check-nostd:
+    cargo build -p endlogic-core -p endlogic-ui --target wasm32v1-none
+
+# Check formatting, lint, test, build without std and build for wasm, in that order.
+ci: fmt-check lint test check-nostd check-wasm check-web
 
 # Run the benchmarks of the core and the trainer (release build); prints tables.
 bench:

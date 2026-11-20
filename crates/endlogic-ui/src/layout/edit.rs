@@ -6,6 +6,11 @@
 //! where the win banner would be, and the piece editor takes the whole
 //! right column.
 
+use alloc::vec;
+use alloc::vec::Vec;
+
+use crate::math;
+
 use crate::font::{Font, text_width};
 
 use super::{
@@ -639,9 +644,9 @@ pub(super) fn wide(input: &LayoutInput) -> Layout {
     let center_w = (x1 - x0) - 2.0 * (side + m.gap);
     let longest = input.grid_width.max(input.grid_height);
     let under_h = strip_height(center_w, longest).max(result_height(center_w, m.font));
-    let cell = cell_to_fit(input, center_w, y1 - y0 - under_h - m.gap)
-        .clamp(MIN_CELL, MAX_CELL)
-        .floor();
+    let cell = math::floor(
+        cell_to_fit(input, center_w, y1 - y0 - under_h - m.gap).clamp(MIN_CELL, MAX_CELL),
+    );
     let (_, block_h) = board_size(input, cell);
     let stack = block_h + m.gap + under_h;
     let board_top = y0 + ((y1 - y0) - stack).max(0.0) / 2.0;
@@ -769,9 +774,7 @@ pub(super) fn low_wide(input: &LayoutInput) -> Layout {
 
     // The board takes the full height between the columns.
     let center_w = (x1 - x0) - 2.0 * (side + gap);
-    let cell = cell_to_fit(input, center_w, y1 - y0)
-        .clamp(MIN_CELL, MAX_CELL)
-        .floor();
+    let cell = math::floor(cell_to_fit(input, center_w, y1 - y0).clamp(MIN_CELL, MAX_CELL));
     let (_, block_h) = board_size(input, cell);
     let board = board_at(input, axis, y0 + ((y1 - y0) - block_h).max(0.0) / 2.0, cell);
     let edit = EditLayout {

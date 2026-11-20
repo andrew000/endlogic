@@ -1,5 +1,9 @@
 //! Interface texts in English and Ukrainian.
 
+use alloc::borrow::ToOwned;
+use alloc::format;
+use alloc::string::String;
+
 use endlogic_core::Axis;
 use endlogic_core::diagnose::Problem;
 use endlogic_core::generator::Difficulty;

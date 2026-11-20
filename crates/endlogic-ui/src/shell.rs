@@ -1,5 +1,8 @@
 //! What a shell passes in and gets back: start-up data, events and effects.
 
+use alloc::string::String;
+use alloc::vec::Vec;
+
 /// Keys of the settings the UI saves through [`Effect::SaveSetting`].
 pub const SETTING_KEYS: [&str; 4] = [
     SETTING_LANG,

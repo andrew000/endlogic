@@ -22,7 +22,8 @@ cells do not.
   `wasm32-unknown-unknown`.
 - `crates/endlogic-cli` — the `endlogic` command-line tool.
 - `crates/endlogic-ui` — the trainer itself: state, rules, layout,
-  drawing and its own stroke font, independent of any platform.
+  drawing and its own stroke font, independent of any platform; `no_std`
+  with `alloc`.
 - `crates/endlogic-web` — the browser shell for the trainer.
 - `crates/endlogic-win` — the Windows shell for the trainer.
 - `web/` — the web page.
@@ -41,7 +42,9 @@ Requires [rustup](https://rustup.rs) (the nightly toolchain is selected by
 just ci
 ```
 
-checks formatting, runs clippy and the tests, and builds the core for wasm.
+checks formatting, runs clippy and the tests, builds the core and the
+trainer for `wasm32v1-none` (a target without the standard library, so
+both stay `no_std`), and builds them and the web shell for wasm.
 
 ## Golden tests
 

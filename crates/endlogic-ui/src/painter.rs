@@ -1,5 +1,7 @@
 //! The drawing interface a shell implements.
 
+use crate::math;
+
 /// A color with straight (not premultiplied) alpha.
 #[derive(Debug, Clone, Copy, PartialEq, Eq, Hash)]
 pub struct Rgba {
@@ -30,7 +32,7 @@ impl Rgba {
     /// The same color with its alpha multiplied by `factor` (0 to 1).
     #[must_use]
     pub fn alpha(self, factor: f32) -> Rgba {
-        let a = (f32::from(self.a) * factor.clamp(0.0, 1.0)).round();
+        let a = math::round(f32::from(self.a) * factor.clamp(0.0, 1.0));
         Rgba {
             // In range: `a` is between 0 and 255.
             #[allow(clippy::cast_possible_truncation, clippy::cast_sign_loss)]
@@ -47,7 +49,7 @@ impl Rgba {
             let v = f32::from(a) + (f32::from(b) - f32::from(a)) * t;
             // In range: `v` lies between two `u8` values.
             #[allow(clippy::cast_possible_truncation, clippy::cast_sign_loss)]
-            let v = v.round() as u8;
+            let v = math::round(v) as u8;
             v
         };
         Rgba {
