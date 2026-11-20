@@ -76,6 +76,23 @@ and review `git diff` before committing. The screenshots depend on the
 fonts installed; they were made on Windows 11 with Segoe UI and Cascadia
 Mono.
 
+## Benchmarks and sizes
+
+```sh
+just bench
+```
+
+builds in release mode and prints tables: the solver on the samples, on
+generated puzzles of every level and on large fields, the generator, puzzle
+codes, and the trainer's frame and layout times (drawing into a painter that
+does nothing). Inputs are fixed, so runs can be compared.
+
+```sh
+just size
+```
+
+builds the release artifacts and prints their sizes.
+
 ## Using the CLI
 
 Solve a puzzle (pieces are drawn as letters `A`, `B`, ... in file order):

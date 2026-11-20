@@ -10,3 +10,7 @@ license.workspace = true
 
 [lints]
 workspace = true
+
+[[bench]]
+name = "core"
+harness = false

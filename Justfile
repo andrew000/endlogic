@@ -31,6 +31,22 @@ check-web:
 # Check formatting, lint, test and build for wasm, in that order.
 ci: fmt-check lint test check-wasm check-web
 
+# Run the benchmarks of the core and the trainer (release build); prints tables.
+bench:
+    cargo bench -p endlogic-core -p endlogic-ui --bench core --bench ui
+
+# Build the release artifacts and print their sizes in bytes.
+[unix]
+size: web-build
+    cargo build --release -p endlogic-cli
+    wc -c target/release/endlogic web/dist/endlogic_web_bg.wasm web/dist/endlogic_web.js
+
+# Build the release artifacts and print their sizes in bytes.
+[windows]
+size: web-build
+    cargo build --release -p endlogic-cli -p endlogic-win
+    Get-Item target/release/endlogic.exe, target/release/endlogic-win.exe, web/dist/endlogic_web_bg.wasm, web/dist/endlogic_web.js | ForEach-Object { '{0,10}  {1}' -f $_.Length, $_.Name }
+
 # Rewrite every golden file with the current results; review git diff after.
 [unix]
 [confirm("Rewrite all golden files with the current results? This accepts every difference as intended. [y/N]")]
