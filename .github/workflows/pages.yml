@@ -41,10 +41,33 @@ jobs:
           test -x "$HOME/.cargo/bin/wasm-bindgen"
           wasm-bindgen --version
 
-      - name: Build the web version
+      - name: Install the prebuilt binaryen of the version in Cargo.toml
         run: |
-          cargo build -p endlogic-web --release --target wasm32-unknown-unknown --locked
+          version="$(sed -n 's/^binaryen = "\(.*\)"$/\1/p' Cargo.toml)"
+          test -n "$version"
+          name="binaryen-version_${version}-x86_64-linux"
+          url="https://github.com/WebAssembly/binaryen/releases/download/version_${version}"
+          curl --fail --location --silent --show-error --retry 3 --output "$RUNNER_TEMP/$name.tar.gz" "$url/$name.tar.gz"
+          curl --fail --location --silent --show-error --retry 3 --output "$RUNNER_TEMP/$name.tar.gz.sha256" "$url/$name.tar.gz.sha256"
+          # The file holds "<hash>  <archive name>": check the hash against our download.
+          expected="$(cut -d ' ' -f 1 "$RUNNER_TEMP/$name.tar.gz.sha256")"
+          echo "$expected" | grep -Eq '^[0-9a-f]{64}$'
+          echo "$expected  $RUNNER_TEMP/$name.tar.gz" | sha256sum --check --strict -
+          tar -xzf "$RUNNER_TEMP/$name.tar.gz" -C "$HOME/.cargo/bin" --strip-components=2 "binaryen-version_${version}/bin/wasm-opt"
+          test -x "$HOME/.cargo/bin/wasm-opt"
+          wasm-opt --version | grep -q "version ${version} "
+
+      # The same steps as `just web-build`: the standard library is rebuilt
+      # for size and aborts at once on a panic; wasm-opt shrinks the result
+      # and drops the function names.
+      - name: Build the web version
+        env:
+          CARGO_PROFILE_RELEASE_PANIC: immediate-abort
+          CARGO_PROFILE_RELEASE_STRIP: debuginfo
+        run: |
+          cargo build -p endlogic-web --release --target wasm32-unknown-unknown --locked -Zbuild-std=std,panic_abort -Zpanic-immediate-abort
           wasm-bindgen --target web --no-typescript --out-dir web/dist target/wasm32-unknown-unknown/release/endlogic_web.wasm
+          wasm-opt -Oz --enable-bulk-memory --enable-nontrapping-float-to-int --enable-sign-ext --enable-mutable-globals --enable-reference-types --enable-multivalue --strip-debug --strip-producers -o web/dist/endlogic_web_bg.wasm web/dist/endlogic_web_bg.wasm
           cp web/index.html web/dist/index.html
 
       - name: Configure Pages

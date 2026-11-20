@@ -78,6 +78,17 @@ and review `git diff` before committing. The screenshots depend on the
 fonts installed; they were made on Windows 11 with Segoe UI and Cascadia
 Mono.
 
+## Release builds
+
+The release profile optimizes for size (`opt-level = "z"`, link-time
+optimization, one codegen unit, abort on panic, no symbols), except
+`endlogic-core`, which stays at `opt-level = 3` so the solver keeps its
+speed. `just win-build`, `just web-build` and `just cli-build` go further:
+they rebuild the standard library the same way (`-Zbuild-std`) and make a
+panic abort at once without a message. `just web-build` then runs `wasm-opt
+-Oz`, which also drops the function names. Plain `cargo build --release`,
+`cargo test` and debug builds keep panic messages.
+
 ## Benchmarks and sizes
 
 ```sh
@@ -149,13 +160,19 @@ A puzzle's link (`#p=<code>`) opens the same puzzle; an editor link
 (`#e=<code>`) opens it in the custom tab's editor, and a custom link
 (`#c=<code>`) plays it in the custom tab.
 
-Building needs the `wasm32-unknown-unknown` target (installed by
-`rust-toolchain.toml`) and `wasm-bindgen-cli` of the same version as the
-`wasm-bindgen` crate:
+Building needs the `wasm32-unknown-unknown` target and the standard
+library sources (both installed by `rust-toolchain.toml`),
+`wasm-bindgen-cli` of the same version as the `wasm-bindgen` crate:
 
 ```sh
 cargo install wasm-bindgen-cli --version 0.2.130 --locked
 ```
+
+and `wasm-opt` from the binaryen release named in `Cargo.toml`
+(`[workspace.metadata] binaryen`), for example from its
+[release archives](https://github.com/WebAssembly/binaryen/releases) or with
+`cargo install wasm-opt --version 0.116.1 --locked`. `just web-build` checks
+the version and stops if it differs.
 
 Build into `web/dist`:
 
@@ -185,8 +202,9 @@ toolchain from `rust-toolchain.toml`:
 just win-build
 ```
 
-The result, `target/release/endlogic-win.exe`, is a single file: the C
-runtime is linked in, so it runs on a clean system with nothing next to it.
+The result, `target/x86_64-pc-windows-msvc/release/endlogic-win.exe`, is a
+single file: the C runtime is linked in, so it runs on a clean system with
+nothing next to it.
 Run it directly, or with a puzzle link or code as the only argument:
 
 ```sh

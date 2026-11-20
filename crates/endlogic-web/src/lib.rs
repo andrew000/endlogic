@@ -51,6 +51,8 @@ const MONO: &str =
 /// A JavaScript error if the page lacks the canvas or a browser API.
 #[wasm_bindgen(start)]
 pub fn start() -> Result<(), JsValue> {
+    // Release builds abort at once on a panic, so the hook would never run.
+    #[cfg(debug_assertions)]
     std::panic::set_hook(Box::new(|info| {
         web_sys::console::error_1(&format!("endlogic crashed: {info}").into());
     }));

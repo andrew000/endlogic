@@ -52,12 +52,16 @@ jobs:
       - name: Install the toolchain from rust-toolchain.toml
         run: rustup toolchain install
 
+      # The same build as `just win-build`: the standard library is rebuilt
+      # for size and aborts at once on a panic.
       - name: Build endlogic-win (release)
-        run: cargo build -p endlogic-win --release --locked
+        env:
+          CARGO_PROFILE_RELEASE_PANIC: immediate-abort
+        run: cargo build -p endlogic-win --bin endlogic-win --release --target x86_64-pc-windows-msvc --locked '-Zbuild-std=std,panic_abort' -Zpanic-immediate-abort
 
       - name: Name the program and write its SHA-256
         run: |
-          Copy-Item target/release/endlogic-win.exe endlogic-win-x64.exe
+          Copy-Item target/x86_64-pc-windows-msvc/release/endlogic-win.exe endlogic-win-x64.exe
           $hash = (Get-FileHash -Algorithm SHA256 endlogic-win-x64.exe).Hash.ToLowerInvariant()
           Set-Content -Path endlogic-win-x64.exe.sha256 -Value "$hash  endlogic-win-x64.exe" -Encoding ascii -NoNewline
           Get-Content endlogic-win-x64.exe.sha256

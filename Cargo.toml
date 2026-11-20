@@ -14,6 +14,11 @@ edition = "2024"
 publish = false
 license = "MIT OR Apache-2.0"
 
+# Tools pinned outside Cargo: the binaryen release whose wasm-opt shrinks the
+# web build (read by the Justfile and the Pages workflow).
+[workspace.metadata]
+binaryen = "116"
+
 [workspace.dependencies]
 endlogic-core = { path = "crates/endlogic-core" }
 endlogic-ui = { path = "crates/endlogic-ui" }
@@ -25,3 +30,17 @@ unsafe_code = "forbid"
 [workspace.lints.clippy]
 all = { level = "warn", priority = -1 }
 pedantic = { level = "warn", priority = -1 }
+
+# Release builds are optimized for size, except the core, whose solver and
+# generator run at full speed. `just win-build`, `just web-build` and
+# `just cli-build` also rebuild the standard library this way and abort at
+# once on a panic; plain `cargo build --release` keeps panic messages.
+[profile.release]
+opt-level = "z"
+lto = "fat"
+codegen-units = 1
+panic = "abort"
+strip = "symbols"
+
+[profile.release.package.endlogic-core]
+opt-level = 3

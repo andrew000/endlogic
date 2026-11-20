@@ -1,5 +1,11 @@
 set windows-shell := ["powershell.exe", "-NoLogo", "-NoProfile", "-Command"]
 
+# Wasm features the compiler uses; wasm-opt must be told about them.
+wasm_features := "--enable-bulk-memory --enable-nontrapping-float-to-int --enable-sign-ext --enable-mutable-globals --enable-reference-types --enable-multivalue"
+
+# Release builds rebuild the standard library for size and abort at once on a panic.
+build_std := "'-Zbuild-std=std,panic_abort' -Zpanic-immediate-abort"
+
 # List available recipes.
 default:
     @just --list
@@ -37,15 +43,13 @@ bench:
 
 # Build the release artifacts and print their sizes in bytes.
 [unix]
-size: web-build
-    cargo build --release -p endlogic-cli
-    wc -c target/release/endlogic web/dist/endlogic_web_bg.wasm web/dist/endlogic_web.js
+size: cli-build web-build
+    wc -c "target/$(rustc -vV | sed -n 's/^host: //p')/release/endlogic" web/dist/endlogic_web_bg.wasm web/dist/endlogic_web.js
 
 # Build the release artifacts and print their sizes in bytes.
 [windows]
-size: web-build
-    cargo build --release -p endlogic-cli -p endlogic-win
-    Get-Item target/release/endlogic.exe, target/release/endlogic-win.exe, web/dist/endlogic_web_bg.wasm, web/dist/endlogic_web.js | ForEach-Object { '{0,10}  {1}' -f $_.Length, $_.Name }
+size: cli-build web-build win-build
+    Get-Item target/x86_64-pc-windows-msvc/release/endlogic.exe, target/x86_64-pc-windows-msvc/release/endlogic-win.exe, web/dist/endlogic_web_bg.wasm, web/dist/endlogic_web.js | ForEach-Object { '{0,10}  {1}' -f $_.Length, $_.Name }
 
 # Rewrite every golden file with the current results; review git diff after.
 [unix]
@@ -69,18 +73,32 @@ solve FILE *ARGS:
 solve FILE *ARGS:
     cargo run --release -q -p endlogic-cli -- solve '{{ replace(FILE, "'", "''") }}' {{ ARGS }}
 
-# Build the web version (release) into web/dist; needs wasm-bindgen-cli.
+# Build the release CLI with the standard library rebuilt for size.
+[unix]
+cli-build:
+    CARGO_PROFILE_RELEASE_PANIC=immediate-abort cargo build -p endlogic-cli --release --target "$(rustc -vV | sed -n 's/^host: //p')" {{ build_std }}
+
+# Build the release CLI with the standard library rebuilt for size.
+[windows]
+cli-build:
+    $env:CARGO_PROFILE_RELEASE_PANIC = 'immediate-abort'; cargo build -p endlogic-cli --release --target x86_64-pc-windows-msvc {{ build_std }}
+
+# Build the web version (release) into web/dist; needs wasm-bindgen-cli and wasm-opt of the binaryen version in Cargo.toml.
 [unix]
 web-build:
-    cargo build -p endlogic-web --release --target wasm32-unknown-unknown
+    v="$(sed -n 's/^binaryen = "\(.*\)"$/\1/p' Cargo.toml)"; command -v wasm-opt >/dev/null || { echo "wasm-opt not found: install binaryen version_$v" >&2; exit 1; }; wasm-opt --version | grep -q "version $v " || { echo "wasm-opt must come from binaryen version_$v, found: $(wasm-opt --version)" >&2; exit 1; }
+    CARGO_PROFILE_RELEASE_PANIC=immediate-abort CARGO_PROFILE_RELEASE_STRIP=debuginfo cargo build -p endlogic-web --release --target wasm32-unknown-unknown {{ build_std }}
     wasm-bindgen --target web --no-typescript --out-dir web/dist target/wasm32-unknown-unknown/release/endlogic_web.wasm
+    wasm-opt -Oz {{ wasm_features }} --strip-debug --strip-producers -o web/dist/endlogic_web_bg.wasm web/dist/endlogic_web_bg.wasm
     cp web/index.html web/dist/index.html
 
-# Build the web version (release) into web/dist; needs wasm-bindgen-cli.
+# Build the web version (release) into web/dist; needs wasm-bindgen-cli and wasm-opt of the binaryen version in Cargo.toml.
 [windows]
 web-build:
-    cargo build -p endlogic-web --release --target wasm32-unknown-unknown
+    $v = (Select-String -Path Cargo.toml -Pattern '^binaryen = .(.+).$').Matches[0].Groups[1].Value; if (-not (Get-Command wasm-opt -ErrorAction SilentlyContinue)) { Write-Host ('wasm-opt not found: install binaryen version_' + $v); exit 1 }; $have = wasm-opt --version; if ($have -notmatch ('version ' + $v + ' ')) { Write-Host ('wasm-opt must come from binaryen version_' + $v + ', found: ' + $have); exit 1 }
+    $env:CARGO_PROFILE_RELEASE_PANIC = 'immediate-abort'; $env:CARGO_PROFILE_RELEASE_STRIP = 'debuginfo'; cargo build -p endlogic-web --release --target wasm32-unknown-unknown {{ build_std }}
     wasm-bindgen --target web --no-typescript --out-dir web/dist target/wasm32-unknown-unknown/release/endlogic_web.wasm
+    wasm-opt -Oz {{ wasm_features }} --strip-debug --strip-producers -o web/dist/endlogic_web_bg.wasm web/dist/endlogic_web_bg.wasm
     Copy-Item web/index.html web/dist/index.html
 
 # Serve web/dist at http://localhost:8080 (needs Python 3); stop with Ctrl+C.
@@ -93,12 +111,12 @@ web-serve:
 web-serve:
     python -m http.server 8080 --bind 127.0.0.1 --directory web/dist
 
-# Build the Windows app (release): target/release/endlogic-win.exe.
+# Build the Windows app (release): target/x86_64-pc-windows-msvc/release/endlogic-win.exe.
 [windows]
 win-build:
-    cargo build -p endlogic-win --release
+    $env:CARGO_PROFILE_RELEASE_PANIC = 'immediate-abort'; cargo build -p endlogic-win --bin endlogic-win --release --target x86_64-pc-windows-msvc {{ build_std }}
 
-# Build the Windows app (release): target/release/endlogic-win.exe.
+# Build the Windows app (release): target/x86_64-pc-windows-msvc/release/endlogic-win.exe.
 [unix]
 win-build:
     @echo "win-build is available on Windows only"

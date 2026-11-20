@@ -340,3 +340,52 @@ and Cyrillic in two families and two weights (roughly 300 glyphs of 50 to
 150 bytes each, 15 to 45 KB) plus code to lay them out, in both builds. It
 would make text look the same everywhere, and the screenshots comparable
 across machines, but it would not make either build smaller.
+
+## After the release build settings
+
+Measured on 2026-11-20 on the same machine and toolchain, with the release
+profile `opt-level = "z"` (`endlogic-core`: 3), `lto = "fat"`,
+`codegen-units = 1`, `panic = "abort"`, `strip = "symbols"`. The artifacts
+come from `just win-build`, `just cli-build` and `just web-build`: the
+standard library is rebuilt with `-Zbuild-std` and
+`panic = "immediate-abort"`, and the wasm goes through `wasm-opt -Oz`
+(binaryen 116), which drops the name section.
+
+| artifact | before | after | change |
+|---|---:|---:|---:|
+| `endlogic-win.exe` | 696,320 | 351,232 | -49.6% |
+| `endlogic.exe` (CLI) | 423,424 | 229,376 | -45.8% |
+| `endlogic_web_bg.wasm` | 453,029 | 231,475 | -48.9% |
+| `endlogic_web_bg.wasm`, gzip -9 | 163,691 | 110,348 | -32.6% |
+| `endlogic_web.js` | 29,661 | 29,577 | -0.3% |
+
+Keeping the core at `opt-level = 3` costs about 30 KB in each build against
+the all-`z` experiment (321,024 and 199,914 bytes) and keeps the solver at
+its speed. The benchmarks (`just bench`, which builds the benches with this
+profile; mean times):
+
+| case | before | after |
+|---|---:|---:|
+| full search, wln006-2 | 141.8 µs | 101.5 µs |
+| full search, wlh9000-1 | 67.2 µs | 57.0 µs |
+| uniqueness, easy | 26.6 µs | 21.3 µs |
+| uniqueness, normal | 53.4 µs | 51.0 µs |
+| uniqueness, hard | 136.9 µs | 134.8 µs |
+| uniqueness, expert (worst) | 2.47 ms (33.44 ms) | 2.52 ms (34.03 ms) |
+| 12x12, first solution | 338.63 ms | 327.76 ms |
+| 12x12, uniqueness | 424.63 ms | 433.56 ms |
+| 16x16, first solution | 55.43 ms | 60.22 ms |
+| 16x16, uniqueness | 86.59 ms | 82.60 ms |
+| generator, easy | 45.5 µs | 41.3 µs |
+| generator, normal | 150.6 µs | 156.2 µs |
+| generator, hard | 206.4 µs | 181.7 µs |
+| generator, expert (worst) | 2.67 ms (34.40 ms) | 2.60 ms (32.77 ms) |
+| decode wln006-2 | 2.5 µs | 2.6 µs |
+| idle frame, expert wide | 4.5 µs | 4.1 µs |
+| idle frame, editor 16x16 wide | 30.2 µs | 23.4 µs |
+| layout, expert wide | 2.4 µs | 3.1 µs |
+| layout, expert tall | 376 ns | 619 ns |
+
+The solver and the generator stay within the run-to-run noise (up to about
+10% for the 16x16 case). The trainer's layout, now built for size, is
+slower by 30 to 65 %, still well under a microsecond for most inputs.
