@@ -17,7 +17,7 @@ license = "MIT OR Apache-2.0"
 # Tools pinned outside Cargo: the binaryen release whose wasm-opt shrinks the
 # web build (read by the Justfile and the Pages workflow).
 [workspace.metadata]
-binaryen = "116"
+binaryen = "133"
 
 [workspace.dependencies]
 endlogic-core = { path = "crates/endlogic-core" }

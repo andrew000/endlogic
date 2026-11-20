@@ -172,10 +172,10 @@ cargo install wasm-bindgen-cli --version 0.2.130 --locked
 ```
 
 and `wasm-opt` from the binaryen release named in `Cargo.toml`
-(`[workspace.metadata] binaryen`), for example from its
-[release archives](https://github.com/WebAssembly/binaryen/releases) or with
-`cargo install wasm-opt --version 0.116.1 --locked`. `just web-build` checks
-the version and stops if it differs.
+(`[workspace.metadata] binaryen`): take `bin/wasm-opt` (`wasm-opt.exe` on
+Windows) from its [release archive](https://github.com/WebAssembly/binaryen/releases),
+check the archive against its `.sha256` file and put the program on the
+`PATH`. `just web-build` checks the version and stops if it differs.
 
 Build into `web/dist`:
 
