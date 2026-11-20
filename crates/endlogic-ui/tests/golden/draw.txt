@@ -1,42 +1,42 @@
-easy 1366x768 en: 64c6548204cf6483, 534 calls
-easy 1920x1080 en: d41b983fda6b8c83, 534 calls
-easy 390x844-touch en: fcb692f264a590fb, 366 calls
-easy 844x390 en: 820ed98b9c101825, 392 calls
-normal 1366x768 en: edbd161f4fab3253, 628 calls
-normal 1920x1080 en: f75f08dfede41d4b, 628 calls
-normal 390x844-touch en: 55e1609c574dbca1, 460 calls
-normal 844x390 en: ba83c256601fe5ab, 486 calls
-hard 1366x768 en: 2567673efafddb91, 833 calls
-hard 1920x1080 en: 09c9cf5f7a8feff1, 833 calls
-hard 390x844-touch en: a80b198b1a22a8d4, 665 calls
-hard 844x390 en: 52ac7cad1781401f, 691 calls
-expert 1366x768 en: 3dca8ad8e46d874e, 954 calls
-expert 1920x1080 en: 3549f0fd757633c6, 954 calls
-expert 390x844-touch en: 4be99af611c4bdc5, 786 calls
-expert 844x390 en: e649a12d84d84786, 812 calls
-hard 1366x768 ua: 52a7424e8a34e9cf, 946 calls
-hard 1920x1080 ua: dd0bdfefc9b7f613, 946 calls
-hard 390x844-touch ua: 6d9f8bb61dffd0e7, 686 calls
-hard 844x390 ua: a66b0940c8786063, 714 calls
-expert 1366x768 numbers: 4fcb47ace1a265c9, 922 calls
-expert 390x844-touch numbers: 216bae5db1ba7181, 755 calls
-wln006-2 dragging: a618c77502a89363, 775 calls
-wln006-2 390x844 dragging by touch: 5463c4257bfd6d05, 618 calls
-wln006-2 overfilled row: 71c2258dd7ee2f3e, 757 calls
-wln006-2 silhouette: 0e05890969aa8661, 1048 calls
-wln006-2 blamed piece: ac045b85ea31c1b9, 1047 calls
-wln006-2 blamed piece fading: 00e92b4b93a5eae1, 1047 calls
-wln006-2 won with hints: 6ec3b52e55f6ca7f, 808 calls
-editor empty: b36c46eb1cd55fda, 371 calls
-editor wln006-2 1366x768 en: b3bfdd843eb909c3, 602 calls
-editor digit strip 1366x768 en: 3a34ac628e05179c, 637 calls
-editor piece editor 1366x768 en: 417d362c42e1c49e, 579 calls
-editor wln006-2 390x844 ua: ad8566c17b123e02, 607 calls
-editor digit strip 390x844 ua: dd3fc613f5d9ade9, 534 calls
-editor piece editor 390x844 ua: 42818a543b3639f6, 595 calls
-editor solutions of wlh9000-1 1366x768: 3410309b51a01b75, 535 calls
-editor solutions of wlh9000-1 390x844: d56e08e7e247f3f4, 463 calls
-editor tray pages: d692aad916f77cf4, 1973 calls
-editor tray page 2: a819419f08160a3f, 1972 calls
-custom play wln006-2 1366x768 en: f1fa77c199dd016d, 759 calls
-custom play wln006-2 844x390 ua: 71367cf75fe3b77d, 645 calls
+easy 1366x768 en: 0b6a6706148ae946, 534 calls
+easy 1920x1080 en: 11f6feef15c5a98a, 534 calls
+easy 390x844-touch en: 47ac594a40ac4d36, 366 calls
+easy 844x390 en: ff80a41507ef73e1, 392 calls
+normal 1366x768 en: b08686aa05e50fde, 628 calls
+normal 1920x1080 en: 0a7862a9fc3db4a2, 628 calls
+normal 390x844-touch en: 0b121cd9a3e925ce, 460 calls
+normal 844x390 en: bc1f713b82d16e91, 486 calls
+hard 1366x768 en: 230b1b1ca6c6f96a, 833 calls
+hard 1920x1080 en: 5178777f2d756254, 833 calls
+hard 390x844-touch en: 11e88fb8c2f42b41, 665 calls
+hard 844x390 en: 7130d09daf434099, 691 calls
+expert 1366x768 en: 0c1d517d928a93e3, 954 calls
+expert 1920x1080 en: f19f57171f9343a7, 954 calls
+expert 390x844-touch en: ded2002416b10ed2, 786 calls
+expert 844x390 en: dbc55db51a30e15c, 812 calls
+hard 1366x768 ua: 2e9c1390bc45eb0e, 946 calls
+hard 1920x1080 ua: 5d545e0c1bd2450e, 946 calls
+hard 390x844-touch ua: ea18e27769a00763, 686 calls
+hard 844x390 ua: e8777c5e211da212, 714 calls
+expert 1366x768 numbers: b2f52b9b6b0c374a, 922 calls
+expert 390x844-touch numbers: 42190f9a788ec302, 755 calls
+wln006-2 dragging: 39d98b794a0f5460, 775 calls
+wln006-2 390x844 dragging by touch: c686c67b67aa1121, 618 calls
+wln006-2 overfilled row: 1ae1d4060085cc8f, 757 calls
+wln006-2 silhouette: 6cb262a64d07ac1a, 1048 calls
+wln006-2 blamed piece: 7bc9be4452792e9e, 1047 calls
+wln006-2 blamed piece fading: 2062469cfd25e7b6, 1047 calls
+wln006-2 won with hints: 1faccfc4c14390b5, 808 calls
+editor empty: e5e7f78cd56690cc, 371 calls
+editor wln006-2 1366x768 en: f2677e0de1842605, 602 calls
+editor digit strip 1366x768 en: a9c83e6f2fb2497e, 637 calls
+editor piece editor 1366x768 en: bb49feb072082278, 579 calls
+editor wln006-2 390x844 ua: 97901dd019c28899, 607 calls
+editor digit strip 390x844 ua: d7d8872e24d821e3, 534 calls
+editor piece editor 390x844 ua: 244d85d3aa0c5699, 595 calls
+editor solutions of wlh9000-1 1366x768: 7ce9acc12a78085d, 535 calls
+editor solutions of wlh9000-1 390x844: 23efb31895a3ed19, 463 calls
+editor tray pages: 9561d99ef2f65ec9, 1973 calls
+editor tray page 2: afafdef743d85eca, 1972 calls
+custom play wln006-2 1366x768 en: ff349bae1946b7c0, 759 calls
+custom play wln006-2 844x390 ua: ca07171cad0013a7, 645 calls

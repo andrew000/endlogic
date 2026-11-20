@@ -25,7 +25,7 @@ const GAP: f32 = 1.4;
 /// Line thickness as a share of the cap height.
 const REGULAR: f32 = 0.10;
 /// Line thickness of bold text as a share of the cap height.
-const BOLD: f32 = 0.16;
+const BOLD: f32 = 0.18;
 /// Side of a dot as a multiple of the line thickness.
 const DOT: f32 = 1.5;
 

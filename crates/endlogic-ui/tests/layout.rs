@@ -1062,3 +1062,24 @@ fn check_overlays(layout: &Layout, input: &LayoutInput, apart: &Apart, what: &st
         }
     }
 }
+
+#[test]
+fn counts_too_wide_for_their_band_show_the_clue_alone() {
+    // A 16x16 board on a phone: "0/16" does not fit a 15-pixel band even at
+    // the smallest size, so the band shows "16"; a larger screen keeps
+    // "a/b" where it fits.
+    let mut config = config(390.0, 844.0);
+    config.code = Some((CodeKind::Play, encode(&sixteen()).unwrap()));
+    config.touch = true;
+    config.settings = vec![("counters".to_owned(), "numbers".to_owned())];
+    let mut app = App::new(config);
+    let phone = texts(&settle(&mut app));
+    assert!(phone.contains(&"16".to_owned()), "{phone:?}");
+    assert!(!phone.iter().any(|t| t.ends_with("/16")), "{phone:?}");
+    let mut config = common::config(1920.0, 1080.0);
+    config.code = Some((CodeKind::Play, encode(&sixteen()).unwrap()));
+    config.settings = vec![("counters".to_owned(), "numbers".to_owned())];
+    let mut app = App::new(config);
+    let wide = texts(&settle(&mut app));
+    assert!(wide.contains(&"0/9".to_owned()), "{wide:?}");
+}

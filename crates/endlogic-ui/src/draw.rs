@@ -16,7 +16,7 @@ mod edit;
 use crate::app::{App, CounterMode, Game, Gesture};
 use crate::board::{Line, LineState};
 use crate::counters::{CounterView, counter_view};
-use crate::font::{Align, Font};
+use crate::font::{Align, Font, MIN_FONT_SIZE};
 use crate::ink::Ink;
 use crate::layout::{Arrangement, Layout, TITLE, TextBlock, tab_label, to_f32};
 use crate::painter::{Painter, Point, Rect, Rgba};
@@ -67,9 +67,7 @@ pub(crate) fn fit(p: &Ink<'_>, text: &str, font: Font, max_width: f32) -> Font {
         font
     } else {
         Font {
-            // Below the smallest readable size only where nothing else
-            // fits: a last resort, not a layout.
-            size: (font.size * max_width / width).max(6.0),
+            size: (font.size * max_width / width).max(MIN_FONT_SIZE),
             ..font
         }
     }
@@ -595,10 +593,19 @@ fn counter(p: &mut Ink<'_>, area: Rect, line: Line, row: bool, look: &CounterLoo
 }
 
 fn number(p: &mut Ink<'_>, area: Rect, line: Line, color: Rgba, row: bool, font: f32) {
-    let label = format!("{}/{}", line.filled, line.clue);
     let size = (if row { area.h } else { area.w } * 0.36).min(font);
     let bold = line.state() == LineState::Exact;
-    let font = fit(p, &label, text_font(size, bold), area.w * 0.92);
+    let font = text_font(size, bold);
+    let room = area.w * 0.92;
+    // "filled/clue" when it fits, in a column with room to spare so that
+    // neighbours do not run together; else the clue alone, the color
+    // telling the state.
+    let mut label = format!("{}/{}", line.filled, line.clue);
+    let both = if row { room } else { area.w * 0.8 };
+    if p.text_width(&label, font) > both + 0.01 {
+        label = format!("{}", line.clue);
+    }
+    let font = fit(p, &label, font, room);
     if row {
         let anchor = Point::new(area.right() - area.w * 0.04, area.center().y);
         p.text(&label, anchor, font, Align::Right, color);
