@@ -27,7 +27,7 @@ LineTooLong { color: Color(0), axis: Column, index: 2, clue: 5, room: 2 }
 TooManyLocks { color: Color(0), axis: Column, index: 0, clue: 0, locks: 1 }
 NoPieces
 
-== wln006-2 with its last row clue raised
+== hard seed 1 with its last row clue raised
 LineSums { color: Color(0), rows: 37, cols: 36 }
 Area { color: Color(0), clues: 37, cells: 36 }
 

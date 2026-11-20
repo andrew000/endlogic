@@ -263,8 +263,9 @@ fn fixed_cases() -> Vec<(String, Puzzle, Vec<Option<Placement>>)> {
     cases
 }
 
-#[test]
-fn solver() {
+/// The search results of every puzzle and fixed-piece case: what was found
+/// (`solver-solutions.txt`) and how many nodes it took (`solver-nodes.txt`).
+fn solver_results() -> (String, String) {
     let mut solutions = String::new();
     let mut nodes = String::new();
     for (name, puzzle) in all_puzzles() {
@@ -296,8 +297,19 @@ fn solver() {
         )
         .unwrap();
     }
-    support::check("solver-solutions.txt", &solutions);
-    support::check("solver-nodes.txt", &nodes);
+    (solutions, nodes)
+}
+
+/// What any correct solver must find; it should never need blessing.
+#[test]
+fn solver_solutions() {
+    support::check("solver-solutions.txt", &solver_results().0);
+}
+
+/// How much work this solver needs; changes with the search order.
+#[test]
+fn solver_nodes() {
+    support::check("solver-nodes.txt", &solver_results().1);
 }
 
 #[test]
@@ -329,7 +341,7 @@ fn diagnosis() {
             "grid\n##x\nx..\n...\nrows 3 2 0\ncols 0 1 5\n",
         ),
         (
-            "wln006-2 with its last row clue raised",
+            "hard seed 1 with its last row clue raised",
             "grid\n.......\n.#.....\n.#.....\n.......\n.....#.\n.......\n.......\n\
              rows 4 3 6 6 6 6 6\ncols 3 5 4 7 5 5 7\n\
              piece\n###\n##.\npiece\n#.\n##\n#.\npiece\n##.\n###\n..#\n\
