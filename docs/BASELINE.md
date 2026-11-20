@@ -389,3 +389,49 @@ profile; mean times):
 The solver and the generator stay within the run-to-run noise (up to about
 10% for the 16x16 case). The trainer's layout, now built for size, is
 slower by 30 to 65 %, still well under a microsecond for most inputs.
+
+## After the stroke font, `no_std` and the icon
+
+Measured on 2026-11-20 on the same machine with
+`rustc 1.102.0-nightly (6905905bb 2026-11-19)` (the toolchain was
+reinstalled in between; the golden results did not change). Text is now
+drawn by `endlogic-ui` with its own stroke font, `endlogic-ui` is `no_std`
+(own rounding, sine and cosine), and the Windows program carries its icon.
+
+| artifact | baseline | release settings | stroke font | `no_std` | icon |
+|---|---:|---:|---:|---:|---:|
+| `endlogic-win.exe` | 696,320 | 351,232 | 358,912 | 350,720 | 359,424 |
+| `endlogic.exe` (CLI) | 423,424 | 229,376 | 229,376 | 229,376 | 229,376 |
+| `endlogic_web_bg.wasm` | 453,029 | 231,475 | 215,736 | 211,942 | 211,942 |
+| `endlogic_web_bg.wasm`, gzip -9 | 163,691 | 110,348 | 93,660 | 91,451 | 91,450 |
+| `endlogic_web.js` | 29,661 | 29,577 | 29,065 | 29,080 | 29,080 |
+
+The font adds about 4 KB of glyph table and drawing code to each build;
+the web build lost more than that with canvas text, fractional numbers in
+CSS strings and parsing the safe-area insets from CSS text. The sine and
+cosine of `libm` left the wasm with `no_std`. The icon adds 8,704 bytes to
+the `.exe` (eight PNG images, 7,839 bytes as `.ico`).
+
+What is left of the standard library and the C runtime:
+
+| part | `endlogic-win.exe` | `endlogic_web_bg.wasm` |
+|---|---:|---:|
+| std: allocation and collections | 16,438 | 21,653 |
+| std: sorting | 10,784 | 14,682 |
+| std: start-up, stderr, environment, paths | 5,932 | — |
+| std: formatting | 2,853 | 3,020 |
+| std: strings and other | 4,524 | 4,593 |
+| std: panics, float math | 12 | 87 |
+| static C runtime and unknown | 57,478 | — |
+
+(The `.exe` split is from `cargo bloat` of the same build; the wasm split
+is of the same build optimized with names kept, 280,043 bytes, of which
+68,370 are the names.)
+
+Benchmarks (`just bench`, mean times) against the baseline: the solver and
+the generator stay within run-to-run noise (Expert uniqueness 2.44 ms,
+Expert generator 2.49 ms, 12x12 first solution 313 ms, 16x16 52 ms). An
+idle frame with the painter that does nothing now costs 10 to 18 µs
+(Expert) and 45 µs (editor 16x16) instead of 4 to 5 and 30 µs, because
+every glyph is a polyline and every text width is measured; the layout
+alone takes 0.6 to 5 µs.
