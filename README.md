@@ -29,6 +29,8 @@ cells do not.
 - `puzzles/` — sample puzzles.
 - `docs/FORMAT.md` — the puzzle file format.
 - `docs/CODE.md` — the puzzle code format.
+- `docs/BASELINE.md` — benchmark results and binary sizes to compare
+  against.
 
 ## Building
 
@@ -91,7 +93,9 @@ does nothing). Inputs are fixed, so runs can be compared.
 just size
 ```
 
-builds the release artifacts and prints their sizes.
+builds the release artifacts and prints their sizes. `docs/BASELINE.md`
+records both as a baseline, with what the binaries are made of and how
+build settings change their size.
 
 ## Using the CLI
 
