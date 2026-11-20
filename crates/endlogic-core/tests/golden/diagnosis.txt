@@ -1,0 +1,36 @@
+== row and column sums differ
+LineSums { color: Color(0), rows: 5, cols: 4 }
+Area { color: Color(0), clues: 5, cells: 4 }
+
+== pieces cover more than the clues ask
+Area { color: Color(0), clues: 3, cells: 4 }
+
+== a row asks for more than fits
+LineTooLong { color: Color(0), axis: Row, index: 0, clue: 3, room: 2 }
+
+== a column asks for more than fits
+LineTooLong { color: Color(0), axis: Column, index: 0, clue: 2, room: 1 }
+
+== too many locks in a row and a column
+Area { color: Color(0), clues: 2, cells: 4 }
+TooManyLocks { color: Color(0), axis: Row, index: 0, clue: 1, locks: 2 }
+TooManyLocks { color: Color(0), axis: Column, index: 0, clue: 1, locks: 2 }
+
+== no pieces
+NoPieces
+
+== everything wrong at once
+LineSums { color: Color(0), rows: 5, cols: 6 }
+Area { color: Color(0), clues: 5, cells: 2 }
+LineTooLong { color: Color(0), axis: Row, index: 0, clue: 3, room: 2 }
+LineTooLong { color: Color(0), axis: Column, index: 2, clue: 5, room: 2 }
+TooManyLocks { color: Color(0), axis: Column, index: 0, clue: 0, locks: 1 }
+NoPieces
+
+== wln006-2 with its last row clue raised
+LineSums { color: Color(0), rows: 37, cols: 36 }
+Area { color: Color(0), clues: 37, cells: 36 }
+
+== a sound puzzle
+no problems
+

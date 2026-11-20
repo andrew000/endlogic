@@ -1,0 +1,1123 @@
+== dead-cells
+solutions: 1, all found
+
+xAAA
+BBx.
+B.CC
+
+== no-solution
+solutions: 0, all found
+
+== permutations-4
+solutions: 24, all found
+
+A...
+.B..
+..C.
+...D
+
+A...
+.B..
+...C
+..D.
+
+A...
+..B.
+.C..
+...D
+
+A...
+..B.
+...C
+.D..
+
+A...
+...B
+.C..
+..D.
+
+A...
+...B
+..C.
+.D..
+
+.A..
+B...
+..C.
+...D
+
+.A..
+B...
+...C
+..D.
+
+.A..
+..B.
+C...
+...D
+
+.A..
+..B.
+...C
+D...
+
+.A..
+...B
+C...
+..D.
+
+.A..
+...B
+..C.
+D...
+
+..A.
+B...
+.C..
+...D
+
+..A.
+B...
+...C
+.D..
+
+..A.
+.B..
+C...
+...D
+
+..A.
+.B..
+...C
+D...
+
+..A.
+...B
+C...
+.D..
+
+..A.
+...B
+.C..
+D...
+
+...A
+B...
+.C..
+..D.
+
+...A
+B...
+..C.
+.D..
+
+...A
+.B..
+C...
+..D.
+
+...A
+.B..
+..C.
+D...
+
+...A
+..B.
+C...
+.D..
+
+...A
+..B.
+.C..
+D...
+
+== wlh9000-1
+solutions: 5, all found
+
+xx.xx
+AAB.C
+ABBCC
+.DDD.
+...D.
+
+xx.xx
+AA.BB
+ADDDB
+.CCD.
+..C..
+
+xx.xx
+ABB.C
+AABCC
+.DDD.
+...D.
+
+xx.xx
+A.DDD
+AABBD
+.CCB.
+.C...
+
+xx.xx
+DDD.A
+BBDAA
+.BCC.
+...C.
+
+== wln006-2
+solutions: 1, all found
+
+.#####.
+CCCEEEE
+C..E..E
+.DDEAA.
+.DDEEA.
+..BBB..
+...B...
+
+== easy-00
+solutions: 1, all found
+
+...AA
+.#AAC
+....C
+#B.CC
+BB...
+
+== easy-01
+solutions: 1, all found
+
+BB.DD
+BBDDA
+CCCCA
+....A
+....A
+
+== easy-02
+solutions: 1, all found
+
+B.#..
+BBAA.
+..A..
+C.A..
+CCC..
+
+== easy-03
+solutions: 1, all found
+
+.....
+.#..A
+..BAA
+..BB.
+CCCB.
+
+== easy-04
+solutions: 1, all found
+
+C..A.
+CCAAA
+.CBB.
+...B.
+.....
+
+== easy-05
+solutions: 1, all found
+
+BBB..
+CCC#A
+..AAA
+.....
+.....
+
+== easy-06
+solutions: 1, all found
+
+..B..
+.BBB.
+A.C#.
+A.C..
+A.C..
+
+== easy-07
+solutions: 1, all found
+
+BBDDD
+B....
+.A..#
+.A.C.
+AA.CC
+
+== easy-08
+solutions: 1, all found
+
+CCC..
+C....
+AAAA.
+DDBBB
+.D.#B
+
+== easy-09
+solutions: 1, all found
+
+...C.
+.CCC.
+BB...
+BAA..
+AA##.
+
+== easy-10
+solutions: 1, all found
+
+.....
+.D.BB
+ADDBC
+A.DBC
+A...C
+
+== easy-11
+solutions: 1, all found
+
+BBAAC
+B.AAC
+#...C
+#...C
+.....
+
+== easy-12
+solutions: 1, all found
+
+..CC.
+..CC.
+.B...
+BBA#.
+AAA#.
+
+== easy-13
+solutions: 1, all found
+
+..AAA
+..#A.
+...C.
+B..C.
+BB#C.
+
+== easy-14
+solutions: 1, all found
+
+CCC..
+#.C#.
+BAAA.
+BBA..
+.....
+
+== easy-15
+solutions: 1, all found
+
+..AAA
+.BBBA
+..B.D
+#..DD
+CCC.D
+
+== easy-16
+solutions: 1, all found
+
+..A.D
+.AADD
+..BBC
+.BB.C
+...CC
+
+== easy-17
+solutions: 1, all found
+
+BAA#.
+BAA..
+B....
+...CC
+...CC
+
+== easy-18
+solutions: 1, all found
+
+BBB..
+C.B..
+C.#..
+C.A..
+AAA#.
+
+== easy-19
+solutions: 1, all found
+
+....C
+....C
+B..CC
+BAA##
+BAA..
+
+== normal-00
+solutions: 1, all found
+
+AA#...
+.A#CC.
+AACCCx
+.B##..
+.BBDD.
+x.B.D.
+
+== normal-01
+solutions: 1, all found
+
+E..BB.
+EE..BC
+E...BC
+E....C
+.D..AA
+DD..AA
+
+== normal-02
+solutions: 1, all found
+
+.#D...
+.#Dx..
+..DD..
+B...A.
+BBCCAA
+B..CC.
+
+== normal-03
+solutions: 1, all found
+
+.BBEEE
+.#BBEE
+..#.#A
+.C.D#A
+.CDDxA
+.CD..A
+
+== normal-04
+solutions: 1, all found
+
+.BBDDD
+.BDDA.
+...AAA
+.....C
+....CC
+....C.
+
+== normal-05
+solutions: 1, all found
+
+#...DD
+.A.#DD
+.A...D
+CA..BB
+CAx..B
+CA...B
+
+== normal-06
+solutions: 1, all found
+
+..AAAD
+...A#D
+....#D
+CC.B#D
+.C.B#D
+CCxBBB
+
+== normal-07
+solutions: 1, all found
+
+CCC.B.
+..D.BB
+.DDDBB
+AADEE#
+AAEEE.
+##..#.
+
+== normal-08
+solutions: 1, all found
+
+A..B..
+A..B..
+A.EB.#
+.CEDDD
+CCEE..
+#CCE..
+
+== normal-09
+solutions: 1, all found
+
+...AAA
+C.DDAA
+C..DDD
+CC.###
+.CBBB.
+.....#
+
+== normal-10
+solutions: 1, all found
+
+CCC...
+..##.A
+EEEEAA
+..E..A
+DDBB..
+DDB...
+
+== normal-11
+solutions: 1, all found
+
+.BBD..
+BBBDD.
+.CCCDx
+#..C..
+#..AxA
+.##AAA
+
+== normal-12
+solutions: 1, all found
+
+.#.E.A
+.#EE.A
+C#C..A
+CCCBBA
+DDBBx.
+.DDD..
+
+== normal-13
+solutions: 1, all found
+
+......
+..BCCC
+.xBBBC
+EE.B.#
+#ExDDD
+..AAAD
+
+== normal-14
+solutions: 1, all found
+
+####..
+CCCDDD
+C.BBB.
+..xB..
+....xA
+....AA
+
+== normal-15
+solutions: 1, all found
+
+B..DD.
+BB..D#
+BCC.D#
+CCx.D.
+..AA..
+..AA..
+
+== normal-16
+solutions: 1, all found
+
+....BB
+.C..BB
+CC###B
+.CDDD.
+AAAAD.
+EEEED.
+
+== normal-17
+solutions: 1, all found
+
+......
+BBB...
+.BAA..
+.AAxC.
+.DD#CC
+DD..#C
+
+== normal-18
+solutions: 1, all found
+
+.#AC..
+BBAC..
+.BAC#.
+.Bx.#.
+....#.
+..DDD.
+
+== normal-19
+solutions: 1, all found
+
+..AA..
+.BA#..
+BBx..#
+B...CC
+..xD.C
+DDDD#.
+
+== hard-00
+solutions: 1, all found
+
+DDEEE..
+DDDDx..
+DD#..#.
+C.#.Bx.
+C.#BB..
+Cx#BA#.
+CCCAA..
+
+== hard-01
+solutions: 1, all found
+
+.FFF..E
+.#.F..E
+.#AAEEE
+D.AAEEE
+DD.AC#E
+DD.BCCC
+..BBBCC
+
+== hard-02
+solutions: 1, all found
+
+..AEEEE
+C#AEEE.
+CCAADEE
+CCFAD#x
+..FAD#B
+.FFFD#B
+x..FDBB
+
+== hard-03
+solutions: 1, all found
+
+.EEEEED
+#####ED
+C....DD
+C.AADDD
+C.AAD..
+C.xBB..
+C..B...
+
+== hard-04
+solutions: 1, all found
+
+..A..#.
+.AAA.#.
+.AC..#D
+CCCEDDD
+EEEEDDD
+E.BB.D.
+EEEB.x.
+
+== hard-05
+solutions: 1, all found
+
+.CBBBA.
+CCB#AA.
+CxB#.AA
+CCC.AAA
+xCDDDAE
+FFDDDDE
+FFxD.#E
+
+== hard-06
+solutions: 1, all found
+
+EEEE.BB
+ECEBBBB
+CC.BBAA
+CDDx.#A
+.D.#.#.
+...#.#.
+.......
+
+== hard-07
+solutions: 1, all found
+
+D.FCCCC
+DFF.ECx
+D.FEEEE
+DBFF#E.
+BBFF#EE
+BA##AE#
+BAAAAA#
+
+== hard-08
+solutions: 1, all found
+
+..AABBB
+DAAAB.B
+DDDAAEE
+DDCCCCE
+DCCCCCE
+F#####E
+FFFFEEE
+
+== hard-09
+solutions: 1, all found
+
+DDDDEEE
+DD#EE#E
+DDAAA#E
+.BBAA#E
+BBBAA#E
+..CACC.
+.CCCC#.
+
+== hard-10
+solutions: 1, all found
+
+..DD..E
+CCDD#EE
+.CDD.BE
+AAD.BBB
+AAx.FBB
+AAAFFBB
+A####B.
+
+== hard-11
+solutions: 1, all found
+
+..DDDx.
+xABDDDx
+AABCCC#
+AABCE#.
+#BBCEEE
+FFFF#EE
+F...#E.
+
+== hard-12
+solutions: 1, all found
+
+.C.FFFF
+.CCF.x.
+BBB.#..
+..EE#..
+.DE.#AA
+.DDD#AA
+.DDD#AA
+
+== hard-13
+solutions: 1, all found
+
+.AADDDD
+xAAxD..
+AAAFFFF
+..B.FFF
+.CBBB##
+#CCBB#E
+CC.B#EE
+
+== hard-14
+solutions: 1, all found
+
+.####BB
+xA#..xB
+AA..xDB
+AA..DDD
+EEE.#D.
+EEE.CDD
+E.CCC..
+
+== hard-15
+solutions: 1, all found
+
+....BBA
+.x.BBBA
+.DCBBAA
+.DC###E
+.DCC.EE
+.D##..E
+.D...EE
+
+== hard-16
+solutions: 1, all found
+
+EEAABBB
+EAA###.
+..A...D
+..AC..D
+...CCCD
+...#.C.
+...#.#.
+
+== hard-17
+solutions: 1, all found
+
+DDFFFFF
+.DFF.FF
+.DD.##E
+.#..BBE
+C.A.ABE
+CAAAAAE
+CC.AAEE
+
+== hard-18
+solutions: 1, all found
+
+AAA#BB.
+A#A#BB.
+EEA#.BC
+E.A#.CC
+E.FD..C
+EFFD#.D
+E.FDDDD
+
+== hard-19
+solutions: 1, all found
+
+B.DDDxA
+B.x.AAA
+B.BAAAA
+BBB.EE#
+BxCEEE#
+CCCCEE#
+.CCC.##
+
+== expert-00
+solutions: 1, all found
+
+.D...F..
+.DD..FFF
+CxC#..F.
+CCC#..FA
+xxC#..AA
+x#C#AAAA
+B.##A.EE
+BBBBx.E#
+
+== expert-01
+solutions: 1, all found
+
+...DA###
+..DDAEG.
+.F.DAEG.
+FFFxEEG.
+..EEEE.B
+..CCCBBB
+..CCC..B
+..C...BB
+
+== expert-02
+solutions: 1, all found
+
+.BBF.F..
+GB#FFFC.
+GB#FAFCx
+GGGFAxCC
+GEEFAAAC
+.EExAA.D
+..##ADDD
+......DD
+
+== expert-03
+solutions: 1, all found
+
+.....#BB
+C.CCBBBB
+CCC#####
+DCC...AF
+DD....AF
+D....AAF
+EEE....F
+EEEEE..x
+
+== expert-04
+solutions: 1, all found
+
+F####DDD
+FFFF.DDD
+FFC..AAD
+FCCCCAAA
+EGGGCAAB
+E.GGAA.B
+E..GGBBB
+EEx.GB.B
+
+== expert-05
+solutions: 1, all found
+
+.BB.....
+BBB....#
+......A#
+.C....Ax
+CC###FAF
+EDD..FFF
+EEDD#.FF
+EExDD.xF
+
+== expert-06
+solutions: 1, all found
+
+.FFF.xB.
+DDFF.#B.
+DDFF.#BB
+.D...#BB
+..#..#.#
+A..A.EE.
+AAAA.EEC
+A..xEECC
+
+== expert-07
+solutions: 1, all found
+
+EEEAAGG.
+E..AAGGG
+HHHAGG..
+H####GG.
+.xCC..x.
+.CCBBB..
+.C.BBDDD
+.FFFDDD.
+
+== expert-08
+solutions: 1, all found
+
+EEEEEGx.
+E.A..GGx
+E#AADCGC
+#AAxDCCC
+HADDDC#.
+HHFDDC#B
+.HFDFF#B
+.FFFFF#B
+
+== expert-09
+solutions: 1, all found
+
+AAF..#BB
+AAFFF#BB
+ADDF.#BB
+DDDF.#BB
+CC.E.#B.
+.CEEE#GG
+CCCE.#GG
+.C...#.G
+
+== expert-10
+solutions: 1, all found
+
+..BBBBEE
+DD#FBBBE
+DD#FFBEE
+DD#FFB.E
+AA#.F.EE
+#A#HCCCC
+AA#HCCGG
+AA#HH..G
+
+== expert-11
+solutions: 1, all found
+
+....DDDD
+#####x.D
+BB..CDDD
+B..#CDx.
+BB.#CE.E
+AAA#AEEE
+FFAAAEEx
+FFFFFxEE
+
+== expert-12
+solutions: 1, all found
+
+x...#DD.
+.AAADD.x
+#AA.#.Cx
+#E..CCCC
+#E..##C.
+EE....CC
+EE.FxFBB
+EEFFFFBB
+
+== expert-13
+solutions: 1, all found
+
+...BB#xD
+..BBF#DD
+....F#DD
+Ex.FF#DD
+EEEGGGD.
+.ECC#GA.
+..CC.AAx
+..CCx.AA
+
+== expert-14
+solutions: 1, all found
+
+DDxFFAAA
+D#.FAAAA
+D##.EA##
+D#..EEE.
+.#..#.E.
+..Cx.xBB
+x.CCCBBB
+xCCCCCBB
+
+== expert-15
+solutions: 1, all found
+
+FF.Fx.AA
+FFFFF.A.
+.##FDDA.
+EEDDD...
+.EBDDCCC
+##BBDCCC
+.BBB#...
+..BB....
+
+== expert-16
+solutions: 1, all found
+
+GGG.FF..
+GDG.FFH.
+GDD#HHHB
+.DD#CHCB
+#DD#CCCB
+#DAACCBB
+#AAAC.B.
+...EEE..
+
+== expert-17
+solutions: 1, all found
+
+.x.E....
+BBEEEx..
+B.....#D
+BB....#D
+.BB..C#D
+.F#A.CCD
+FF#A.CCC
+.F.AA.CC
+
+== expert-18
+solutions: 1, all found
+
+CCBBBBB.
+CCFFFB.D
+CCFFF.DD
+CCFF####
+##F.x...
+x#...EE.
+...A.E..
+.AAA....
+
+== expert-19
+solutions: 1, all found
+
+....F...
+.GGFF.Dx
+xGFF#.DD
+.CFxB.DD
+#CFBBBD#
+CCCBAxA#
+CC#AAAA#
+CEEEExA#
+
+== wln006-2, pieces 0 fixed
+solutions: 1, all found
+
+.#####.
+CCCEEEE
+C..E..E
+.DDEAA.
+.DDEEA.
+..BBB..
+...B...
+
+== wlh9000-1, pieces 0 fixed
+solutions: 2, all found
+
+xx.xx
+AAB.C
+ABBCC
+.DDD.
+...D.
+
+xx.xx
+AA.BB
+ADDDB
+.CCD.
+..C..
+
+== wlh9000-1, pieces 1 2 fixed
+solutions: 1, all found
+
+xx.xx
+AAB.C
+ABBCC
+.DDD.
+...D.
+
+== permutations-4, pieces 0 fixed
+solutions: 6, all found
+
+A...
+.B..
+..C.
+...D
+
+A...
+.B..
+...C
+..D.
+
+A...
+..B.
+.C..
+...D
+
+A...
+..B.
+...C
+.D..
+
+A...
+...B
+.C..
+..D.
+
+A...
+...B
+..C.
+.D..
+
+== hard-00, pieces 0 1 fixed
+solutions: 1, all found
+
+DDEEE..
+DDDDx..
+DD#..#.
+C.#.Bx.
+C.#BB..
+Cx#BA#.
+CCCAA..
+
+== expert-00, pieces 0 fixed
+solutions: 1, all found
+
+.D...F..
+.DD..FFF
+CxC#..F.
+CCC#..FA
+xxC#..AA
+x#C#AAAA
+B.##A.EE
+BBBBx.E#
+
+== expert-07, pieces 2 3 4 fixed
+solutions: 1, all found
+
+EEEAAGG.
+E..AAGGG
+HHHAGG..
+H####GG.
+.xCC..x.
+.CCBBB..
+.C.BBDDD
+.FFFDDD.
+
+== wln006-2, piece 3 fixed at 5 2
+solutions: 0, all found
+

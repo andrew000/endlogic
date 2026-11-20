@@ -41,6 +41,41 @@ just ci
 
 checks formatting, runs clippy and the tests, and builds the core for wasm.
 
+## Golden tests
+
+Some tests compare their results with files kept next to them in
+`tests/golden`:
+
+| Crate | Golden file | What it holds |
+|---|---|---|
+| `endlogic-core` | `generator.txt` | code, accepted attempt and solver nodes for every level and seeds 0–19 |
+| `endlogic-core` | `solver-solutions.txt` | every solution of the samples, the generated puzzles and searches with fixed pieces, in an order-independent form |
+| `endlogic-core` | `solver-nodes.txt` | solver nodes to the first solution and for the whole search |
+| `endlogic-core` | `diagnosis.txt` | the problems found in broken puzzles |
+| `endlogic-ui` | `hints.txt` | the silhouette, the piece placed and the piece blamed by hints in given positions |
+| `endlogic-ui` | `draw.txt` | a fingerprint of the drawing commands of each scene |
+| `endlogic-win` | `*.png` | screenshots (Windows only) |
+
+`solver-solutions.txt` must never change: any correct solver finds the same
+solutions. `solver-nodes.txt` changes when the search order or pruning
+changes, and so may `generator.txt`, `hints.txt` and the pictures. The
+generated puzzles the solver is checked on are a fixed list,
+`solver-puzzles.txt`; it is written only when missing.
+
+A failing golden test says what differs and where it wrote the actual
+result (under `target/tmp/golden`; for `draw.txt`, the full list of drawing
+commands of each differing scene). Screenshots may differ by 16 per channel,
+and up to 200 pixels in a million may differ by more. When a change is
+intended, rewrite the golden files with
+
+```sh
+just bless
+```
+
+and review `git diff` before committing. The screenshots depend on the
+fonts installed; they were made on Windows 11 with Segoe UI and Cascadia
+Mono.
+
 ## Using the CLI
 
 Solve a puzzle (pieces are drawn as letters `A`, `B`, ... in file order):

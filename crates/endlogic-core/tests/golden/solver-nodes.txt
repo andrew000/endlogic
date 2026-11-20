@@ -1,0 +1,93 @@
+dead-cells: first solution 4 nodes, all solutions 7 nodes
+no-solution: first solution 0 nodes, all solutions 0 nodes
+permutations-4: first solution 4 nodes, all solutions 124 nodes
+wlh9000-1: first solution 8 nodes, all solutions 170 nodes
+wln006-2: first solution 27 nodes, all solutions 30 nodes
+easy-00: first solution 3 nodes, all solutions 8 nodes
+easy-01: first solution 9 nodes, all solutions 12 nodes
+easy-02: first solution 4 nodes, all solutions 11 nodes
+easy-03: first solution 7 nodes, all solutions 13 nodes
+easy-04: first solution 6 nodes, all solutions 20 nodes
+easy-05: first solution 5 nodes, all solutions 11 nodes
+easy-06: first solution 9 nodes, all solutions 10 nodes
+easy-07: first solution 15 nodes, all solutions 17 nodes
+easy-08: first solution 11 nodes, all solutions 24 nodes
+easy-09: first solution 14 nodes, all solutions 16 nodes
+easy-10: first solution 26 nodes, all solutions 64 nodes
+easy-11: first solution 3 nodes, all solutions 4 nodes
+easy-12: first solution 8 nodes, all solutions 10 nodes
+easy-13: first solution 5 nodes, all solutions 5 nodes
+easy-14: first solution 6 nodes, all solutions 19 nodes
+easy-15: first solution 38 nodes, all solutions 119 nodes
+easy-16: first solution 42 nodes, all solutions 55 nodes
+easy-17: first solution 4 nodes, all solutions 8 nodes
+easy-18: first solution 5 nodes, all solutions 8 nodes
+easy-19: first solution 6 nodes, all solutions 6 nodes
+normal-00: first solution 6 nodes, all solutions 18 nodes
+normal-01: first solution 60 nodes, all solutions 62 nodes
+normal-02: first solution 17 nodes, all solutions 31 nodes
+normal-03: first solution 35 nodes, all solutions 43 nodes
+normal-04: first solution 34 nodes, all solutions 40 nodes
+normal-05: first solution 14 nodes, all solutions 16 nodes
+normal-06: first solution 6 nodes, all solutions 8 nodes
+normal-07: first solution 14 nodes, all solutions 61 nodes
+normal-08: first solution 36 nodes, all solutions 170 nodes
+normal-09: first solution 20 nodes, all solutions 28 nodes
+normal-10: first solution 15 nodes, all solutions 28 nodes
+normal-11: first solution 9 nodes, all solutions 40 nodes
+normal-12: first solution 30 nodes, all solutions 116 nodes
+normal-13: first solution 58 nodes, all solutions 86 nodes
+normal-14: first solution 16 nodes, all solutions 26 nodes
+normal-15: first solution 53 nodes, all solutions 57 nodes
+normal-16: first solution 13 nodes, all solutions 37 nodes
+normal-17: first solution 8 nodes, all solutions 31 nodes
+normal-18: first solution 18 nodes, all solutions 22 nodes
+normal-19: first solution 8 nodes, all solutions 11 nodes
+hard-00: first solution 5 nodes, all solutions 7 nodes
+hard-01: first solution 216 nodes, all solutions 323 nodes
+hard-02: first solution 53 nodes, all solutions 128 nodes
+hard-03: first solution 6 nodes, all solutions 21 nodes
+hard-04: first solution 16 nodes, all solutions 36 nodes
+hard-05: first solution 11 nodes, all solutions 26 nodes
+hard-06: first solution 11 nodes, all solutions 18 nodes
+hard-07: first solution 12 nodes, all solutions 22 nodes
+hard-08: first solution 28 nodes, all solutions 65 nodes
+hard-09: first solution 26 nodes, all solutions 50 nodes
+hard-10: first solution 34 nodes, all solutions 42 nodes
+hard-11: first solution 30 nodes, all solutions 154 nodes
+hard-12: first solution 118 nodes, all solutions 211 nodes
+hard-13: first solution 65 nodes, all solutions 111 nodes
+hard-14: first solution 19 nodes, all solutions 28 nodes
+hard-15: first solution 9 nodes, all solutions 21 nodes
+hard-16: first solution 12 nodes, all solutions 21 nodes
+hard-17: first solution 23 nodes, all solutions 44 nodes
+hard-18: first solution 13 nodes, all solutions 87 nodes
+hard-19: first solution 33 nodes, all solutions 44 nodes
+expert-00: first solution 11 nodes, all solutions 12 nodes
+expert-01: first solution 31 nodes, all solutions 1014 nodes
+expert-02: first solution 74 nodes, all solutions 82 nodes
+expert-03: first solution 55 nodes, all solutions 66 nodes
+expert-04: first solution 1136 nodes, all solutions 1232 nodes
+expert-05: first solution 15 nodes, all solutions 18 nodes
+expert-06: first solution 47 nodes, all solutions 123 nodes
+expert-07: first solution 931 nodes, all solutions 4233 nodes
+expert-08: first solution 199 nodes, all solutions 266 nodes
+expert-09: first solution 543 nodes, all solutions 836 nodes
+expert-10: first solution 129 nodes, all solutions 620 nodes
+expert-11: first solution 17 nodes, all solutions 32 nodes
+expert-12: first solution 14 nodes, all solutions 29 nodes
+expert-13: first solution 93 nodes, all solutions 269 nodes
+expert-14: first solution 9 nodes, all solutions 19 nodes
+expert-15: first solution 51 nodes, all solutions 133 nodes
+expert-16: first solution 1504 nodes, all solutions 15666 nodes
+expert-17: first solution 54 nodes, all solutions 137 nodes
+expert-18: first solution 16 nodes, all solutions 57 nodes
+expert-19: first solution 18 nodes, all solutions 44 nodes
+wln006-2, pieces 0 fixed: first solution 8 nodes, all solutions 10 nodes
+wlh9000-1, pieces 0 fixed: first solution 3 nodes, all solutions 22 nodes
+wlh9000-1, pieces 1 2 fixed: first solution 2 nodes, all solutions 3 nodes
+permutations-4, pieces 0 fixed: first solution 3 nodes, all solutions 27 nodes
+hard-00, pieces 0 1 fixed: first solution 3 nodes, all solutions 4 nodes
+expert-00, pieces 0 fixed: first solution 6 nodes, all solutions 7 nodes
+expert-07, pieces 2 3 4 fixed: first solution 10 nodes, all solutions 12 nodes
+wln006-2, piece 3 fixed at 5 2: first solution 0 nodes, all solutions 0 nodes

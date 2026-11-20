@@ -10,6 +10,8 @@ use endlogic_ui::{
     PointerKind, Rect, Rgba,
 };
 
+pub mod golden;
+
 // ---- recording painter ----
 
 #[derive(Debug, Clone, PartialEq)]

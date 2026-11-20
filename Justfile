@@ -31,6 +31,18 @@ check-web:
 # Check formatting, lint, test and build for wasm, in that order.
 ci: fmt-check lint test check-wasm check-web
 
+# Rewrite every golden file with the current results; review git diff after.
+[unix]
+[confirm("Rewrite all golden files with the current results? This accepts every difference as intended. [y/N]")]
+bless:
+    ENDLOGIC_BLESS=1 cargo test --workspace --test golden
+
+# Rewrite every golden file with the current results; review git diff after.
+[windows]
+[confirm("Rewrite all golden files with the current results? This accepts every difference as intended. [y/N]")]
+bless:
+    $env:ENDLOGIC_BLESS = '1'; cargo test --workspace --test golden
+
 # Solve a puzzle file; extra arguments go to the CLI (e.g. --count 50).
 [unix]
 solve FILE *ARGS:
