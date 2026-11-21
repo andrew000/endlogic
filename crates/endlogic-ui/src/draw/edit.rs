@@ -82,8 +82,9 @@ fn draw_board(app: &App, editor: &Editor, p: &mut Ink<'_>) {
 fn draw_clues(app: &App, editor: &Editor, p: &mut Ink<'_>) {
     let l = &app.layout;
     let selected = app.selected_clue();
-    let several = app.clue_colors().len() > 1;
-    for (clue, area) in app.clue_fields() {
+    let fields = app.clue_fields();
+    let several = fields.iter().any(|(c, _)| c.color != Color::DEFAULT);
+    for (clue, area) in fields {
         let accent = palette(clue.color).accent;
         let value = editor.clue(clue.color, clue.row, clue.index);
         let label = value.to_string();

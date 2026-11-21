@@ -689,9 +689,9 @@ fn line(filled: usize, clue: usize) -> Line {
     Line { filled, clue }
 }
 
-fn ticks(counter: &Counter) -> &[Rect] {
-    match &counter.view {
-        CounterView::Ticks(marks) => marks,
+fn ticks(counter: &Counter) -> Vec<Rect> {
+    match counter.view {
+        CounterView::Ticks { .. } => counter.view.marks().collect(),
         other @ CounterView::Empty { .. } => panic!("expected ticks, got {other:?}"),
     }
 }
@@ -719,7 +719,7 @@ fn a_counter_is_one_tick_per_cell_of_a_fixed_size() {
             assert_eq!(counters.len(), 1);
             let marks = ticks(&counters[0]);
             assert_eq!(marks.len(), n, "clue {n}");
-            for m in marks {
+            for m in &marks {
                 assert!(
                     area.contains_rect(*m),
                     "clue {n} row={row}: {m:?} in {area:?}"
@@ -772,7 +772,7 @@ fn a_line_of_zero_clues_shows_one_grey_sign() {
                     let sign = Rect::centered(center, 2.0 * radius, 2.0 * radius);
                     assert!(area.contains_rect(sign), "{sign:?} in {area:?}");
                 }
-                ref other @ CounterView::Ticks(_) => panic!("{other:?}"),
+                ref other @ CounterView::Ticks { .. } => panic!("{other:?}"),
             }
         }
     }
@@ -801,7 +801,7 @@ fn colors_share_a_line_evenly() {
                 let width = if row { counter.slot.h } else { counter.slot.w };
                 assert!((width - slot).abs() < 0.01, "{k} colors");
                 assert!(area.contains_rect(counter.slot), "{k} colors: slot");
-                for m in ticks(counter) {
+                for m in &ticks(counter) {
                     assert!(counter.slot.contains_rect(*m), "{k} colors: tick in slot");
                     let long = if row { m.h } else { m.w };
                     assert!(long <= TICK_LONG * cell + 0.01 && long <= slot, "{k}");

@@ -272,16 +272,20 @@ impl Layout {
         } else {
             Arrangement::Wide
         };
-        let arrange = |input: &LayoutInput| match (input.mode, kind) {
-            (Mode::Play, Arrangement::Wide) => wide(input),
-            (Mode::Play, Arrangement::LowWide) => low_wide(input),
-            (Mode::Play, Arrangement::Tall) => tall(input),
-            (Mode::Edit, Arrangement::Wide) => edit::wide(input),
-            (Mode::Edit, Arrangement::LowWide) => edit::low_wide(input),
-            (Mode::Edit, Arrangement::Tall) => edit::tall(input),
+        if input.mode == Mode::Edit {
+            return match kind {
+                Arrangement::Wide => edit::wide(&input),
+                Arrangement::LowWide => edit::low_wide(&input),
+                Arrangement::Tall => edit::tall(&input),
+            };
+        }
+        let play = |input: &LayoutInput| match kind {
+            Arrangement::Wide => wide(input),
+            Arrangement::LowWide => low_wide(input),
+            Arrangement::Tall => tall(input),
         };
-        let layout = arrange(&input);
-        if input.mode == Mode::Edit || ticks_fit(layout.cell) {
+        let layout = play(&input);
+        if ticks_fit(layout.cell) {
             return layout;
         }
         // Ticks this thin would not read: numbers, in bands of their own.
@@ -292,7 +296,7 @@ impl Layout {
         };
         Layout {
             numbers_only: true,
-            ..arrange(&numbers)
+            ..play(&numbers)
         }
     }
 
@@ -1107,7 +1111,9 @@ fn tall(input: &LayoutInput) -> Layout {
     Layout {
         kind: Arrangement::Tall,
         font,
-        title_font: title_size(15.0, title.w),
+        // Drawing shrinks the title when the colors button leaves it less
+        // room.
+        title_font: 15.0,
         id_font: 11.0,
         safe,
         axis,

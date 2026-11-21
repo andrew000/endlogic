@@ -114,14 +114,30 @@ impl Editor {
     /// order.
     #[must_use]
     pub fn colors(&self) -> Vec<Color> {
+        // One pass over everything, a bit per color.
+        let mut used = [false; MAX_COLORS];
+        let mut mark = |color: Color| {
+            if let Some(flag) = used.get_mut(color.index()) {
+                *flag = true;
+            }
+        };
+        for piece in &self.pieces {
+            mark(piece.color);
+        }
+        for cell in &self.cells {
+            if let Cell::Lock(color) = *cell {
+                mark(color);
+            }
+        }
+        for (k, (rows, cols)) in self.rows.iter().zip(&self.cols).enumerate() {
+            if rows.iter().chain(cols).any(|&v| v > 0) {
+                used[k] = true;
+            }
+        }
         Color::ALL
             .into_iter()
-            .filter(|&color| {
-                let k = color.index();
-                self.pieces.iter().any(|p| p.color == color)
-                    || self.cells.contains(&Cell::Lock(color))
-                    || self.rows[k].iter().chain(&self.cols[k]).any(|&v| v > 0)
-            })
+            .zip(used)
+            .filter_map(|(color, on)| on.then_some(color))
             .collect()
     }
 

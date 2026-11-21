@@ -66,8 +66,9 @@ pub struct EditLayout {
     pub piece: Rect,
     /// Where the solver's answer shows.
     pub result: Rect,
-    /// Width each of the piece editor's buttons needs for its label.
-    pub piece_button: f32,
+    /// Language and font of the piece editor's buttons, which set their
+    /// width (measured only when the piece editor is laid out).
+    pub piece_font: (crate::text::Lang, f32),
     /// The marks of the active color, one per color in order, next to the
     /// board size.
     pub palette: [Rect; 4],
@@ -263,7 +264,8 @@ impl EditLayout {
         );
         let buttons_h = 2.0 * MIN_TARGET + PAD;
         let reason_h = STATUS_H;
-        let buttons_w = 2.0 * self.piece_button + PAD;
+        let (lang, font) = self.piece_font;
+        let buttons_w = 2.0 * piece_button_width(lang, font) + PAD;
         let (grid, rest) = if inner.w >= inner.h * 1.3 {
             let grid_side = inner.h.min(inner.w - PAD - buttons_w).max(1.0);
             let grid = Rect::new(
@@ -551,7 +553,7 @@ pub(super) fn tall(input: &LayoutInput) -> Layout {
     let cards = cards_at(fit.per_page, fit.cols, fit.card, gap, axis, tray.y);
     let result_h = result_height(width, font).min(tray.h);
     let edit = EditLayout {
-        piece_button: piece_button_width(input.lang, font),
+        piece_font: (input.lang, font),
         width: width_stepper,
         height: height_stepper,
         times: None,
@@ -728,7 +730,7 @@ pub(super) fn wide(input: &LayoutInput) -> Layout {
     let column = Rect::new(x1 - side, y0, side, y1 - y0);
     let (fit, tray, cards) = column_tray(input, column, m.gap, true);
     let edit = EditLayout {
-        piece_button: piece_button_width(input.lang, m.font),
+        piece_font: (input.lang, m.font),
         width: left.width,
         height: left.height,
         times: None,
@@ -861,7 +863,7 @@ pub(super) fn low_wide(input: &LayoutInput) -> Layout {
     let (_, block_h) = board_size(input, cell);
     let board = board_at(input, axis, y0 + ((y1 - y0) - block_h).max(0.0) / 2.0, cell);
     let edit = EditLayout {
-        piece_button: piece_button_width(input.lang, font),
+        piece_font: (input.lang, font),
         width: width_stepper,
         height: height_stepper,
         times: Some(times),

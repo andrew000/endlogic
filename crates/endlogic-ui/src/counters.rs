@@ -19,9 +19,7 @@
 //! ([`band_depth`]). When a tick would be thinner than [`MIN_TICK`]
 //! logical pixels, the whole puzzle shows numbers instead.
 
-use alloc::vec::Vec;
-
-use endlogic_core::Color;
+use endlogic_core::{Color, MAX_COLORS};
 
 use crate::board::Line;
 use crate::layout::to_f32;
@@ -59,7 +57,7 @@ pub fn ticks_fit(cell: f32) -> bool {
 }
 
 /// What one color's counter of a line shows.
-#[derive(Debug, Clone, PartialEq)]
+#[derive(Debug, Clone, Copy, PartialEq)]
 pub enum CounterView {
     /// The `∅` sign: grey for a line whose clues are all 0, red for a color
     /// with clue 0 that has cells in the line.
@@ -69,12 +67,82 @@ pub enum CounterView {
         /// Radius of the sign.
         radius: f32,
     },
-    /// One tick per clue unit, nearest to the grid first (the fill order).
-    Ticks(Vec<Rect>),
+    /// One tick per clue unit, `count` of them, nearest to the grid first
+    /// (the fill order), see [`CounterView::marks`].
+    Ticks {
+        /// Where the counter's center line meets the band's edge next to the
+        /// grid.
+        edge: Point,
+        /// Distance between neighbouring ticks.
+        pitch: f32,
+        /// Size of a tick along the counter.
+        thick: f32,
+        /// Size of a tick across the counter.
+        long: f32,
+        /// A row counter (ticks grow left), else a column counter (up).
+        row: bool,
+        /// Number of ticks.
+        count: usize,
+    },
+}
+
+impl Default for CounterView {
+    fn default() -> CounterView {
+        CounterView::Empty {
+            center: Point::default(),
+            radius: 0.0,
+        }
+    }
+}
+
+impl CounterView {
+    /// The ticks, nearest to the grid first; none for a sign.
+    pub fn marks(&self) -> impl Iterator<Item = Rect> + use<> {
+        let view = *self;
+        let count = match view {
+            CounterView::Ticks { count, .. } => count,
+            CounterView::Empty { .. } => 0,
+        };
+        (0..count).map(move |k| {
+            let CounterView::Ticks {
+                edge,
+                pitch,
+                thick,
+                long,
+                row,
+                ..
+            } = view
+            else {
+                return Rect::default();
+            };
+            // Tick 0 is next to the grid.
+            let offset = pitch * (to_f32(k) + 0.5);
+            if row {
+                Rect::centered(Point::new(edge.x - offset, edge.y), thick, long)
+            } else {
+                Rect::centered(Point::new(edge.x, edge.y - offset), long, thick)
+            }
+        })
+    }
+}
+
+/// The counters of one line: one per color shown, at most four.
+#[derive(Debug, Clone, Copy, PartialEq, Default)]
+pub struct LineCounters {
+    items: [Counter; MAX_COLORS],
+    len: usize,
+}
+
+impl core::ops::Deref for LineCounters {
+    type Target = [Counter];
+
+    fn deref(&self) -> &[Counter] {
+        &self.items[..self.len]
+    }
 }
 
 /// One color's counter in a line.
-#[derive(Debug, Clone, PartialEq)]
+#[derive(Debug, Clone, Copy, PartialEq, Default)]
 pub struct Counter {
     /// The color.
     pub color: Color,
@@ -93,28 +161,26 @@ pub struct Counter {
 /// color of the puzzle with its cells and clue in this line, in color
 /// order; `cell` is the board cell.
 #[must_use]
-pub fn line_counters(lines: &[(Color, Line)], area: Rect, row: bool, cell: f32) -> Vec<Counter> {
-    let shown: Vec<(Color, Line)> = lines
-        .iter()
-        .copied()
-        .filter(|(_, line)| line.clue > 0 || line.filled > 0)
-        .collect();
-    if shown.is_empty() {
+pub fn line_counters(lines: &[(Color, Line)], area: Rect, row: bool, cell: f32) -> LineCounters {
+    let shown = |entry: &&(Color, Line)| entry.1.clue > 0 || entry.1.filled > 0;
+    let mut out = LineCounters::default();
+    let n = lines.iter().filter(shown).count().min(MAX_COLORS);
+    if n == 0 {
         // All clues 0 and nothing in the line: one grey sign.
         let (color, line) = lines.first().copied().unwrap_or_default();
-        return Vec::from([Counter {
+        out.items[0] = Counter {
             color,
             line,
             slot: area,
             view: empty(area, row, cell, cell),
-        }]);
+        };
+        out.len = 1;
+        return out;
     }
-    let k = to_f32(shown.len());
+    let k = to_f32(n);
     let across = ACROSS * cell / k;
-    shown
-        .into_iter()
-        .enumerate()
-        .map(|(j, (color, line))| {
+    for (j, &(color, line)) in lines.iter().filter(shown).take(n).enumerate() {
+        out.items[j] = {
             let j = to_f32(j);
             let slot = if row {
                 // The first color at the bottom.
@@ -135,8 +201,10 @@ pub fn line_counters(lines: &[(Color, Line)], area: Rect, row: bool, cell: f32) 
                 slot,
                 view,
             }
-        })
-        .collect()
+        };
+    }
+    out.len = n;
+    out
 }
 
 /// The `∅` sign next to the grid in `slot`, at most `across` wide.
@@ -155,24 +223,17 @@ fn ticks(n: usize, slot: Rect, row: bool, cell: f32, across: f32) -> CounterView
     let pitch = TICK_PITCH * cell;
     let thick = TICK_THICK * cell;
     let long = (TICK_LONG * cell).min(across * 0.85);
-    let marks = (0..n)
-        .map(|k| {
-            // Tick 0 is next to the grid.
-            let offset = pitch * (to_f32(k) + 0.5);
-            if row {
-                Rect::centered(
-                    Point::new(slot.right() - offset, slot.center().y),
-                    thick,
-                    long,
-                )
-            } else {
-                Rect::centered(
-                    Point::new(slot.center().x, slot.bottom() - offset),
-                    long,
-                    thick,
-                )
-            }
-        })
-        .collect();
-    CounterView::Ticks(marks)
+    let edge = if row {
+        Point::new(slot.right(), slot.center().y)
+    } else {
+        Point::new(slot.center().x, slot.bottom())
+    };
+    CounterView::Ticks {
+        edge,
+        pitch,
+        thick,
+        long,
+        row,
+        count: n,
+    }
 }

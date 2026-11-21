@@ -9,7 +9,7 @@ use crate::math;
 use core::f32::consts::{FRAC_PI_2, TAU};
 
 use endlogic_core::generator::Difficulty;
-use endlogic_core::{Cell, Color, Shape};
+use endlogic_core::{Cell, Color, MAX_COLORS, Shape};
 
 mod edit;
 
@@ -602,12 +602,12 @@ fn line_counter(
 ) {
     let counters = line_counters(lines, area, row, cell);
     let lone = counters.len() == 1;
-    for Counter {
+    for &Counter {
         color,
         line,
         slot,
         view,
-    } in counters
+    } in counters.iter()
     {
         let look = palette(color);
         // A zero clue: grey while the line is empty, red once cells of the
@@ -632,9 +632,9 @@ fn line_counter(
                 let width = (cell * 0.05).max(1.5).min(radius * 0.4);
                 empty_sign(p, center, radius, width, zero);
             }
-            CounterView::Ticks(marks) => {
+            CounterView::Ticks { .. } => {
                 let outline = (cell * TICK_THICK * 0.22).clamp(1.0, 1.5);
-                for (k, rect) in marks.into_iter().enumerate() {
+                for (k, rect) in view.marks().enumerate() {
                     match line.state() {
                         LineState::Exact => p.fill_rect(rect, 0.0, look.bright),
                         LineState::Over => p.fill_rect(rect, 0.0, theme::ERROR),
@@ -681,18 +681,25 @@ fn draw_counters(app: &App, game: &Game, p: &mut Ink<'_>) {
     let colors = board.colors();
     let rows: Vec<Vec<Line>> = colors.iter().map(|&c| board.rows_of(c)).collect();
     let cols: Vec<Vec<Line>> = colors.iter().map(|&c| board.cols_of(c)).collect();
-    let of = |lines: &[Vec<Line>], k: usize| -> Vec<(Color, Line)> {
-        colors.iter().zip(lines).map(|(&c, l)| (c, l[k])).collect()
+    // The colors of one line, without allocating.
+    let of = |lines: &[Vec<Line>], k: usize| {
+        let mut out = [(Color::DEFAULT, Line::default()); MAX_COLORS];
+        for (slot, (&c, l)) in out.iter_mut().zip(colors.iter().zip(lines)) {
+            *slot = (c, l[k]);
+        }
+        (out, colors.len().min(MAX_COLORS))
     };
     for row in 0..board.height() {
         let cell = l.cell_rect(row, 0);
         let area = Rect::new(l.row_counters.x, cell.y, l.row_counters.w, cell.h);
-        line_counter(p, area, &of(&rows, row), true, numbers, l.cell, l.font);
+        let (lines, n) = of(&rows, row);
+        line_counter(p, area, &lines[..n], true, numbers, l.cell, l.font);
     }
     for col in 0..board.width() {
         let cell = l.cell_rect(0, col);
         let area = Rect::new(cell.x, l.col_counters.y, cell.w, l.col_counters.h);
-        line_counter(p, area, &of(&cols, col), false, numbers, l.cell, l.font);
+        let (lines, n) = of(&cols, col);
+        line_counter(p, area, &lines[..n], false, numbers, l.cell, l.font);
     }
 }
 

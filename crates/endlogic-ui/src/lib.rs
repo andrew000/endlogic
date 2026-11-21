@@ -33,8 +33,8 @@ pub use app::{
 };
 pub use board::{Board, Line, LineState, PieceState, Turned};
 pub use counters::{
-    ACROSS, Counter, CounterView, EMPTY_DEPTH, MIN_TICK, TICK_LONG, TICK_PITCH, TICK_THICK,
-    band_depth, line_counters, ticks_fit,
+    ACROSS, Counter, CounterView, EMPTY_DEPTH, LineCounters, MIN_TICK, TICK_LONG, TICK_PITCH,
+    TICK_THICK, band_depth, line_counters, ticks_fit,
 };
 pub use draw::draw_icon;
 pub use editor::{
