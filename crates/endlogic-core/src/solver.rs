@@ -160,7 +160,7 @@ impl Search {
                 .extend((0..piece_type.candidates.len()).map(index16));
             search.lists.push_range(start);
         }
-        match board.filter(0, &mut search.lists) {
+        match board.filter(0, &mut search.lists, None) {
             Some(level) => {
                 search.board = Some(board);
                 search.enter(level);
@@ -257,7 +257,7 @@ impl Search {
             frame.next += 1;
             frame.applied = Some(i);
             board.place(t, i);
-            if let Some(level) = board.filter(frame.level, &mut self.lists) {
+            if let Some(level) = board.filter(frame.level, &mut self.lists, Some(t)) {
                 self.enter(level);
             }
         }
@@ -419,11 +419,8 @@ struct PieceType {
     /// own shape that produces it.
     member_rotations: Vec<Vec<Rotation>>,
     candidates: Vec<Candidate>,
-    /// For each candidate, its cells, and its cells in each row and each
-    /// column, one byte per line.
-    masks: Vec<Bits>,
-    row_counts: Vec<u128>,
-    col_counts: Vec<u128>,
+    /// For each candidate, what the fit test needs.
+    fits: Vec<Fit>,
     /// Most cells one piece can put into a single line.
     max_span: usize,
 }
@@ -435,8 +432,6 @@ type Lines = [u8; MAX_GRID_SIZE];
 /// needs.
 #[derive(Debug, Clone)]
 struct Board {
-    width: usize,
-    height: usize,
     piece_count: usize,
     types: Vec<PieceType>,
     /// For each color, the cells each row still needs: clue minus filled.
@@ -467,16 +462,45 @@ fn count8(n: usize) -> u8 {
 /// bit `(r % 4) * 16 + c` of word `r / 4`.
 type Bits = [u64; 4];
 
-/// The top bit of every byte: line counts are compared one byte per line.
+/// The top bit of every byte: line counts are compared one byte per line,
+/// `a <= b` for every lane exactly when `((b | LANE_TOPS) - a) & LANE_TOPS`
+/// keeps every top bit (all counts are below 128).
 const LANE_TOPS: u128 = u128::from_le_bytes([0x80; 16]);
+
+/// Whether every byte of `small` is at most the same byte of `large`.
+fn lanes_at_most(small: u128, large: u128) -> bool {
+    ((large | LANE_TOPS) - small) & LANE_TOPS == LANE_TOPS
+}
+
+/// Byte `j` of entry `b` is bit `j` of `b`: spreads 8 cells over 8 lanes.
+const SPREAD: [u64; 256] = {
+    let mut table = [0u64; 256];
+    let mut b = 0;
+    while b < 256 {
+        let mut j = 0;
+        while j < 8 {
+            if b & (1 << j) != 0 {
+                table[b] |= 1 << (8 * j);
+            }
+            j += 1;
+        }
+        b += 1;
+    }
+    table
+};
+
+/// What the fit test needs of a candidate, in one cache line: its cells,
+/// and its cells in each row and each column, one byte per line.
+#[derive(Debug, Clone, Copy)]
+#[repr(align(64))]
+struct Fit {
+    mask: Bits,
+    rows: u128,
+    cols: u128,
+}
 
 fn meets(a: &Bits, b: &Bits) -> bool {
     (a[0] & b[0]) | (a[1] & b[1]) | (a[2] & b[2]) | (a[3] & b[3]) != 0
-}
-
-/// Cells of row `r` in `bits`.
-fn row_count(bits: &Bits, r: usize) -> u8 {
-    count8(((bits[r / 4] >> ((r % 4) * 16)) & 0xFFFF).count_ones() as usize)
 }
 
 impl Board {
@@ -558,8 +582,6 @@ impl Board {
         let types = build_types(puzzle, &color_index, &free);
         let type_count = types.len();
         Some(Board {
-            width,
-            height,
             piece_count: puzzle.pieces().len(),
             remaining: types.iter().map(|t| t.members.len()).collect(),
             types,
@@ -632,7 +654,7 @@ impl Board {
     /// a new level, and checks that every line can still reach its clue.
     /// Returns the new level, or `None` (adding nothing) if the current
     /// board is a dead end.
-    fn filter(&mut self, parent: usize, lists: &mut Lists) -> Option<usize> {
+    fn filter(&mut self, parent: usize, lists: &mut Lists, placed: Option<usize>) -> Option<usize> {
         let level = lists.ranges.len();
         let mut occupied = [0u64; 4];
         for (r, &row) in self.occupied.iter().enumerate() {
@@ -648,31 +670,34 @@ impl Board {
             if self.remaining[t] > 0 {
                 let k = piece_type.color;
                 span[k] += self.remaining[t] * piece_type.max_span;
-                let row_room = u128::from_le_bytes(self.row_room[k]) | LANE_TOPS;
-                let col_room = u128::from_le_bytes(self.col_room[k]) | LANE_TOPS;
+                let row_room = u128::from_le_bytes(self.row_room[k]);
+                let col_room = u128::from_le_bytes(self.col_room[k]);
                 let (from, to) = lists.ranges[parent + t];
-                // Lists are ascending: skip the indices below the minimum.
-                let min = self.min_index[t];
-                let from = from + lists.items[from..to].partition_point(|&i| usize::from(i) < min);
-                // Room for every candidate; the list keeps those that fit.
+                // Lists are ascending, and only the type just placed has a
+                // new minimum (none on the first level).
+                let from = if placed.is_none_or(|placed| placed == t) {
+                    let min = self.min_index[t];
+                    from + lists.items[from..to].partition_point(|&i| usize::from(i) < min)
+                } else {
+                    from
+                };
+                // A copy of the parent's list, compacted in place to those
+                // that fit.
+                lists.items.extend_from_within(from..to);
                 let mut kept = start;
-                lists.items.resize(start + (to - from), 0);
                 let mut type_cover = [0u64; 4];
-                for p in from..to {
+                for p in start..start + (to - from) {
                     let i = lists.items[p];
-                    let c = usize::from(i);
-                    let mask = &piece_type.masks[c];
-                    // Each byte lane holds room + 128 minus cells: its top bit
-                    // stays set exactly when the line has room enough.
+                    let fit = &piece_type.fits[usize::from(i)];
                     // `&`, not `&&`: no branch per candidate.
                     #[allow(clippy::needless_bitwise_bool)]
-                    let fits = !meets(mask, &occupied)
-                        & ((row_room - piece_type.row_counts[c]) & LANE_TOPS == LANE_TOPS)
-                        & ((col_room - piece_type.col_counts[c]) & LANE_TOPS == LANE_TOPS);
+                    let fits = !meets(&fit.mask, &occupied)
+                        & lanes_at_most(fit.rows, row_room)
+                        & lanes_at_most(fit.cols, col_room);
                     lists.items[kept] = i;
                     kept += usize::from(fits);
                     let keep = 0u64.wrapping_sub(u64::from(fits));
-                    for (cover, bits) in type_cover.iter_mut().zip(mask) {
+                    for (cover, bits) in type_cover.iter_mut().zip(fit.mask) {
                         *cover |= bits & keep;
                     }
                 }
@@ -704,23 +729,23 @@ impl Board {
     /// remaining pieces of its color can put into one line, and no more
     /// than the cells some candidate can still cover.
     fn lines_reachable(&self, cover: &[Bits], span: &[usize]) -> bool {
-        for (k, &span) in span.iter().enumerate() {
-            let mut cols = [0u8; MAX_GRID_SIZE];
-            for r in 0..self.height {
-                let need = self.row_room[k][r];
-                if need > 0 && (usize::from(need) > span || need > row_count(&cover[k], r)) {
-                    return false;
-                }
-                let mut bits = (cover[k][r / 4] >> ((r % 4) * 16)) & 0xFFFF;
-                while bits != 0 {
-                    cols[bits.trailing_zeros() as usize] += 1;
-                    bits &= bits - 1;
-                }
+        for (k, (cover, &span)) in cover.iter().zip(span).enumerate() {
+            let rows_need = u128::from_le_bytes(self.row_room[k]);
+            let cols_need = u128::from_le_bytes(self.col_room[k]);
+            let spans = u128::from_le_bytes([count8(span.min(127)); MAX_GRID_SIZE]);
+            let (mut rows_cover, mut cols_cover) = ([0u8; MAX_GRID_SIZE], 0u128);
+            for (r, count) in rows_cover.iter_mut().enumerate() {
+                let bits = (cover[r / 4] >> ((r % 4) * 16)) & 0xFFFF;
+                *count = count8(bits.count_ones() as usize);
+                let (low, high) = (SPREAD[(bits & 0xFF) as usize], SPREAD[(bits >> 8) as usize]);
+                cols_cover += u128::from(low) | (u128::from(high) << 64);
             }
-            for (&need, &coverable) in self.col_room[k][..self.width].iter().zip(&cols) {
-                if need > 0 && (usize::from(need) > span || need > coverable) {
-                    return false;
-                }
+            if !(lanes_at_most(rows_need, spans)
+                && lanes_at_most(cols_need, spans)
+                && lanes_at_most(rows_need, u128::from_le_bytes(rows_cover))
+                && lanes_at_most(cols_need, cols_cover))
+            {
+                return false;
             }
         }
         true
@@ -809,23 +834,26 @@ fn build_types(
             let orientations: Vec<Shape> = own.iter().map(|(_, s)| s.clone()).collect();
             let layouts: Vec<Layout> = orientations.iter().map(Layout::of).collect();
             let candidates = enumerate_candidates(&layouts, grid.width(), grid.height(), free);
-            let mut masks = Vec::with_capacity(candidates.len());
-            let mut row_counts = Vec::with_capacity(candidates.len());
-            let mut col_counts = Vec::with_capacity(candidates.len());
-            for candidate in &candidates {
-                let layout = &layouts[usize::from(candidate.orientation)];
-                let (row, col) = (usize::from(candidate.row), usize::from(candidate.col));
-                let mut mask = [0; 4];
-                let (mut rows, mut cols) = ([0u8; MAX_GRID_SIZE], [0u8; MAX_GRID_SIZE]);
-                for (dr, &bits) in layout.bits[..layout.height].iter().enumerate() {
-                    mask[(row + dr) / 4] |= u64::from(bits << col) << (((row + dr) % 4) * 16);
-                    rows[row + dr] = layout.row_cells[dr];
-                }
-                cols[col..col + layout.width].copy_from_slice(&layout.col_cells[..layout.width]);
-                masks.push(mask);
-                row_counts.push(u128::from_le_bytes(rows));
-                col_counts.push(u128::from_le_bytes(cols));
-            }
+            let fits = candidates
+                .iter()
+                .map(|candidate| {
+                    let layout = &layouts[usize::from(candidate.orientation)];
+                    let (row, col) = (usize::from(candidate.row), usize::from(candidate.col));
+                    let mut mask = [0; 4];
+                    let (mut rows, mut cols) = ([0u8; MAX_GRID_SIZE], [0u8; MAX_GRID_SIZE]);
+                    for (dr, &bits) in layout.bits[..layout.height].iter().enumerate() {
+                        mask[(row + dr) / 4] |= u64::from(bits << col) << (((row + dr) % 4) * 16);
+                        rows[row + dr] = layout.row_cells[dr];
+                    }
+                    cols[col..col + layout.width]
+                        .copy_from_slice(&layout.col_cells[..layout.width]);
+                    Fit {
+                        mask,
+                        rows: u128::from_le_bytes(rows),
+                        cols: u128::from_le_bytes(cols),
+                    }
+                })
+                .collect();
             types.push(PieceType {
                 color: color_index(piece.color),
                 members: Vec::new(),
@@ -834,9 +862,7 @@ fn build_types(
                 layouts,
                 member_rotations: Vec::new(),
                 candidates,
-                masks,
-                row_counts,
-                col_counts,
+                fits,
                 max_span: piece.shape.max_line_span(),
             });
             keys.push(key);
