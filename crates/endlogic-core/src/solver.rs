@@ -100,6 +100,8 @@ pub enum Progress {
 #[derive(Debug, Clone)]
 pub struct Search {
     board: Option<Board>,
+    /// The candidate lists of every open level.
+    lists: Lists,
     stack: Vec<Frame>,
     solutions: Vec<Solution>,
     max_solutions: usize,
@@ -133,6 +135,7 @@ impl Search {
     ) -> Search {
         let mut search = Search {
             board: None,
+            lists: Lists::default(),
             stack: Vec::new(),
             solutions: Vec::new(),
             max_solutions,
@@ -143,20 +146,24 @@ impl Search {
             search.finished = Some(StopReason::SolutionLimit);
             return search;
         }
-        let Some(board) = Board::new(puzzle).and_then(|board| board.with_fixed(puzzle, fixed))
+        let Some(mut board) = Board::new(puzzle).and_then(|board| board.with_fixed(puzzle, fixed))
         else {
             search.finished = Some(StopReason::Exhausted);
             return search;
         };
-        let all: Vec<Vec<usize>> = board
-            .types
-            .iter()
-            .map(|t| (0..t.candidates.len()).collect())
-            .collect();
-        match board.filter(&all) {
-            Some(candidates) => {
+        // The root level: every candidate of every type.
+        for piece_type in &board.types {
+            let start = search.lists.items.len();
+            search
+                .lists
+                .items
+                .extend((0..piece_type.candidates.len()).map(index16));
+            search.lists.push_range(start);
+        }
+        match board.filter(0, &mut search.lists) {
+            Some(level) => {
                 search.board = Some(board);
-                search.enter(candidates);
+                search.enter(level);
             }
             None => search.finished = Some(StopReason::Exhausted),
         }
@@ -194,22 +201,26 @@ impl Search {
         }
     }
 
-    /// Starts on a board whose valid candidates are `candidates`: records a
-    /// solution if every piece is placed, otherwise pushes a frame.
-    fn enter(&mut self, candidates: Vec<Vec<usize>>) {
+    /// Starts on a board whose valid candidates are the lists of `level`:
+    /// records a solution if every piece is placed, otherwise pushes a
+    /// frame for the type with the fewest candidates.
+    fn enter(&mut self, level: usize) {
         let Some(board) = &self.board else { return };
         let next = (0..board.types.len())
             .filter(|&t| board.remaining[t] > 0)
-            .min_by_key(|&t| candidates[t].len());
+            .min_by_key(|&t| self.lists.len(level, t));
         match next {
             // Every piece is placed, and `filter` has confirmed every line
             // is at its clue.
-            None => self.solutions.push(board.solution()),
+            None => {
+                self.solutions.push(board.solution());
+                self.lists.truncate(level);
+            }
             Some(t) => self.stack.push(Frame {
-                saved_min: board.min_index[t],
-                candidates,
+                level,
                 t,
                 next: 0,
+                saved_min: board.min_index[t],
                 applied: None,
             }),
         }
@@ -233,7 +244,8 @@ impl Search {
             if let Some(i) = frame.applied.take() {
                 board.undo(t, i, frame.saved_min);
             }
-            let Some(&i) = frame.candidates[t].get(frame.next) else {
+            let Some(i) = self.lists.get(frame.level, t, frame.next) else {
+                self.lists.truncate(frame.level);
                 self.stack.pop();
                 continue;
             };
@@ -245,25 +257,68 @@ impl Search {
             frame.next += 1;
             frame.applied = Some(i);
             board.place(t, i);
-            if let Some(child) = board.filter(&frame.candidates) {
-                self.enter(child);
+            if let Some(level) = board.filter(frame.level, &mut self.lists) {
+                self.enter(level);
             }
         }
     }
 }
 
-/// One level of the depth-first search: the type placed at this level and
-/// the candidates still valid on the board when the level was entered.
+/// `n` as a candidate index; a type has at most 4 × 16 × 16 candidates.
+#[allow(clippy::cast_possible_truncation)]
+fn index16(n: usize) -> u16 {
+    n as u16
+}
+
+/// The candidate lists of all open levels of the search in one buffer, so
+/// that a node allocates nothing: a level is one range of candidate indices
+/// per piece type, and levels are added and dropped like a stack.
+#[derive(Debug, Clone, Default)]
+struct Lists {
+    /// Candidate indices, ascending within each range.
+    items: Vec<u16>,
+    /// `(start, end)` in `items`, one per type, level after level.
+    ranges: Vec<(usize, usize)>,
+}
+
+impl Lists {
+    /// Closes the range that began at `start`.
+    fn push_range(&mut self, start: usize) {
+        self.ranges.push((start, self.items.len()));
+    }
+
+    fn len(&self, level: usize, t: usize) -> usize {
+        let (start, end) = self.ranges[level + t];
+        end - start
+    }
+
+    /// The `k`-th candidate of type `t` on `level`.
+    fn get(&self, level: usize, t: usize, k: usize) -> Option<u16> {
+        let (start, end) = self.ranges[level + t];
+        (start + k < end).then(|| self.items[start + k])
+    }
+
+    /// Drops `level` and every level after it.
+    fn truncate(&mut self, level: usize) {
+        if let Some(&(start, _)) = self.ranges.get(level) {
+            self.items.truncate(start);
+        }
+        self.ranges.truncate(level);
+    }
+}
+
+/// One level of the depth-first search: the type placed at this level.
 #[derive(Debug, Clone)]
 struct Frame {
-    candidates: Vec<Vec<usize>>,
+    /// Where this level's candidate lists start in [`Lists::ranges`].
+    level: usize,
     t: usize,
-    /// Position in `candidates[t]` of the next candidate to try.
+    /// Position in the type's list of the next candidate to try.
     next: usize,
     /// `min_index[t]` before this level changed it.
     saved_min: usize,
     /// The candidate currently on the board, to be taken back.
-    applied: Option<usize>,
+    applied: Option<u16>,
 }
 
 /// Answer of [`check_uniqueness`].
@@ -306,22 +361,50 @@ pub fn check_uniqueness(puzzle: &Puzzle, max_nodes: u64) -> UniquenessCheck {
     }
 }
 
-/// One way to put a piece type on the board.
-#[derive(Debug, Clone)]
+/// One way to put a piece type on the board: an orientation and the
+/// top-left corner of its bounding box.
+#[derive(Debug, Clone, Copy)]
 struct Candidate {
-    /// Index into the type's orientations.
-    orientation: usize,
-    row: usize,
-    col: usize,
-    /// `(row, mask, cell count)` for every row the placement touches.
-    rows: Vec<(usize, u16, usize)>,
-    /// `(col, cell count)` for every column the placement touches.
-    cols: Vec<(usize, usize)>,
+    orientation: u8,
+    row: u8,
+    col: u8,
+}
+
+/// An orientation of a piece type as bit rows and line counts. Shapes are
+/// normalized, so every row and column of the bounding box has a cell.
+#[derive(Debug, Clone)]
+struct Layout {
+    height: usize,
+    width: usize,
+    /// The cells of each row, bit `c` for column `c`.
+    bits: [u16; MAX_GRID_SIZE],
+    /// Cells in each row.
+    row_cells: [u8; MAX_GRID_SIZE],
+    /// Cells in each column.
+    col_cells: [u8; MAX_GRID_SIZE],
+}
+
+impl Layout {
+    fn of(shape: &Shape) -> Layout {
+        let mut layout = Layout {
+            height: shape.height(),
+            width: shape.width(),
+            bits: [0; MAX_GRID_SIZE],
+            row_cells: [0; MAX_GRID_SIZE],
+            col_cells: [0; MAX_GRID_SIZE],
+        };
+        for &(r, c) in shape.cells() {
+            layout.bits[r] |= 1 << c;
+            layout.row_cells[r] += 1;
+            layout.col_cells[c] += 1;
+        }
+        layout
+    }
 }
 
 #[derive(Debug, Clone)]
 struct PieceType {
-    /// Index into `Search::colors`.
+    /// Index into the board's colors.
     color: usize,
     /// Indices of the pieces of this type, ascending.
     members: Vec<usize>,
@@ -330,6 +413,8 @@ struct PieceType {
     free: Vec<usize>,
     /// The distinct orientations, as indexed by candidates.
     orientations: Vec<Shape>,
+    /// The same orientations as bits and counts.
+    layouts: Vec<Layout>,
     /// For each member, for each orientation, the rotation of that member's
     /// own shape that produces it.
     member_rotations: Vec<Vec<Rotation>>,
@@ -338,27 +423,39 @@ struct PieceType {
     max_span: usize,
 }
 
-type Lines = [usize; MAX_GRID_SIZE];
+/// A count per row or column.
+type Lines = [u8; MAX_GRID_SIZE];
 
-/// The board during a search: what is placed and what each line holds.
+/// The board during a search: what is placed and what each line still
+/// needs.
 #[derive(Debug, Clone)]
 struct Board {
     width: usize,
     height: usize,
     piece_count: usize,
     types: Vec<PieceType>,
-    row_target: Vec<Lines>,
-    col_target: Vec<Lines>,
-    row_filled: Vec<Lines>,
-    col_filled: Vec<Lines>,
+    /// For each color, the cells each row still needs: clue minus filled.
+    row_room: Vec<Lines>,
+    /// The same for columns.
+    col_room: Vec<Lines>,
     occupied: [u16; MAX_GRID_SIZE],
     remaining: Vec<usize>,
     /// Smallest candidate index the next copy of each type may use.
     min_index: Vec<usize>,
     /// Candidate indices chosen so far for each type, ascending.
-    chosen: Vec<Vec<usize>>,
+    chosen: Vec<Vec<u16>>,
     /// Pieces fixed before the search, with their placements.
     fixed: Vec<(usize, Placement)>,
+    /// Scratch for `filter`, per color: the cells some candidate can still
+    /// cover, and the most cells the remaining pieces can put into a line.
+    cover: Vec<[u16; MAX_GRID_SIZE]>,
+    span: Vec<usize>,
+}
+
+/// `n` as a small count; counts and coordinates are at most 16.
+#[allow(clippy::cast_possible_truncation)]
+fn count8(n: usize) -> u8 {
+    n as u8
 }
 
 impl Board {
@@ -370,10 +467,10 @@ impl Board {
         let colors: Vec<Color> = puzzle.colors();
         let color_index = |color: Color| colors.binary_search(&color).unwrap_or(0);
 
-        let mut row_target = vec![[0; MAX_GRID_SIZE]; colors.len()];
-        let mut col_target = vec![[0; MAX_GRID_SIZE]; colors.len()];
-        let mut row_filled = vec![[0; MAX_GRID_SIZE]; colors.len()];
-        let mut col_filled = vec![[0; MAX_GRID_SIZE]; colors.len()];
+        let mut row_target = vec![[0usize; MAX_GRID_SIZE]; colors.len()];
+        let mut col_target = vec![[0usize; MAX_GRID_SIZE]; colors.len()];
+        let mut row_filled = vec![[0usize; MAX_GRID_SIZE]; colors.len()];
+        let mut col_filled = vec![[0usize; MAX_GRID_SIZE]; colors.len()];
         let mut area = vec![0usize; colors.len()];
         let mut free = [0u16; MAX_GRID_SIZE];
 
@@ -417,6 +514,25 @@ impl Board {
                 return None;
             }
         }
+        // What each line still needs; no clue can exceed a line, so it
+        // fits a `u8`.
+        let room = |target: &[usize; MAX_GRID_SIZE], filled: &[usize; MAX_GRID_SIZE]| {
+            let mut lines: Lines = [0; MAX_GRID_SIZE];
+            for (line, (t, f)) in lines.iter_mut().zip(target.iter().zip(filled)) {
+                *line = count8(t - f);
+            }
+            lines
+        };
+        let row_room = row_target
+            .iter()
+            .zip(&row_filled)
+            .map(|(t, f)| room(t, f))
+            .collect();
+        let col_room = col_target
+            .iter()
+            .zip(&col_filled)
+            .map(|(t, f)| room(t, f))
+            .collect();
 
         let types = build_types(puzzle, &color_index, &free);
         let type_count = types.len();
@@ -426,14 +542,14 @@ impl Board {
             piece_count: puzzle.pieces().len(),
             remaining: types.iter().map(|t| t.members.len()).collect(),
             types,
-            row_target,
-            col_target,
-            row_filled,
-            col_filled,
+            row_room,
+            col_room,
             occupied: [0; MAX_GRID_SIZE],
             min_index: vec![0; type_count],
             chosen: vec![Vec::new(); type_count],
             fixed: Vec::new(),
+            cover: vec![[0; MAX_GRID_SIZE]; colors.len()],
+            span: vec![0; colors.len()],
         })
     }
 
@@ -453,17 +569,14 @@ impl Board {
             let piece_type = &self.types[t];
             let orientation = piece_type.orientations.iter().position(|s| *s == shape)?;
             let i = piece_type.candidates.iter().position(|c| {
-                c.orientation == orientation && c.row == placement.row && c.col == placement.col
+                usize::from(c.orientation) == orientation
+                    && usize::from(c.row) == placement.row
+                    && usize::from(c.col) == placement.col
             })?;
-            let candidate = &piece_type.candidates[i];
-            let free = candidate
-                .rows
-                .iter()
-                .all(|&(r, mask, _)| self.occupied[r] & mask == 0);
-            if !free || !self.fits(piece_type.color, candidate) {
+            if !self.fits(piece_type, piece_type.candidates[i]) {
                 return None;
             }
-            self.apply(t, i, true);
+            self.apply(t, index16(i), true);
             self.remaining[t] -= 1;
             self.types[t].free.retain(|&f| f != m);
             self.fixed.push((index, placement));
@@ -471,98 +584,144 @@ impl Board {
         Some(self)
     }
 
-    fn fits(&self, color: usize, candidate: &Candidate) -> bool {
-        candidate.rows.iter().all(|&(r, mask, n)| {
-            self.occupied[r] & mask == 0
-                && self.row_filled[color][r] + n <= self.row_target[color][r]
-        }) && candidate
-            .cols
+    /// Whether `candidate` of `piece_type` stands on uncovered cells and
+    /// puts no more cells into any line than it still needs.
+    fn fits(&self, piece_type: &PieceType, candidate: Candidate) -> bool {
+        let layout = &piece_type.layouts[usize::from(candidate.orientation)];
+        let (row, col) = (usize::from(candidate.row), usize::from(candidate.col));
+        let k = piece_type.color;
+        let rows = row..row + layout.height;
+        let rows_fit = layout.bits[..layout.height]
             .iter()
-            .all(|&(c, n)| self.col_filled[color][c] + n <= self.col_target[color][c])
+            .zip(&layout.row_cells)
+            .zip(
+                self.occupied[rows.clone()]
+                    .iter()
+                    .zip(&self.row_room[k][rows]),
+            )
+            .all(|((&bits, &cells), (&taken, &room))| taken & (bits << col) == 0 && cells <= room);
+        rows_fit
+            && layout.col_cells[..layout.width]
+                .iter()
+                .zip(&self.col_room[k][col..col + layout.width])
+                .all(|(&cells, &room)| cells <= room)
     }
 
-    /// Narrows the parent's candidate lists to those that still fit, and
-    /// checks that every line can still reach its clue. Returns `None` if the
-    /// current board is a dead end.
-    fn filter(&self, parent: &[Vec<usize>]) -> Option<Vec<Vec<usize>>> {
-        let colors = self.row_target.len();
-        let mut cover = vec![[0u16; MAX_GRID_SIZE]; colors];
-        let mut span = vec![0usize; colors];
-        let mut result = vec![Vec::new(); self.types.len()];
-
+    /// Narrows the candidate lists of `parent` to those that still fit, as
+    /// a new level, and checks that every line can still reach its clue.
+    /// Returns the new level, or `None` (adding nothing) if the current
+    /// board is a dead end.
+    fn filter(&mut self, parent: usize, lists: &mut Lists) -> Option<usize> {
+        let level = lists.ranges.len();
+        let mut cover = core::mem::take(&mut self.cover);
+        let mut span = core::mem::take(&mut self.span);
+        cover.fill([0; MAX_GRID_SIZE]);
+        span.fill(0);
+        let mut alive = true;
         for (t, piece_type) in self.types.iter().enumerate() {
-            if self.remaining[t] == 0 {
-                continue;
-            }
-            let k = piece_type.color;
-            span[k] += self.remaining[t] * piece_type.max_span;
-            for &i in &parent[t] {
-                let candidate = &piece_type.candidates[i];
-                if i >= self.min_index[t] && self.fits(k, candidate) {
-                    result[t].push(i);
-                    for &(r, mask, _) in &candidate.rows {
-                        cover[k][r] |= mask;
+            let start = lists.items.len();
+            if self.remaining[t] > 0 {
+                let k = piece_type.color;
+                span[k] += self.remaining[t] * piece_type.max_span;
+                let (from, to) = lists.ranges[parent + t];
+                // Lists are ascending: skip the indices below the minimum.
+                let min = self.min_index[t];
+                let from = from + lists.items[from..to].partition_point(|&i| usize::from(i) < min);
+                for p in from..to {
+                    let i = lists.items[p];
+                    let candidate = piece_type.candidates[usize::from(i)];
+                    if self.fits(piece_type, candidate) {
+                        lists.items.push(i);
+                        let layout = &piece_type.layouts[usize::from(candidate.orientation)];
+                        let (row, col) = (usize::from(candidate.row), usize::from(candidate.col));
+                        for (cover, &bits) in cover[k][row..]
+                            .iter_mut()
+                            .zip(&layout.bits[..layout.height])
+                        {
+                            *cover |= bits << col;
+                        }
                     }
                 }
+                if lists.items.len() - start < self.remaining[t] {
+                    alive = false;
+                }
             }
-            if result[t].len() < self.remaining[t] {
-                return None;
+            lists.push_range(start);
+            if !alive {
+                break;
             }
         }
+        alive = alive && self.lines_reachable(&cover, &span);
+        self.cover = cover;
+        self.span = span;
+        if alive {
+            Some(level)
+        } else {
+            lists.truncate(level);
+            None
+        }
+    }
 
-        for k in 0..colors {
+    /// Whether every line can still get what it needs: no more than the
+    /// remaining pieces of its color can put into one line, and no more
+    /// than the cells some candidate can still cover.
+    fn lines_reachable(&self, cover: &[[u16; MAX_GRID_SIZE]], span: &[usize]) -> bool {
+        for (k, (cover, &span)) in cover.iter().zip(span).enumerate() {
             for r in 0..self.height {
-                let need = self.row_target[k][r] - self.row_filled[k][r];
-                if need > 0 && (need > span[k] || need > cover[k][r].count_ones() as usize) {
-                    return None;
+                let need = usize::from(self.row_room[k][r]);
+                if need > 0 && (need > span || need > cover[r].count_ones() as usize) {
+                    return false;
                 }
             }
             for c in 0..self.width {
-                let need = self.col_target[k][c] - self.col_filled[k][c];
+                let need = usize::from(self.col_room[k][c]);
                 if need > 0 {
-                    let coverable = (0..self.height)
-                        .filter(|&r| cover[k][r] & (1 << c) != 0)
+                    let coverable = cover[..self.height]
+                        .iter()
+                        .filter(|&&bits| bits & (1 << c) != 0)
                         .count();
-                    if need > span[k] || need > coverable {
-                        return None;
+                    if need > span || need > coverable {
+                        return false;
                     }
                 }
             }
         }
-        Some(result)
+        true
     }
 
-    fn apply(&mut self, t: usize, i: usize, add: bool) {
+    fn apply(&mut self, t: usize, i: u16, add: bool) {
         let piece_type = &self.types[t];
         let k = piece_type.color;
-        let candidate = &piece_type.candidates[i];
-        for &(r, mask, n) in &candidate.rows {
-            self.occupied[r] ^= mask;
+        let candidate = piece_type.candidates[usize::from(i)];
+        let layout = &piece_type.layouts[usize::from(candidate.orientation)];
+        let (row, col) = (usize::from(candidate.row), usize::from(candidate.col));
+        for dr in 0..layout.height {
+            self.occupied[row + dr] ^= layout.bits[dr] << col;
             if add {
-                self.row_filled[k][r] += n;
+                self.row_room[k][row + dr] -= layout.row_cells[dr];
             } else {
-                self.row_filled[k][r] -= n;
+                self.row_room[k][row + dr] += layout.row_cells[dr];
             }
         }
-        for &(c, n) in &candidate.cols {
+        for dc in 0..layout.width {
             if add {
-                self.col_filled[k][c] += n;
+                self.col_room[k][col + dc] -= layout.col_cells[dc];
             } else {
-                self.col_filled[k][c] -= n;
+                self.col_room[k][col + dc] += layout.col_cells[dc];
             }
         }
     }
 
     /// Puts candidate `i` of type `t` on the board.
-    fn place(&mut self, t: usize, i: usize) {
+    fn place(&mut self, t: usize, i: u16) {
         self.apply(t, i, true);
         self.remaining[t] -= 1;
-        self.min_index[t] = i + 1;
+        self.min_index[t] = usize::from(i) + 1;
         self.chosen[t].push(i);
     }
 
     /// Takes back [`place`](Board::place) and restores `min_index[t]`.
-    fn undo(&mut self, t: usize, i: usize, saved_min: usize) {
+    fn undo(&mut self, t: usize, i: u16, saved_min: usize) {
         self.chosen[t].pop();
         self.min_index[t] = saved_min;
         self.remaining[t] += 1;
@@ -573,11 +732,11 @@ impl Board {
         let mut placements = vec![Placement::default(); self.piece_count];
         for (piece_type, chosen) in self.types.iter().zip(&self.chosen) {
             for (&m, &i) in piece_type.free.iter().zip(chosen) {
-                let candidate = &piece_type.candidates[i];
+                let candidate = piece_type.candidates[usize::from(i)];
                 placements[piece_type.members[m]] = Placement {
-                    rotation: piece_type.member_rotations[m][candidate.orientation],
-                    row: candidate.row,
-                    col: candidate.col,
+                    rotation: piece_type.member_rotations[m][usize::from(candidate.orientation)],
+                    row: usize::from(candidate.row),
+                    col: usize::from(candidate.col),
                 };
             }
         }
@@ -611,12 +770,14 @@ fn build_types(
             t
         } else {
             let orientations: Vec<Shape> = own.iter().map(|(_, s)| s.clone()).collect();
-            let candidates = enumerate_candidates(&orientations, grid.width(), grid.height(), free);
+            let layouts: Vec<Layout> = orientations.iter().map(Layout::of).collect();
+            let candidates = enumerate_candidates(&layouts, grid.width(), grid.height(), free);
             types.push(PieceType {
                 color: color_index(piece.color),
                 members: Vec::new(),
                 free: Vec::new(),
                 orientations,
+                layouts,
                 member_rotations: Vec::new(),
                 candidates,
                 max_span: piece.shape.max_line_span(),
@@ -641,42 +802,32 @@ fn build_types(
     types
 }
 
+/// Every placement of every orientation on free cells, orientation by
+/// orientation, row by row, column by column.
 fn enumerate_candidates(
-    orientations: &[Shape],
+    layouts: &[Layout],
     width: usize,
     height: usize,
     free: &[u16; MAX_GRID_SIZE],
 ) -> Vec<Candidate> {
     let mut candidates = Vec::new();
-    for (orientation, shape) in orientations.iter().enumerate() {
-        if shape.height() > height || shape.width() > width {
+    for (orientation, layout) in layouts.iter().enumerate() {
+        if layout.height > height || layout.width > width {
             continue;
         }
-        for row in 0..=height - shape.height() {
-            for col in 0..=width - shape.width() {
-                let mut masks = [0u16; MAX_GRID_SIZE];
-                let mut col_counts = [0usize; MAX_GRID_SIZE];
-                for &(dr, dc) in shape.cells() {
-                    masks[row + dr] |= 1 << (col + dc);
-                    col_counts[col + dc] += 1;
+        for row in 0..=height - layout.height {
+            for col in 0..=width - layout.width {
+                let on_free = layout.bits[..layout.height]
+                    .iter()
+                    .zip(&free[row..])
+                    .all(|(&bits, &free)| (bits << col) & !free == 0);
+                if on_free {
+                    candidates.push(Candidate {
+                        orientation: count8(orientation),
+                        row: count8(row),
+                        col: count8(col),
+                    });
                 }
-                let on_free = (row..row + shape.height()).all(|r| masks[r] & !free[r] == 0);
-                if !on_free {
-                    continue;
-                }
-                candidates.push(Candidate {
-                    orientation,
-                    row,
-                    col,
-                    rows: (row..row + shape.height())
-                        .filter(|&r| masks[r] != 0)
-                        .map(|r| (r, masks[r], masks[r].count_ones() as usize))
-                        .collect(),
-                    cols: (col..col + shape.width())
-                        .filter(|&c| col_counts[c] != 0)
-                        .map(|c| (c, col_counts[c]))
-                        .collect(),
-                });
             }
         }
     }
