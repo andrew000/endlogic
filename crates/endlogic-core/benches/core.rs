@@ -7,13 +7,14 @@ mod measure;
 
 use std::time::Instant;
 
-use endlogic_core::Puzzle;
 use endlogic_core::code::{decode, encode};
 use endlogic_core::format::parse;
 use endlogic_core::generator::{Difficulty, GeneratorParams, SizeRange, generate};
+use endlogic_core::rng::Rng;
 use endlogic_core::solver::{
     DEFAULT_NODE_BUDGET, StopReason, Uniqueness, check_uniqueness, search,
 };
+use endlogic_core::{Cell, Color, Grid, Piece, Puzzle, Rotation, Shape};
 use measure::{Table, rate, show, time};
 
 /// Seeds per level.
@@ -168,6 +169,131 @@ fn large_search(fields: &[(usize, Puzzle)]) {
     table.print();
 }
 
+/// Seeds of each crowded 16x16 field.
+const CROWDED_SEEDS: u64 = 5;
+
+/// A 16x16 puzzle with `pieces` pieces planted on it from `seed`, the way
+/// the generator builds one but without checking it with the solver (the
+/// generator cannot confirm such fields within its budget): pieces of 4 to
+/// 9 cells at most 5 long grown on free cells, then 10 to 16 locks and up
+/// to 8 dead cells on what is left. It has a solution by construction; it
+/// need not be unique.
+fn crowded(pieces: usize, seed: u64) -> Puzzle {
+    const N: usize = 16;
+    let mut rng = Rng::seed_from_u64(
+        seed.wrapping_mul(1000)
+            .wrapping_add(u64::try_from(pieces).unwrap()),
+    );
+    let mut taken = [[false; N]; N];
+    let mut planted: Vec<Vec<(usize, usize)>> = Vec::new();
+    let mut tries = 0;
+    while planted.len() < pieces && tries < 10_000 {
+        tries += 1;
+        let size = rng.usize_inclusive(4, 9);
+        let start = (rng.index(N), rng.index(N));
+        if taken[start.0][start.1] {
+            continue;
+        }
+        let mut cells = vec![start];
+        while cells.len() < size {
+            let mut next = Vec::new();
+            for &(r, c) in &cells {
+                for (dr, dc) in [(0isize, 1isize), (1, 0), (0, -1), (-1, 0)] {
+                    let (Some(nr), Some(nc)) = (r.checked_add_signed(dr), c.checked_add_signed(dc))
+                    else {
+                        continue;
+                    };
+                    if nr >= N || nc >= N || taken[nr][nc] || cells.contains(&(nr, nc)) {
+                        continue;
+                    }
+                    let fold = |(lo, hi): (usize, usize), v: usize| (lo.min(v), hi.max(v));
+                    let rows = cells.iter().map(|x| x.0).fold((nr, nr), fold);
+                    let cols = cells.iter().map(|x| x.1).fold((nc, nc), fold);
+                    if rows.1 - rows.0 < 5 && cols.1 - cols.0 < 5 {
+                        next.push((nr, nc));
+                    }
+                }
+            }
+            if next.is_empty() {
+                break;
+            }
+            cells.push(next[rng.index(next.len())]);
+        }
+        if cells.len() < 4 {
+            continue;
+        }
+        for &(r, c) in &cells {
+            taken[r][c] = true;
+        }
+        planted.push(cells);
+    }
+    let mut grid = vec![Cell::Free; N * N];
+    let mut rows = vec![0; N];
+    let mut cols = vec![0; N];
+    for cells in &planted {
+        for &(r, c) in cells {
+            rows[r] += 1;
+            cols[c] += 1;
+        }
+    }
+    let free: Vec<usize> = (0..N * N).filter(|&i| !taken[i / N][i % N]).collect();
+    let locks = rng.usize_inclusive(10, 16);
+    let dead = rng.usize_inclusive(0, 8);
+    let mut order = free.clone();
+    rng.shuffle(&mut order);
+    for &i in order.iter().take(locks) {
+        grid[i] = Cell::Lock(Color::DEFAULT);
+        rows[i / N] += 1;
+        cols[i % N] += 1;
+    }
+    for &i in order.iter().skip(locks).take(dead) {
+        grid[i] = Cell::Dead;
+    }
+    let pieces = planted
+        .iter()
+        .map(|cells| {
+            let r0 = cells.iter().map(|x| x.0).min().unwrap();
+            let c0 = cells.iter().map(|x| x.1).min().unwrap();
+            let shape = Shape::new(cells.iter().map(|&(r, c)| (r - r0, c - c0))).unwrap();
+            Piece::new(Color::DEFAULT, shape.rotated(Rotation::ALL[rng.index(4)]))
+        })
+        .collect();
+    Puzzle::single_color(Grid::from_cells(N, N, grid).unwrap(), pieces, rows, cols).unwrap()
+}
+
+fn crowded_search() {
+    let mut table = Table::new(
+        &format!(
+            "Solver: crowded 16x16 fields (planted, seeds 0-{}), first solution, budget {LARGE_BUDGET} nodes",
+            CROWDED_SEEDS - 1
+        ),
+        &["pieces", "seed", "nodes", "finished", "time", "speed"],
+    );
+    for pieces in [14, 15, 16] {
+        for seed in 0..CROWDED_SEEDS {
+            let puzzle = crowded(pieces, seed);
+            assert_eq!(puzzle.pieces().len(), pieces);
+            let start = Instant::now();
+            let result = search(&puzzle, 1, LARGE_BUDGET);
+            let took = start.elapsed();
+            let finished = match result.stop {
+                StopReason::NodeBudget => "no, budget spent",
+                StopReason::SolutionLimit => "yes, found",
+                StopReason::Exhausted => "exhausted (no solution?)",
+            };
+            table.row(vec![
+                pieces.to_string(),
+                seed.to_string(),
+                result.nodes.to_string(),
+                finished.to_owned(),
+                show(took),
+                rate(result.nodes, took),
+            ]);
+        }
+    }
+    table.print();
+}
+
 fn generator() {
     let mut table = Table::new(
         &format!("Generator: one accepted puzzle, seeds 0-{}", SEEDS - 1),
@@ -232,6 +358,7 @@ fn main() {
     uniqueness();
     let fields = large_fields();
     large_search(&fields);
+    crowded_search();
     generator();
     codes(&fields[2].1);
     println!("\nendlogic-core benchmarks took {}", show(start.elapsed()));
