@@ -4,11 +4,12 @@ use alloc::string::String;
 use alloc::vec::Vec;
 
 /// Keys of the settings the UI saves through [`Effect::SaveSetting`].
-pub const SETTING_KEYS: [&str; 4] = [
+pub const SETTING_KEYS: [&str; 5] = [
     SETTING_LANG,
     SETTING_COUNTERS,
     SETTING_DIFFICULTY,
     SETTING_EDITOR,
+    SETTING_COLORS,
 ];
 
 /// Setting key for the language: `en` or `ua`.
@@ -19,6 +20,8 @@ pub const SETTING_COUNTERS: &str = "counters";
 pub const SETTING_DIFFICULTY: &str = "difficulty";
 /// Setting key for the puzzle in the editor of the custom tab, as a code.
 pub const SETTING_EDITOR: &str = "editor";
+/// Setting key for the number of colors of generated puzzles: `1` or `2`.
+pub const SETTING_COLORS: &str = "colors";
 
 /// What a puzzle code in the address stands for. The shell keeps the two
 /// apart (in the browser with different address prefixes); the UI only

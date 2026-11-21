@@ -7,10 +7,10 @@ use alloc::vec::Vec;
 
 use crate::math;
 
-use endlogic_core::Cell;
+use endlogic_core::{Cell, Color};
 
 use super::{
-    Style, brackets, button, centered_text, dead_cell, draw_pager, fit, free_cell, lock_cell,
+    Style, Tint, brackets, button, centered_text, dead_cell, draw_pager, fit, free_cell, lock_cell,
     piece, text_font,
 };
 use crate::app::App;
@@ -69,7 +69,7 @@ fn draw_board(app: &App, editor: &Editor, p: &mut Ink<'_>) {
             let r = l.cell_rect(row, col).inset(seam / 2.0);
             match editor.cell(row, col) {
                 Cell::Free => free_cell(p, r),
-                Cell::Lock(_) => lock_cell(p, r),
+                Cell::Lock(color) => lock_cell(p, r, color),
                 Cell::Dead => dead_cell(p, r),
             }
         }
@@ -134,7 +134,7 @@ fn draw_solution(app: &App, p: &mut Ink<'_>) {
             l.cells.x + (to_f32(at.col) + to_f32(shape.width()) / 2.0) * l.cell,
             l.cells.y + (to_f32(at.row) + to_f32(shape.height()) / 2.0) * l.cell,
         );
-        piece(p, &shape, center, l.cell, 0.0, theme::PIECE);
+        piece(p, &shape, center, l.cell, 0.0, Tint::of(Color::DEFAULT));
     }
 }
 
@@ -214,7 +214,14 @@ fn draw_tray(app: &App, editor: &Editor, p: &mut Ink<'_>) {
         };
         p.fill_rect(card, 8.0, theme::CARD);
         if let Some(shape) = editor.pieces().get(i) {
-            piece(p, shape, card.center(), l.tray_cell, 0.0, theme::PIECE);
+            piece(
+                p,
+                shape,
+                card.center(),
+                l.tray_cell,
+                0.0,
+                Tint::of(Color::DEFAULT),
+            );
         } else {
             p.stroke_rect(card.inset(3.5), 6.0, 1.0, theme::ACCENT.alpha(0.6));
             centered_text(

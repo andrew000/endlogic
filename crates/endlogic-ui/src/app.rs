@@ -2,7 +2,7 @@
 
 use alloc::borrow::ToOwned;
 use alloc::format;
-use alloc::string::String;
+use alloc::string::{String, ToString};
 use alloc::vec;
 use alloc::vec::Vec;
 
@@ -14,15 +14,16 @@ use endlogic_core::generator::{Difficulty, Generator, Step};
 use endlogic_core::rng::Rng;
 
 use crate::board::{Board, PieceState, Turned};
+use crate::counters::band_depth;
 use crate::draw;
 use crate::editor::{EditControl, EditState, Editor};
 use crate::hint::Hints;
 use crate::ink::{Ink, Nothing};
-use crate::layout::{Layout, LayoutInput, Mode, to_f32};
+use crate::layout::{BAND, Layout, LayoutInput, Mode, to_f32};
 use crate::painter::{Painter, Point, Rect};
 use crate::shell::{
     Budgets, CodeKind, Config, Cursor, Effect, Event, Insets, Key, Pointer, PointerKind,
-    SETTING_COUNTERS, SETTING_DIFFICULTY, SETTING_EDITOR, SETTING_LANG,
+    SETTING_COLORS, SETTING_COUNTERS, SETTING_DIFFICULTY, SETTING_EDITOR, SETTING_LANG,
 };
 use crate::text::{Lang, Text};
 use crate::theme;
@@ -36,9 +37,32 @@ pub const TOUCH_DRAG_THRESHOLD: f32 = 14.0;
 pub const TOUCH_SLACK: f32 = 0.4;
 /// How far above the finger a piece dragged by touch floats, in cells.
 pub const TOUCH_LIFT: f32 = 1.5;
-/// Solver nodes the generator may spend in one frame. Time cannot be
-/// measured here, so this is a cautious fixed number.
+/// Solver nodes the generator, hints and the editor's solver may spend in
+/// one frame on a field of at most [`SMALL_FIELD`] cells. Time cannot be
+/// measured here, so this is a cautious fixed number; larger fields get
+/// proportionally fewer ([`frame_nodes`]).
 pub const NODES_PER_FRAME: u64 = 20_000;
+/// Cells of the largest field that gets the whole per-frame budget.
+pub const SMALL_FIELD: u64 = 64;
+/// Fewest nodes per frame on any field.
+pub const MIN_NODES_PER_FRAME: u64 = 2_000;
+/// Most colors a generated puzzle can have in the trainer.
+pub const MAX_PLAY_COLORS: usize = 2;
+
+/// Nodes one frame may spend on a field of `cells` cells, from the budget
+/// `per_frame` of a small field: all of it up to [`SMALL_FIELD`] cells,
+/// proportionally less on larger fields, but not less than
+/// [`MIN_NODES_PER_FRAME`] (nor more than `per_frame`).
+#[must_use]
+pub fn frame_nodes(per_frame: u64, cells: usize) -> u64 {
+    let cells = u64::try_from(cells).unwrap_or(u64::MAX).max(1);
+    if cells <= SMALL_FIELD {
+        return per_frame;
+    }
+    (per_frame.saturating_mul(SMALL_FIELD) / cells)
+        .max(MIN_NODES_PER_FRAME)
+        .min(per_frame)
+}
 /// Longest frame step fed to animations, in seconds.
 const MAX_FRAME_STEP: f32 = 0.1;
 
@@ -98,6 +122,9 @@ pub enum Control {
     Reset,
     /// A half of the counter display switch.
     Counters(CounterMode),
+    /// A half of the colors switch: generated puzzles with this many
+    /// colors.
+    Colors(usize),
     /// The new puzzle button.
     New,
     /// The next button on the win banner.
@@ -224,6 +251,8 @@ pub struct App {
     puzzles_started: u64,
     pub(crate) lang: Lang,
     pub(crate) counters: CounterMode,
+    /// Colors of generated puzzles, 1 or 2.
+    pub(crate) colors: usize,
     pub(crate) difficulty: Difficulty,
     pub(crate) game: Option<Game>,
     pub(crate) generator: Option<Generator>,
@@ -265,6 +294,10 @@ impl App {
         let difficulty = setting(SETTING_DIFFICULTY)
             .and_then(Difficulty::from_name)
             .unwrap_or(Difficulty::Normal);
+        let colors = setting(SETTING_COLORS)
+            .and_then(|v| v.parse::<usize>().ok())
+            .filter(|n| (1..=MAX_PLAY_COLORS).contains(n))
+            .unwrap_or(1);
         let mut app = App {
             width: config.width,
             height: config.height,
@@ -275,6 +308,7 @@ impl App {
             puzzles_started: 0,
             lang,
             counters,
+            colors,
             difficulty,
             game: None,
             generator: None,
@@ -301,6 +335,8 @@ impl App {
                 pieces: 1,
                 max_piece_side: 1,
                 mode: Mode::Play,
+                row_band: BAND,
+                col_band: BAND,
             }),
         };
         let code = config.code;
@@ -443,6 +479,27 @@ impl App {
     #[must_use]
     pub fn difficulty(&self) -> Difficulty {
         self.difficulty
+    }
+
+    /// Number of colors of generated puzzles.
+    #[must_use]
+    pub fn colors(&self) -> usize {
+        self.colors
+    }
+
+    /// Nodes a search may spend in the next frame on the field in play or
+    /// in the editor.
+    #[must_use]
+    pub fn frame_budget(&self) -> u64 {
+        let cells = if self.is_editing() {
+            self.editor.width() * self.editor.height()
+        } else if let Some(game) = &self.game {
+            game.board.width() * game.board.height()
+        } else {
+            let params = self.difficulty.params();
+            params.width * params.height
+        };
+        frame_nodes(self.budgets.per_frame, cells)
     }
 
     /// The current layout.
@@ -671,7 +728,9 @@ impl App {
             })
     }
 
-    fn layout_input(&self) -> LayoutInput {
+    /// What the layout is computed from right now.
+    #[must_use]
+    pub fn layout_input(&self) -> LayoutInput {
         let (grid_width, grid_height, pieces, max_piece_side) = if self.is_editing() {
             (
                 self.editor.width(),
@@ -690,6 +749,28 @@ impl App {
             let params = self.difficulty.params();
             (params.width, params.height, params.pieces.max, 3)
         };
+        // The bands are as deep as the longest counter; while a puzzle is
+        // being generated, as for full lines.
+        let (row_band, col_band) = if self.is_editing() {
+            (BAND, BAND)
+        } else if let Some(game) = &self.game {
+            let board = &game.board;
+            let longest = |lines: &dyn Fn(endlogic_core::Color) -> Vec<crate::board::Line>| {
+                board
+                    .colors()
+                    .iter()
+                    .flat_map(|&color| lines(color))
+                    .map(|line| line.clue)
+                    .max()
+                    .unwrap_or(0)
+            };
+            (
+                band_depth(longest(&|c| board.rows_of(c))),
+                band_depth(longest(&|c| board.cols_of(c))),
+            )
+        } else {
+            (band_depth(grid_width), band_depth(grid_height))
+        };
         LayoutInput {
             width: self.width,
             height: self.height,
@@ -701,6 +782,8 @@ impl App {
             pieces,
             max_piece_side,
             mode: self.edit_mode(),
+            row_band,
+            col_band,
         }
     }
 
@@ -731,7 +814,7 @@ impl App {
         let Ok(puzzle) = decode(code) else {
             return false;
         };
-        if puzzle.colors().len() > 1 {
+        if kind == CodeKind::Edit && puzzle.colors().len() > 1 {
             return false;
         }
         if kind == CodeKind::Edit {
@@ -793,14 +876,16 @@ impl App {
         self.edit = EditState::default();
         self.puzzles_started += 1;
         let seed = Rng::for_stream(self.entropy, self.puzzles_started).next_u64();
-        self.generator = Generator::new(self.difficulty.params(), seed).ok();
+        let params = self.difficulty.params().with_colors(self.colors);
+        self.generator = Generator::new(params, seed).ok();
     }
 
     fn step_generator(&mut self) {
+        let budget = self.frame_budget();
         let Some(generator) = &mut self.generator else {
             return;
         };
-        match generator.step(self.budgets.per_frame) {
+        match generator.step(budget) {
             Step::Working => {}
             Step::Done(generated) => {
                 self.generator = None;
@@ -926,6 +1011,18 @@ impl App {
                 ]);
             }
             return controls;
+        }
+        if let Some(colors) = l.colors.filter(|_| !self.custom) {
+            if l.compact {
+                let other = self.colors % MAX_PLAY_COLORS + 1;
+                controls.push((Control::Colors(other), colors, true));
+            } else {
+                let (one, two) = Layout::halves(colors);
+                controls.extend([
+                    (Control::Colors(1), one, true),
+                    (Control::Colors(2), two, true),
+                ]);
+            }
         }
         if l.compact {
             // One button each, switching to the other choice.
@@ -1228,6 +1325,14 @@ impl App {
             }
             Control::Reset => self.reset(),
             Control::Counters(mode) => self.set_counters(mode),
+            Control::Colors(colors) => {
+                if colors != self.colors {
+                    self.colors = colors;
+                    self.save(SETTING_COLORS, &colors.to_string());
+                    self.start_generation();
+                    self.relayout();
+                }
+            }
             Control::New | Control::Next => self.start_generation(),
             Control::Hint => self.request_hint(),
             Control::PagePrev => self.turn_page(false),

@@ -12,8 +12,8 @@ use std::time::Instant;
 use endlogic_core::code::encode;
 use endlogic_core::format::parse;
 use endlogic_ui::{
-    App, Budgets, CodeKind, Config, Insets, Lang, Layout, LayoutInput, Mode, Painter, Point, Rect,
-    Rgba, SETTING_DIFFICULTY,
+    App, BAND, Budgets, CodeKind, Config, Insets, Lang, Layout, LayoutInput, Mode, Painter, Point,
+    Rect, Rgba, SETTING_DIFFICULTY, band_depth,
 };
 use measure::{Table, show, time};
 
@@ -130,6 +130,8 @@ fn layouts() {
             pieces: 8,
             max_piece_side: 5,
             mode: Mode::Play,
+            row_band: band_depth(8),
+            col_band: band_depth(8),
         };
         let t = time(|| Layout::compute(&input));
         table.row(vec![format!("expert, {name}"), show(t.mean), show(t.best)]);
@@ -146,6 +148,8 @@ fn layouts() {
             pieces: 25,
             max_piece_side: 5,
             mode: Mode::Edit,
+            row_band: BAND,
+            col_band: BAND,
         };
         let t = time(|| Layout::compute(&input));
         table.row(vec![

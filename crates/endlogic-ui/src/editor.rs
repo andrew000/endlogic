@@ -474,7 +474,7 @@ impl App {
                 self.edit.clear_armed = None;
             }
         }
-        let per_frame = self.budgets.per_frame;
+        let per_frame = self.frame_budget();
         let Some(solver) = &mut self.edit.solver else {
             return;
         };

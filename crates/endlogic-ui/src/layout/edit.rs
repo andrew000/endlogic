@@ -421,6 +421,8 @@ fn layout(parts: Parts) -> Layout {
         next: Rect::default(),
         notice: edit.result.center(),
         edit: Some(edit),
+        numbers_only: false,
+        colors: None,
     }
 }
 

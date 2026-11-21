@@ -21,8 +21,8 @@ use endlogic_core::format::parse;
 use endlogic_core::solver::{DEFAULT_NODE_BUDGET, search};
 use endlogic_core::{Puzzle, Solution};
 use endlogic_ui::{
-    App, CodeKind, Config, Event, Key, Painter, Point, PointerKind, Rect, Rgba, SETTING_COUNTERS,
-    SETTING_DIFFICULTY, SETTING_LANG,
+    App, CodeKind, Config, Event, Key, Painter, Point, PointerKind, Rect, Rgba, SETTING_COLORS,
+    SETTING_COUNTERS, SETTING_DIFFICULTY, SETTING_LANG,
 };
 
 /// Generated puzzles from the solver's fixed list in `endlogic-core`.
@@ -273,7 +273,7 @@ fn silhouette(app: &App) -> String {
     let width = app.board().unwrap().width();
     let mut text = String::new();
     for row in app.silhouette().chunks(width) {
-        text.extend(row.iter().map(|&on| if on { 'o' } else { '.' }));
+        text.extend(row.iter().map(|on| if on.is_some() { 'o' } else { '.' }));
         text.push('\n');
     }
     text
@@ -477,6 +477,53 @@ fn scenes() -> Vec<(String, Writer)> {
     }
     out.extend(play_scenes());
     out.extend(editor_scenes());
+    out.extend(colored_scenes());
+    out
+}
+
+/// Two colors: generated levels, the game's samples, a silhouette.
+fn colored_scenes() -> Vec<(String, Writer)> {
+    let mut out: Vec<(String, Writer)> = Vec::new();
+    for name in ["normal", "expert"] {
+        for (size, w, h, touch) in [
+            ("1366x768", 1366.0, 768.0, false),
+            ("390x844-touch", 390.0, 844.0, true),
+        ] {
+            let mut config = level(name, w, h, "en", touch);
+            config
+                .settings
+                .push((SETTING_COLORS.to_owned(), "2".to_owned()));
+            let mut app = App::new(config);
+            out.push((format!("{name} two colors {size}"), rest(&mut app)));
+        }
+    }
+    for file in ["wla980-1", "wla980-2"] {
+        let puzzle = sample(&format!("{file}.txt"));
+        for (size, w, h, lang) in [
+            ("1366x768", 1366.0, 768.0, "en"),
+            ("390x844", 390.0, 844.0, "ua"),
+        ] {
+            let mut app = with_code(CodeKind::Play, &puzzle, w, h, lang);
+            out.push((format!("{file} {size} {lang}"), rest(&mut app)));
+        }
+    }
+    let mut app = with_code(CodeKind::Play, &sample("wla980-1.txt"), 1366.0, 768.0, "en");
+    app.handle(Event::Key(Key::Tab));
+    out.push(("wla980-1 numbers".to_owned(), rest(&mut app)));
+    app.handle(Event::Key(Key::Tab));
+    app.place(0, 0, 0, 0, PointerKind::Mouse);
+    out.push(("wla980-1 orange in a teal row".to_owned(), rest(&mut app)));
+    let mut app = with_code(CodeKind::Play, &sample("wla980-1.txt"), 1366.0, 768.0, "en");
+    ask(&mut app);
+    out.push(("wla980-1 silhouette".to_owned(), rest(&mut app)));
+    for _ in 0..10 {
+        if app.is_won() {
+            break;
+        }
+        ask(&mut app);
+    }
+    assert!(app.is_won());
+    out.push(("wla980-1 won with hints".to_owned(), rest(&mut app)));
     out
 }
 

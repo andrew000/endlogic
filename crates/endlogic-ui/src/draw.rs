@@ -9,19 +9,19 @@ use crate::math;
 use core::f32::consts::{FRAC_PI_2, TAU};
 
 use endlogic_core::generator::Difficulty;
-use endlogic_core::{Cell, Shape};
+use endlogic_core::{Cell, Color, Shape};
 
 mod edit;
 
 use crate::app::{App, CounterMode, Game, Gesture};
 use crate::board::{Line, LineState};
-use crate::counters::{CounterView, counter_view};
+use crate::counters::{Counter, CounterView, TICK_THICK, line_counters};
 use crate::font::{Align, Font, MIN_FONT_SIZE};
 use crate::ink::Ink;
 use crate::layout::{Arrangement, Layout, TITLE, TextBlock, tab_label, to_f32};
 use crate::painter::{Painter, Point, Rect, Rgba};
 use crate::text::{Lang, Text, text};
-use crate::theme::{self, ease_out};
+use crate::theme::{self, Palette, ease_out, palette};
 
 /// Text shown in place of the puzzle id while there is no puzzle.
 const NO_ID: &str = "Δ-…";
@@ -265,6 +265,9 @@ fn draw_top_controls(app: &App, p: &mut Ink<'_>) {
             );
         }
     }
+    if let Some(rect) = l.colors.filter(|_| !app.is_custom()) {
+        colors_switch(p, rect, app.colors, l.compact, l.font * 0.9);
+    }
     if l.compact {
         button(p, l.lang, app.lang.label(), Style::Normal, l.font * 0.9);
         if !app.is_editing() {
@@ -333,6 +336,46 @@ fn draw_bottom_controls(app: &App, p: &mut Ink<'_>) {
         Text::New
     };
     button(p, l.new, text(app.lang, new), Style::Primary, l.font);
+}
+
+/// The colors switch: `1 | 2`, each number followed by a swatch of every
+/// color it brings; with `compact` one button showing the current number.
+fn colors_switch(p: &mut Ink<'_>, rect: Rect, colors: usize, compact: bool, font: f32) {
+    let radius = rect.h / 2.0;
+    p.fill_rect(rect, radius, theme::PANEL);
+    p.stroke_rect(rect.inset(0.5), radius, 1.0, theme::CELL_MARK);
+    let counts: &[usize] = if compact { &[colors] } else { &[1, 2] };
+    let w = rect.w / to_f32(counts.len());
+    let font = text_font(font, true);
+    for (k, &n) in counts.iter().enumerate() {
+        let seg = Rect::new(rect.x + w * to_f32(k), rect.y, w, rect.h);
+        let active = !compact && n == colors;
+        let color = if active {
+            p.fill_rect(seg.inset(3.0), (rect.h - 6.0) / 2.0, theme::TEXT);
+            theme::BACKGROUND
+        } else if compact {
+            theme::TEXT
+        } else {
+            theme::MUTED
+        };
+        let label = if n == 1 { "1" } else { "2" };
+        let swatch = (rect.h * 0.22).max(4.0);
+        let text_w = p.text_width(label, font);
+        let total = text_w + 3.0 + to_f32(n) * (swatch + 2.0);
+        let x = seg.center().x - total / 2.0;
+        p.text(
+            label,
+            Point::new(x, seg.center().y),
+            font,
+            Align::Left,
+            color,
+        );
+        for j in 0..n {
+            let at = x + text_w + 3.0 + to_f32(j) * (swatch + 2.0);
+            let square = Rect::new(at, seg.center().y - swatch / 2.0, swatch, swatch);
+            p.fill_rect(square, 1.0, theme::PALETTES[j].fill);
+        }
+    }
 }
 
 /// The one-button counter switch: three ticks for the grid display, `123`
@@ -405,10 +448,11 @@ pub(crate) fn free_cell(p: &mut Ink<'_>, r: Rect) {
     p.fill_circle(r.center(), (r.w * 0.04).max(1.0), mark);
 }
 
-pub(crate) fn lock_cell(p: &mut Ink<'_>, r: Rect) {
-    p.fill_rect(r, 0.0, theme::LOCK);
+pub(crate) fn lock_cell(p: &mut Ink<'_>, r: Rect, color: Color) {
+    let look = palette(color);
+    p.fill_rect(r, 0.0, look.lock);
     let w = (r.w * 0.05).max(1.5);
-    p.stroke_rect(r.inset(w), 1.0, w, theme::BRIGHT);
+    p.stroke_rect(r.inset(w), 1.0, w, look.bright);
     let c = r.center();
     let icon = theme::BACKGROUND.alpha(0.85);
     let body = Rect::new(c.x - r.w * 0.17, c.y - r.w * 0.04, r.w * 0.34, r.w * 0.26);
@@ -464,7 +508,7 @@ fn draw_board(app: &App, game: &Game, p: &mut Ink<'_>) {
             let r = l.cell_rect(row, col).inset(seam / 2.0);
             match board.cell(row, col) {
                 Cell::Free => free_cell(p, r),
-                Cell::Lock(_) => lock_cell(p, r),
+                Cell::Lock(color) => lock_cell(p, r, color),
                 Cell::Dead => dead_cell(p, r),
             }
         }
@@ -479,7 +523,11 @@ fn draw_board(app: &App, game: &Game, p: &mut Ink<'_>) {
         && let Some((row, col)) = app.drop_target(&drag)
     {
         let ok = board.fits(drag.piece, board.piece(drag.piece).turns, row, col);
-        let color = if ok { theme::ACCENT } else { theme::ERROR };
+        let color = if ok {
+            palette(board.piece_color(drag.piece)).accent
+        } else {
+            theme::ERROR
+        };
         for &(dr, dc) in board.shape(drag.piece).cells() {
             let (r, c) = (
                 row + isize::try_from(dr).unwrap_or(0),
@@ -498,17 +546,21 @@ fn draw_board(app: &App, game: &Game, p: &mut Ink<'_>) {
 }
 
 /// The hint silhouette: a faint hatched fill on every cell the solution
-/// covers, with no borders between pieces. It goes with the win.
+/// covers, in the color of the piece there, with no borders between
+/// pieces. It goes with the win.
 fn draw_silhouette(app: &App, game: &Game, p: &mut Ink<'_>) {
     if game.won {
         return;
     }
     let l = &app.layout;
     let width = game.board.width();
-    let fill = theme::SILHOUETTE.alpha(0.16);
-    let hatch = theme::SILHOUETTE.alpha(0.3);
     let stroke = (l.cell * 0.03).max(1.0);
-    for (k, _) in app.silhouette().iter().enumerate().filter(|(_, on)| **on) {
+    for (k, color) in app.silhouette().iter().enumerate() {
+        let Some(color) = color else {
+            continue;
+        };
+        let accent = palette(*color).accent;
+        let (fill, hatch) = (accent.alpha(0.16), accent.alpha(0.3));
         let r = l.cell_rect(k / width, k % width);
         p.fill_rect(r, 0.0, fill);
         p.push_clip(r);
@@ -528,63 +580,70 @@ fn draw_silhouette(app: &App, game: &Game, p: &mut Ink<'_>) {
 
 // ---- counters ----
 
-fn line_color(line: Line) -> Rgba {
+/// The color of a counter in the state of `line`.
+fn line_color(line: Line, look: Palette) -> Rgba {
     match line.state() {
-        LineState::Under => theme::ACCENT,
-        LineState::Exact => theme::BRIGHT,
+        LineState::Under => look.accent,
+        LineState::Exact => look.bright,
         LineState::Over => theme::ERROR,
     }
 }
 
-/// What all counters of a board share.
-#[derive(Clone, Copy)]
-struct CounterLook {
-    mode: CounterMode,
+/// Draws the counters of one line in `area`: for a row (`row`), the band
+/// part left of the row; for a column, the band part above it.
+fn line_counter(
+    p: &mut Ink<'_>,
+    area: Rect,
+    lines: &[(Color, Line)],
+    row: bool,
+    numbers: bool,
     cell: f32,
-    /// The largest clue, which sizes the squares.
-    largest: usize,
     font: f32,
-}
-
-/// Draws one counter in `area`: for a row (`row`), the band part left of
-/// the row; for a column, the band part above it.
-fn counter(p: &mut Ink<'_>, area: Rect, line: Line, row: bool, look: &CounterLook) {
-    let CounterLook {
-        mode,
-        cell,
-        largest,
-        font,
-    } = *look;
-    let zero_color = if line.filled == 0 {
-        theme::MUTED
-    } else {
-        theme::ERROR
-    };
-    if mode == CounterMode::Numbers {
-        let color = if line.clue == 0 {
-            zero_color
+) {
+    let counters = line_counters(lines, area, row, cell);
+    let lone = counters.len() == 1;
+    for Counter {
+        color,
+        line,
+        slot,
+        view,
+    } in counters
+    {
+        let look = palette(color);
+        // A zero clue: grey while the line is empty, red once cells of the
+        // color stand in it.
+        let zero = if line.filled == 0 {
+            theme::MUTED
         } else {
-            line_color(line)
+            theme::ERROR
         };
-        number(p, area, line, color, row, font);
-        return;
-    }
-    match counter_view(line, area, row, cell, largest) {
-        CounterView::Empty { center, radius } => {
-            empty_sign(p, center, radius, (cell * 0.05).max(1.5), zero_color);
+        if numbers {
+            let ink = if line.clue == 0 {
+                zero
+            } else {
+                line_color(line, look)
+            };
+            let font = if lone { font } else { font * 0.85 };
+            number(p, slot, line, ink, row, font);
+            continue;
         }
-        CounterView::Number => number(p, area, line, line_color(line), row, font),
-        CounterView::Marks { marks, ticks } => {
-            let radius = if ticks { 0.0 } else { 1.0 };
-            for (k, rect) in marks.into_iter().enumerate() {
-                match line.state() {
-                    LineState::Exact => p.fill_rect(rect, radius, theme::BRIGHT),
-                    LineState::Over => p.fill_rect(rect, radius, theme::ERROR),
-                    LineState::Under if k < line.filled => {
-                        p.fill_rect(rect, radius, theme::ACCENT);
-                    }
-                    LineState::Under => {
-                        p.stroke_rect(rect.inset(0.5), radius, 1.0, theme::ACCENT);
+        match view {
+            CounterView::Empty { center, radius } => {
+                let width = (cell * 0.05).max(1.5).min(radius * 0.4);
+                empty_sign(p, center, radius, width, zero);
+            }
+            CounterView::Ticks(marks) => {
+                let outline = (cell * TICK_THICK * 0.22).clamp(1.0, 1.5);
+                for (k, rect) in marks.into_iter().enumerate() {
+                    match line.state() {
+                        LineState::Exact => p.fill_rect(rect, 0.0, look.bright),
+                        LineState::Over => p.fill_rect(rect, 0.0, theme::ERROR),
+                        LineState::Under if k < line.filled => {
+                            p.fill_rect(rect, 0.0, look.accent);
+                        }
+                        LineState::Under => {
+                            p.stroke_rect(rect.inset(outline / 2.0), 0.0, outline, look.accent);
+                        }
                     }
                 }
             }
@@ -617,23 +676,23 @@ fn number(p: &mut Ink<'_>, area: Rect, line: Line, color: Rgba, row: bool, font:
 
 fn draw_counters(app: &App, game: &Game, p: &mut Ink<'_>) {
     let l = &app.layout;
-    let font = l.font;
-    let (rows, cols) = (game.board.rows(), game.board.cols());
-    let look = CounterLook {
-        mode: app.counters,
-        cell: l.cell,
-        largest: rows.iter().chain(&cols).map(|l| l.clue).max().unwrap_or(0),
-        font,
+    let board = &game.board;
+    let numbers = app.counters == CounterMode::Numbers || l.numbers_only;
+    let colors = board.colors();
+    let rows: Vec<Vec<Line>> = colors.iter().map(|&c| board.rows_of(c)).collect();
+    let cols: Vec<Vec<Line>> = colors.iter().map(|&c| board.cols_of(c)).collect();
+    let of = |lines: &[Vec<Line>], k: usize| -> Vec<(Color, Line)> {
+        colors.iter().zip(lines).map(|(&c, l)| (c, l[k])).collect()
     };
-    for (row, line) in rows.into_iter().enumerate() {
+    for row in 0..board.height() {
         let cell = l.cell_rect(row, 0);
         let area = Rect::new(l.row_counters.x, cell.y, l.row_counters.w, cell.h);
-        counter(p, area, line, true, &look);
+        line_counter(p, area, &of(&rows, row), true, numbers, l.cell, l.font);
     }
-    for (col, line) in cols.into_iter().enumerate() {
+    for col in 0..board.width() {
         let cell = l.cell_rect(0, col);
         let area = Rect::new(cell.x, l.col_counters.y, cell.w, l.col_counters.h);
-        counter(p, area, line, false, &look);
+        line_counter(p, area, &of(&cols, col), false, numbers, l.cell, l.font);
     }
 }
 
@@ -717,8 +776,10 @@ fn draw_pieces(app: &App, game: &Game, p: &mut Ink<'_>) {
         let blamed = anim.and_then(|a| a.blame).map_or(0.0, |t| {
             1.0 - (t / theme::BLAME_TIME - 0.8).clamp(0.0, 0.2) * 5.0
         });
-        let fill = theme::PIECE
-            .mix(theme::BRIGHT, win * 0.35)
+        let look = palette(game.board.piece_color(i));
+        let fill = look
+            .fill
+            .mix(look.bright, win * 0.35)
             .mix(theme::ERROR, blamed);
         let alpha = if Some(i) == dragged { 0.92 } else { 1.0 };
         piece(
@@ -727,8 +788,29 @@ fn draw_pieces(app: &App, game: &Game, p: &mut Ink<'_>) {
             center,
             cell,
             spin,
-            fill.alpha(alpha),
+            Tint {
+                fill: fill.alpha(alpha),
+                edge: look.bright.alpha(alpha),
+            },
         );
+    }
+}
+
+/// The colors a piece is drawn in.
+#[derive(Clone, Copy)]
+pub(crate) struct Tint {
+    pub fill: Rgba,
+    pub edge: Rgba,
+}
+
+impl Tint {
+    /// A piece of `color` as it rests.
+    pub(crate) fn of(color: Color) -> Tint {
+        let look = palette(color);
+        Tint {
+            fill: look.fill,
+            edge: look.bright,
+        }
     }
 }
 
@@ -740,9 +822,9 @@ pub(crate) fn piece(
     center: Point,
     cell: f32,
     angle: f32,
-    fill: Rgba,
+    tint: Tint,
 ) {
-    piece_with(p, shape, center, cell, angle, fill, true);
+    piece_with(p, shape, center, cell, angle, tint, true);
 }
 
 /// The app icon in the square from the origin to (`side`, `side`): a dark
@@ -761,7 +843,7 @@ pub fn draw_icon(painter: &mut dyn Painter, side: f32) {
         center,
         side * 0.32,
         0.0,
-        theme::PIECE,
+        Tint::of(Color::DEFAULT),
         side >= 20.0,
     );
 }
@@ -773,9 +855,10 @@ fn piece_with(
     center: Point,
     cell: f32,
     angle: f32,
-    fill: Rgba,
+    tint: Tint,
     seams: bool,
 ) {
+    let Tint { fill, edge } = tint;
     let (half_w, half_h) = (to_f32(shape.width()) / 2.0, to_f32(shape.height()) / 2.0);
     let (sin, cos) = math::sin_cos(angle);
     let map = |x: f32, y: f32| {
@@ -786,7 +869,6 @@ fn piece_with(
         )
     };
     let has = |row: usize, col: usize| shape.contains(row, col);
-    let edge = theme::BRIGHT.alpha(f32::from(fill.a) / 255.0);
     let seam = theme::BACKGROUND.alpha(0.35);
     let edge_w = (cell * 0.07).max(1.5);
     for &(row, col) in shape.cells() {

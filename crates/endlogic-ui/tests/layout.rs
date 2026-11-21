@@ -5,14 +5,16 @@ mod common;
 use std::fmt::Write as _;
 
 use common::*;
+use endlogic_core::Color;
 use endlogic_core::Puzzle;
 use endlogic_core::code::encode;
 use endlogic_core::format::parse;
 use endlogic_core::generator::Difficulty;
 use endlogic_ui::{
-    App, Arrangement, BAND, COUNTER_GAP, CodeKind, CounterView, Event, Insets, Key, Lang, Layout,
-    LayoutInput, Line, LineState, MIN_SQUARE, MIN_TARGET, Mode, Point, PointerKind, Rect, Rgba,
-    TRAY_MIN_SCALE, TRAY_SCALE, counter_view,
+    ACROSS, App, Arrangement, BAND, COUNTER_GAP, CodeKind, Counter, CounterView, Event, Insets,
+    Key, Lang, Layout, LayoutInput, Line, LineState, MIN_TARGET, MIN_TICK, Mode, Point,
+    PointerKind, Rect, Rgba, TICK_LONG, TICK_PITCH, TICK_THICK, TRAY_MIN_SCALE, TRAY_SCALE,
+    band_depth, line_counters,
 };
 
 // ---- layout ----
@@ -128,7 +130,7 @@ fn check_layout(layout: &Layout, input: &LayoutInput, what: &str) {
             );
         }
     }
-    check_board(layout, what);
+    check_board(layout, input, what);
     check_tray(layout, input, what);
     if editing {
         check_edit(layout, input, safe, what);
@@ -206,9 +208,10 @@ fn check_edit(layout: &Layout, input: &LayoutInput, safe: Rect, what: &str) {
     }
 }
 
-/// The grid is on the axis, with a counter band on the left and an equal
+/// The grid is on the axis, with a counter band on the left as deep as the
+/// input asks ([`BAND`] when ticks would be too thin) and an equal
 /// empty band on the right.
-fn check_board(layout: &Layout, what: &str) {
+fn check_board(layout: &Layout, input: &LayoutInput, what: &str) {
     let c = layout.cell;
     assert!(layout.frame.contains_rect(layout.cells), "{what}: cells");
     assert_close(
@@ -216,8 +219,16 @@ fn check_board(layout: &Layout, what: &str) {
         layout.axis,
         &format!("{what}: grid axis"),
     );
-    assert_close(layout.row_counters.w, BAND * c, what);
-    assert_close(layout.col_counters.h, BAND * c, what);
+    let (rows, cols) = if layout.numbers_only {
+        (BAND, BAND)
+    } else {
+        (input.row_band, input.col_band)
+    };
+    if layout.edit.is_none() && !layout.numbers_only {
+        assert!(TICK_THICK * layout.cell >= MIN_TICK, "{what}: thin ticks");
+    }
+    assert_close(layout.row_counters.w, rows * c, what);
+    assert_close(layout.col_counters.h, cols * c, what);
     assert_close(layout.right_band.w, layout.row_counters.w, what);
     let gap = COUNTER_GAP * c;
     assert_close(layout.row_counters.right(), layout.cells.x - gap, what);
@@ -296,6 +307,13 @@ fn check_wide(layout: &Layout, w: f32, what: &str) {
         "{what}: tray {} of {w}",
         layout.tray.w
     );
+    // The colors switch right of the tabs, on their row.
+    let colors = layout.colors.unwrap();
+    assert!(
+        colors.x > layout.tabs[4].right(),
+        "{what}: colors after tabs"
+    );
+    assert_close(colors.y, layout.tabs[0].y, what);
     for (name, rect) in [
         ("tabs", layout.tab_bar()),
         ("counters", layout.counters),
@@ -318,8 +336,12 @@ fn check_tall(layout: &Layout, safe: Rect, what: &str) {
         .max(layout.share.bottom());
     assert!(header_bottom - header_top <= 48.0, "{what}: header");
     assert!(layout.tabs.iter().all(|t| t.h <= 36.0), "{what}: tabs");
-    // Header, from the left: the counter display, the language, the link.
+    // Header, from the left: the colors, the counter display, the
+    // language, the link.
     assert!(layout.compact, "{what}: compact switches");
+    let colors = layout.colors.unwrap();
+    assert!(colors.right() < layout.counters.x, "{what}: header order");
+    assert!(colors.h <= 30.0 && colors.y >= header_top, "{what}: header");
     assert!(
         layout.counters.right() < layout.lang.x,
         "{what}: header order"
@@ -374,6 +396,7 @@ fn check_low_wide(layout: &Layout, what: &str) {
     // No top or bottom row: every control is beside the board.
     let block = layout.board_block();
     let mut controls = vec![
+        layout.colors.unwrap(),
         layout.lang,
         layout.share,
         layout.reset,
@@ -408,6 +431,8 @@ fn input_for(w: f32, h: f32, difficulty: Difficulty, side: usize, lang: Lang) ->
         pieces: params.pieces.max,
         max_piece_side: side,
         mode: Mode::Play,
+        row_band: band_depth(params.width),
+        col_band: band_depth(params.height),
     }
 }
 
@@ -532,19 +557,7 @@ fn a_sixteen_by_sixteen_puzzle_fits() {
         config.touch = w < h;
         let mut app = App::new(config);
         assert!(!app.is_generating());
-        let board = app.board().unwrap();
-        let input = LayoutInput {
-            width: w,
-            height: h,
-            insets: Insets::default(),
-            touch: w < h,
-            lang: Lang::En,
-            grid_width: board.width(),
-            grid_height: board.height(),
-            pieces: board.piece_count(),
-            max_piece_side: board.max_piece_side(),
-            mode: Mode::Play,
-        };
+        let input = app.layout_input();
         check_layout(app.layout(), &input, &format!("16x16 at {w}x{h}"));
         let drawing = settle(&mut app);
         let screen = Rect::new(-1.0, -1.0, w + 2.0, h + 2.0);
@@ -566,19 +579,7 @@ fn layout_of_real_puzzles_fits() {
             config.entropy = u64::try_from(k).unwrap();
             config.settings = vec![("difficulty".to_owned(), difficulty.name().to_owned())];
             let mut app = generated(config);
-            let board = app.board().unwrap();
-            let input = LayoutInput {
-                width: w,
-                height: h,
-                insets: phone_insets(w, h),
-                touch: w < h || h < 520.0,
-                lang: Lang::En,
-                grid_width: board.width(),
-                grid_height: board.height(),
-                pieces: board.piece_count(),
-                max_piece_side: board.max_piece_side(),
-                mode: Mode::Play,
-            };
+            let input = app.layout_input();
             check_layout(app.layout(), &input, &format!("{w}x{h} {difficulty:?}"));
             // Everything drawn stays on screen.
             let drawing = settle(&mut app);
@@ -671,119 +672,190 @@ fn a_piece_grows_when_taken_from_the_tray_and_shrinks_back() {
 
 // ---- counters ----
 
-/// The band part beside row 0 of a grid at (100, 100) with cells of `cell`.
-fn row_area(cell: f32) -> Rect {
-    let band = BAND * cell;
+/// The band part beside row 0 of a grid at (100, 100) with cells of `cell`,
+/// for counters of up to `ticks` ticks.
+fn row_area(cell: f32, ticks: usize) -> Rect {
+    let band = band_depth(ticks) * cell;
     Rect::new(100.0 - COUNTER_GAP * cell - band, 100.0, band, cell)
 }
 
 /// The band part above column 0 of the same grid.
-fn col_area(cell: f32) -> Rect {
-    let band = BAND * cell;
+fn col_area(cell: f32, ticks: usize) -> Rect {
+    let band = band_depth(ticks) * cell;
     Rect::new(100.0, 100.0 - COUNTER_GAP * cell - band, cell, band)
-}
-
-fn marks(view: CounterView) -> (Vec<Rect>, bool) {
-    match view {
-        CounterView::Marks { marks, ticks } => (marks, ticks),
-        other => panic!("expected marks, got {other:?}"),
-    }
 }
 
 fn line(filled: usize, clue: usize) -> Line {
     Line { filled, clue }
 }
 
-/// Distinct values, rounded to half a pixel.
-fn distinct(values: impl Iterator<Item = f32>) -> usize {
-    // Screen coordinates, far inside `i64`.
-    #[allow(clippy::cast_possible_truncation)]
-    let mut v: Vec<i64> = values.map(|x| (x * 2.0).round() as i64).collect();
-    v.sort_unstable();
-    v.dedup();
-    v.len()
+fn ticks(counter: &Counter) -> &[Rect] {
+    match &counter.view {
+        CounterView::Ticks(marks) => marks,
+        other @ CounterView::Empty { .. } => panic!("expected ticks, got {other:?}"),
+    }
+}
+
+/// The colors `a` to `d` with these lines.
+fn colored(lines: &[Line]) -> Vec<(Color, Line)> {
+    lines
+        .iter()
+        .enumerate()
+        .map(|(k, &l)| (Color(u8::try_from(k).unwrap()), l))
+        .collect()
 }
 
 #[test]
-fn counter_shapes_follow_the_clue() {
+fn a_counter_is_one_tick_per_cell_of_a_fixed_size() {
     let cell = 60.0;
     for row in [true, false] {
-        let area = if row { row_area(cell) } else { col_area(cell) };
-        match counter_view(line(0, 0), area, row, cell, 0) {
-            CounterView::Empty { center, radius } => {
-                assert!(area.contains_rect(Rect::centered(center, 2.0 * radius, 2.0 * radius)));
-            }
-            other => panic!("zero clue: {other:?}"),
-        }
         for n in 1..=16 {
-            let (marks, ticks) = marks(counter_view(line(0, n), area, row, cell, n));
+            let area = if row {
+                row_area(cell, n)
+            } else {
+                col_area(cell, n)
+            };
+            let counters = line_counters(&colored(&[line(0, n)]), area, row, cell);
+            assert_eq!(counters.len(), 1);
+            let marks = ticks(&counters[0]);
             assert_eq!(marks.len(), n, "clue {n}");
-            assert_eq!(ticks, n <= 5, "clue {n}");
-            for m in &marks {
+            for m in marks {
                 assert!(
                     area.contains_rect(*m),
-                    "clue {n} row={row}: {m:?} outside {area:?}"
+                    "clue {n} row={row}: {m:?} in {area:?}"
                 );
+                // Vertical ticks for a row, horizontal for a column, the
+                // same size whatever the clue.
+                let (thick, long) = if row { (m.w, m.h) } else { (m.h, m.w) };
+                assert!((thick - TICK_THICK * cell).abs() < 0.01, "clue {n}");
+                assert!((long - TICK_LONG * cell).abs() < 0.01, "clue {n}");
             }
-            // Distance from the grid, and position across the band.
-            let along = |m: &Rect| if row { -m.center().x } else { -m.center().y };
+            // One line of ticks, nearest to the grid first, a pitch apart.
+            let along = |m: &Rect| if row { m.center().x } else { m.center().y };
             let across = |m: &Rect| if row { m.center().y } else { m.center().x };
-            let lines = distinct(marks.iter().map(across));
-            let groups = distinct(marks.iter().map(along));
-            match n {
-                1..=5 => assert_eq!((lines, groups), (1, n), "clue {n}"),
-                6..=10 => assert_eq!((lines, groups), (2, n.div_ceil(2)), "clue {n}"),
-                _ => assert_eq!((lines, groups), (3, n.div_ceil(3)), "clue {n}"),
-            }
-            // Marks come nearest-first; inside a group top to bottom (rows)
-            // or left to right (columns).
-            for pair in marks.windows(2) {
-                let (a, b) = (&pair[0], &pair[1]);
-                let same_group = (along(a) - along(b)).abs() < 0.5;
-                if same_group {
-                    assert!(across(a) < across(b), "clue {n}: order inside a group");
-                } else {
-                    assert!(along(a) < along(b), "clue {n}: groups grow outwards");
-                }
-            }
-            // A remainder sits in the farthest group.
-            if n > 5 {
-                let size = if n <= 10 { 2 } else { 3 };
-                let farthest = marks.iter().map(along).fold(f32::MIN, f32::max);
-                let last = marks
+            assert!(
+                marks
                     .iter()
-                    .filter(|m| (along(m) - farthest).abs() < 0.5)
-                    .count();
-                let expected = if n % size == 0 { size } else { n % size };
-                assert_eq!(last, expected, "clue {n}: remainder");
+                    .all(|m| (across(m) - across(&marks[0])).abs() < 0.01)
+            );
+            for pair in marks.windows(2) {
+                let step = along(&pair[0]) - along(&pair[1]);
+                assert!((step - TICK_PITCH * cell).abs() < 0.01, "clue {n}: {step}");
             }
+            // The first tick starts at the band's edge next to the grid.
+            let edge = if row { area.right() } else { area.bottom() };
+            let first = if row {
+                marks[0].right()
+            } else {
+                marks[0].bottom()
+            };
+            assert!(edge - first < TICK_PITCH * cell, "clue {n}");
         }
     }
 }
 
 #[test]
-fn squares_too_small_become_a_number() {
-    // At a 20 px cell sixteen squares would be under 3 px.
-    let cell = 20.0;
-    assert_eq!(
-        counter_view(line(0, 16), row_area(cell), true, cell, 16),
-        CounterView::Number
-    );
-    // Small clues still get marks, and every mark is at least 3 px.
-    for n in 1..=16 {
-        if let CounterView::Marks {
-            marks,
-            ticks: false,
-        } = counter_view(line(0, n), row_area(cell), true, cell, n)
-        {
-            assert!(marks.iter().all(|m| m.w >= MIN_SQUARE), "clue {n}");
+fn a_line_of_zero_clues_shows_one_grey_sign() {
+    let cell = 50.0;
+    for row in [true, false] {
+        let area = if row {
+            row_area(cell, 0)
+        } else {
+            col_area(cell, 0)
+        };
+        for k in 1..=4 {
+            let lines = colored(&vec![line(0, 0); k]);
+            let counters = line_counters(&lines, area, row, cell);
+            assert_eq!(counters.len(), 1, "{k} colors");
+            match counters[0].view {
+                CounterView::Empty { center, radius } => {
+                    let sign = Rect::centered(center, 2.0 * radius, 2.0 * radius);
+                    assert!(area.contains_rect(sign), "{sign:?} in {area:?}");
+                }
+                ref other @ CounterView::Ticks(_) => panic!("{other:?}"),
+            }
         }
     }
-    let (marks, _) = marks(counter_view(line(0, 6), col_area(60.0), false, 60.0, 6));
-    assert!(marks.iter().all(|m| m.w >= MIN_SQUARE));
 }
 
-/// An 8×2 board whose rows ask for 6 and 7 cells: square counters.
+/// With one to four colors in a line the counters split it evenly across:
+/// rows stack the first color at the bottom, columns put it on the left.
+#[test]
+fn colors_share_a_line_evenly() {
+    let cell = 60.0;
+    for row in [true, false] {
+        for k in 1..=4 {
+            let lines = colored(&(1..=k).map(|n| line(0, n + 1)).collect::<Vec<_>>());
+            let area = if row {
+                row_area(cell, k + 1)
+            } else {
+                col_area(cell, k + 1)
+            };
+            let counters = line_counters(&lines, area, row, cell);
+            assert_eq!(counters.len(), k);
+            let across = |r: &Rect| if row { r.center().y } else { r.center().x };
+            let slot = ACROSS * cell / to_f32(k);
+            for (j, counter) in counters.iter().enumerate() {
+                assert_eq!(counter.color, Color(u8::try_from(j).unwrap()));
+                assert_eq!(ticks(counter).len(), j + 2);
+                let width = if row { counter.slot.h } else { counter.slot.w };
+                assert!((width - slot).abs() < 0.01, "{k} colors");
+                assert!(area.contains_rect(counter.slot), "{k} colors: slot");
+                for m in ticks(counter) {
+                    assert!(counter.slot.contains_rect(*m), "{k} colors: tick in slot");
+                    let long = if row { m.h } else { m.w };
+                    assert!(long <= TICK_LONG * cell + 0.01 && long <= slot, "{k}");
+                }
+            }
+            // In order across the line, centered on it.
+            for pair in counters.windows(2) {
+                let (a, b) = (across(&pair[0].slot), across(&pair[1].slot));
+                if row {
+                    assert!(a > b, "rows: the first color at the bottom");
+                } else {
+                    assert!(a < b, "columns: the first color on the left");
+                }
+            }
+            let middle: f32 = counters.iter().map(|c| across(&c.slot)).sum::<f32>() / to_f32(k);
+            assert!((middle - across(&area)).abs() < 0.01, "{k} colors centered");
+        }
+    }
+    // Ticks get shorter only when the slot is narrower than a whole tick.
+    let two = line_counters(
+        &colored(&[line(0, 2), line(0, 2)]),
+        row_area(cell, 2),
+        true,
+        cell,
+    );
+    let four = line_counters(&colored(&[line(0, 2); 4]), row_area(cell, 2), true, cell);
+    assert!(ticks(&four[0])[0].h < ticks(&two[0])[0].h);
+}
+
+#[test]
+fn a_zero_clue_is_left_out_or_shows_a_red_sign() {
+    let cell = 60.0;
+    let area = row_area(cell, 3);
+    // Teal 3, orange 0: orange is not drawn, teal has the line alone.
+    let counters = line_counters(&colored(&[line(0, 3), line(0, 0)]), area, true, cell);
+    assert_eq!(counters.len(), 1);
+    assert_eq!(counters[0].color, Color(0));
+    assert!((counters[0].slot.h - ACROSS * cell).abs() < 0.01);
+    // Orange 0 with an orange cell in the line: a sign in orange's place.
+    let counters = line_counters(&colored(&[line(0, 3), line(1, 0)]), area, true, cell);
+    assert_eq!(counters.len(), 2);
+    assert!(matches!(counters[1].view, CounterView::Empty { .. }));
+    assert_eq!(counters[1].color, Color(1));
+    // Teal 0, orange 2: orange alone.
+    let counters = line_counters(&colored(&[line(0, 0), line(0, 2)]), area, false, cell);
+    assert_eq!(counters.len(), 1);
+    assert_eq!(counters[0].color, Color(1));
+}
+
+fn to_f32(n: usize) -> f32 {
+    f32::from(u16::try_from(n).unwrap())
+}
+
+/// An 8×2 board whose rows ask for 6 and 7 cells: long counters.
 fn long_rows() -> Puzzle {
     parse("endlogic 1\ngrid\n........\n........\nrows 6 7\ncols 2 2 2 2 2 2 1 0\npiece\n#######\npiece\n######\n").unwrap()
 }
@@ -797,7 +869,7 @@ fn fills(drawing: &Recorder, color: Rgba) -> usize {
 }
 
 #[test]
-fn square_counters_show_the_three_states() {
+fn counters_show_the_three_states() {
     let mut app = open(&long_rows());
     let accent = Rgba::hex(0x19_E3C0);
     let outlines = |d: &Recorder| {
@@ -806,11 +878,11 @@ fn square_counters_show_the_three_states() {
             .filter(|c| matches!(c, Call::StrokeRect(_, k) if *k == accent))
             .count()
     };
-    // Nothing placed: 6 + 7 outlined squares.
+    // Nothing placed: 6 + 7 outlined ticks in the row band.
     let drawing = settle(&mut app);
     assert!(outlines(&drawing) >= 13);
     assert_eq!(fills(&drawing, ERROR), 0);
-    // Seven cells in the row that wants six: all six squares red.
+    // Seven cells in the row that wants six: all six ticks red.
     app.place(0, 0, 0, 0, PointerKind::Mouse);
     assert_eq!(app.board().unwrap().rows()[0].state(), LineState::Over);
     let drawing = settle(&mut app);
@@ -825,39 +897,57 @@ fn square_counters_show_the_three_states() {
     assert_eq!(fills(&drawing, ERROR), 0);
 }
 
+/// The bands are as deep as the longest counter of the puzzle.
 #[test]
-fn square_counters_of_one_puzzle_share_a_size() {
-    let cell = 40.0;
-    let largest = 7;
-    let side = |n: usize| {
-        let (marks, ticks) = marks(counter_view(
-            line(0, n),
-            row_area(cell),
-            true,
-            cell,
-            largest,
-        ));
-        assert!(!ticks);
-        let pitch = marks[2].center().x - marks[0].center().x;
-        (marks[0].w, pitch.abs())
-    };
-    assert_eq!(side(6), side(7));
-    // Drawn: every outlined square of the 6 and the 7 is the same size.
+fn bands_follow_the_longest_counter() {
     let mut app = open(&long_rows());
+    settle(&mut app);
+    let l = app.layout().clone();
+    assert!((l.row_counters.w - band_depth(7) * l.cell).abs() < 0.5);
+    assert!((l.col_counters.h - band_depth(2) * l.cell).abs() < 0.5);
+    assert!((l.right_band.w - l.row_counters.w).abs() < 0.5);
+    assert!(
+        (l.cells.center().x - l.axis).abs() < 0.5,
+        "grid on the axis"
+    );
+    // Every tick inside its band.
     let drawing = settle(&mut app);
-    let band = app.layout().row_counters;
     let accent = Rgba::hex(0x19_E3C0);
-    let sizes: Vec<(f32, f32)> = drawing
-        .calls
-        .iter()
-        .filter_map(|c| match c {
-            Call::StrokeRect(r, k) if *k == accent && band.contains_rect(*r) => Some((r.w, r.h)),
-            _ => None,
-        })
-        .collect();
-    assert_eq!(sizes.len(), 13);
-    let same = |a: (f32, f32), b: (f32, f32)| (a.0 - b.0).abs() < 0.01 && (a.1 - b.1).abs() < 0.01;
-    assert!(sizes.iter().all(|&s| same(s, sizes[0])), "{sizes:?}");
+    let mut in_rows = 0;
+    for call in &drawing.calls {
+        if let Call::StrokeRect(r, k) = call
+            && *k == accent
+            && l.row_counters.contains_rect(*r)
+        {
+            in_rows += 1;
+        }
+    }
+    assert_eq!(in_rows, 13);
+}
+
+/// Cells too small for ticks of 1.5 px: the whole puzzle shows numbers.
+#[test]
+fn ticks_too_thin_become_numbers() {
+    let mut app = open(&dominoes());
+    // 16 cells across a 390 px screen: cells of about 20 px.
+    app.handle(Event::Resize {
+        width: 390.0,
+        height: 844.0,
+        insets: Insets::default(),
+    });
+    settle(&mut app);
+    let l = app.layout().clone();
+    assert!(l.numbers_only, "cell {}", l.cell);
+    assert!((l.row_counters.w - BAND * l.cell).abs() < 0.5);
+    let texts = app.drawn_texts();
+    assert!(texts.iter().any(|t| t == "4" || t == "0/4"), "{texts:?}");
+    // The four levels keep their ticks at every size checked.
+    for (w, h) in SIZES {
+        for difficulty in Difficulty::ALL {
+            let layout = Layout::compute(&input_for(w, h, difficulty, 5, Lang::Ua));
+            assert!(!layout.numbers_only, "{w}x{h} {difficulty:?}");
+        }
+    }
 }
 
 /// A 16×16 board with 32 dominoes.
@@ -885,18 +975,7 @@ fn many_pieces_split_the_tray_into_pages() {
         settle(&mut app);
         let layout = app.layout().clone();
         let what = format!("{w}x{h}");
-        let input = LayoutInput {
-            width: w,
-            height: h,
-            insets: Insets::default(),
-            touch: w < h || h < 520.0,
-            lang: app.lang(),
-            grid_width: 16,
-            grid_height: 16,
-            pieces: 32,
-            max_piece_side: 2,
-            mode: Mode::Play,
-        };
+        let input = app.layout_input();
         check_layout(&layout, &input, &what);
         let pages = app.tray_pages();
         if pages == 1 {
@@ -976,6 +1055,8 @@ fn the_editor_fits_every_size() {
                         pieces: cards,
                         max_piece_side: side,
                         mode: Mode::Edit,
+                        row_band: BAND,
+                        col_band: BAND,
                     };
                     let what = format!("edit {w}x{h} {gw}x{gh} {cards} cards {lang:?} {insets:?}");
                     let layout = Layout::compute(&input);

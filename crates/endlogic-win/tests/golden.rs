@@ -25,6 +25,12 @@ const NORMAL: &str = "AVUAFyuJXSAgQBlAGAQS3IXhL0R4QjU";
 const HARD: &str = "AWYAGyOW-e1AAGEQjEDiABRHRJ4j5JMj8yDgzbA";
 const EXPERT: &str = "AXcAElRkdmRXYjdgAAaAQeg5AUAZDGeIzmMeRyeiLiLkaXLn7w";
 const WLN: &str = "AWYAG92sqX2JVQAAAAAAAURshXEtRHzP5EwZdQ";
+/// Normal and Expert with two colors, seed 0.
+const NORMAL_2: &str = "AVUgADKaRCqQpIoplIEBQDJQDAJIbwlbEXEPwF-S";
+const EXPERT_2: &str = "AXcgADAAI2RiIUIUWSogiQEbEBGIAANQED0DiAWgGQaZHxBHRmJ_ER4Y-MjvJPz7";
+/// The game's two-color samples.
+const WLA_1: &str = "AVUgADzcizcihMohMogAABABANEeiPRHhDeM_mMGQ_B3zw";
+const WLA_2: &str = "AVUgADUKJUKJoxIoxIgMDAwMDHCPRHhD5EeiPRHhDyDLZQ";
 
 /// Name, size and the other arguments of every golden picture.
 fn scenes() -> Vec<(&'static str, &'static str, Vec<String>)> {
@@ -80,6 +86,28 @@ fn scenes() -> Vec<(&'static str, &'static str, Vec<String>)> {
             "custom-wln006-2-844x390-uk",
             "844x390",
             with(code(&format!("{web}#c={WLN}")), &["--lang", "uk"]),
+        ),
+        ("normal-2c-1366x768-en", "1366x768", code(NORMAL_2)),
+        (
+            "normal-2c-390x844-touch-uk",
+            "390x844",
+            with(code(NORMAL_2), &["--touch", "--lang", "uk"]),
+        ),
+        (
+            "expert-2c-1366x768-uk",
+            "1366x768",
+            with(code(EXPERT_2), &["--lang", "uk"]),
+        ),
+        (
+            "expert-2c-390x844-touch-en",
+            "390x844",
+            with(code(EXPERT_2), &["--touch"]),
+        ),
+        ("wla980-1-1366x768-en", "1366x768", code(WLA_1)),
+        (
+            "wla980-2-390x844-touch-uk",
+            "390x844",
+            with(code(WLA_2), &["--touch", "--lang", "uk"]),
         ),
     ]
 }

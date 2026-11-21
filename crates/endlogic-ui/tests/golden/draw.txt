@@ -1,32 +1,32 @@
-easy 1366x768 en: 0b6a6706148ae946, 534 calls
-easy 1920x1080 en: 11f6feef15c5a98a, 534 calls
-easy 390x844-touch en: 47ac594a40ac4d36, 366 calls
-easy 844x390 en: ff80a41507ef73e1, 392 calls
-normal 1366x768 en: b08686aa05e50fde, 628 calls
-normal 1920x1080 en: 0a7862a9fc3db4a2, 628 calls
-normal 390x844-touch en: 0b121cd9a3e925ce, 460 calls
-normal 844x390 en: bc1f713b82d16e91, 486 calls
-hard 1366x768 en: 230b1b1ca6c6f96a, 833 calls
-hard 1920x1080 en: 5178777f2d756254, 833 calls
-hard 390x844-touch en: 11e88fb8c2f42b41, 665 calls
-hard 844x390 en: 7130d09daf434099, 691 calls
-expert 1366x768 en: 0c1d517d928a93e3, 954 calls
-expert 1920x1080 en: f19f57171f9343a7, 954 calls
-expert 390x844-touch en: ded2002416b10ed2, 786 calls
-expert 844x390 en: dbc55db51a30e15c, 812 calls
-hard 1366x768 ua: 2e9c1390bc45eb0e, 946 calls
-hard 1920x1080 ua: 5d545e0c1bd2450e, 946 calls
-hard 390x844-touch ua: ea18e27769a00763, 686 calls
-hard 844x390 ua: e8777c5e211da212, 714 calls
-expert 1366x768 numbers: b2f52b9b6b0c374a, 922 calls
-expert 390x844-touch numbers: 42190f9a788ec302, 755 calls
-wln006-2 dragging: 39d98b794a0f5460, 775 calls
-wln006-2 390x844 dragging by touch: c686c67b67aa1121, 618 calls
-wln006-2 overfilled row: 1ae1d4060085cc8f, 757 calls
-wln006-2 silhouette: 6cb262a64d07ac1a, 1048 calls
-wln006-2 blamed piece: 7bc9be4452792e9e, 1047 calls
-wln006-2 blamed piece fading: 2062469cfd25e7b6, 1047 calls
-wln006-2 won with hints: 1faccfc4c14390b5, 808 calls
+easy 1366x768 en: c26b26ab63daf2e1, 543 calls
+easy 1920x1080 en: 070532b9d94d327f, 543 calls
+easy 390x844-touch en: 83e860b3cb91c58a, 371 calls
+easy 844x390 en: cb53bd99dadc3b67, 401 calls
+normal 1366x768 en: 8698480b9c239975, 637 calls
+normal 1920x1080 en: 71df81d231a431d8, 637 calls
+normal 390x844-touch en: 02bb634560ca1949, 465 calls
+normal 844x390 en: ab626643668a355a, 495 calls
+hard 1366x768 en: efdad4df8c6b3fd8, 842 calls
+hard 1920x1080 en: 6b9c8f8a74513043, 842 calls
+hard 390x844-touch en: 30f48f367eee0bf3, 670 calls
+hard 844x390 en: 5cfee131ffd58fe9, 700 calls
+expert 1366x768 en: 0bb23aeef5995cf6, 963 calls
+expert 1920x1080 en: 0877dc2f98327ad3, 963 calls
+expert 390x844-touch en: 3505c8b7819b4e92, 791 calls
+expert 844x390 en: 153bf8f1fe4f3114, 821 calls
+hard 1366x768 ua: 21f9b5e6b4d58726, 955 calls
+hard 1920x1080 ua: a60bc0880eb10435, 955 calls
+hard 390x844-touch ua: e5bda420da4b91e9, 691 calls
+hard 844x390 ua: 5ce6b6beaf057a91, 723 calls
+expert 1366x768 numbers: a42e930209c53b37, 931 calls
+expert 390x844-touch numbers: 26901a4b7528de12, 760 calls
+wln006-2 dragging: b0a24bbe147a3395, 784 calls
+wln006-2 390x844 dragging by touch: 65c9d331ae42a6d2, 623 calls
+wln006-2 overfilled row: e3e4592bf724823a, 766 calls
+wln006-2 silhouette: f96f12e35abda54d, 1057 calls
+wln006-2 blamed piece: a0ff3422aa351569, 1056 calls
+wln006-2 blamed piece fading: 05defcab978cb001, 1056 calls
+wln006-2 won with hints: 193edbaa449f53ff, 817 calls
 editor empty: e5e7f78cd56690cc, 371 calls
 editor wln006-2 1366x768 en: f2677e0de1842605, 602 calls
 editor digit strip 1366x768 en: a9c83e6f2fb2497e, 637 calls
@@ -38,5 +38,17 @@ editor solutions of wlh9000-1 1366x768: 7ce9acc12a78085d, 535 calls
 editor solutions of wlh9000-1 390x844: 23efb31895a3ed19, 463 calls
 editor tray pages: 9561d99ef2f65ec9, 1973 calls
 editor tray page 2: afafdef743d85eca, 1972 calls
-custom play wln006-2 1366x768 en: ff349bae1946b7c0, 759 calls
-custom play wln006-2 844x390 ua: ca07171cad0013a7, 645 calls
+custom play wln006-2 1366x768 en: 26c665062e42fa77, 759 calls
+custom play wln006-2 844x390 ua: 786a927c551ec45c, 645 calls
+normal two colors 1366x768: 9a003224e08ca47e, 687 calls
+normal two colors 390x844-touch: d97e0e8ad5d4346a, 515 calls
+expert two colors 1366x768: ac33bde0cd60b548, 929 calls
+expert two colors 390x844-touch: 956536209045ecb7, 757 calls
+wla980-1 1366x768 en: a7f1d22562fb1f68, 712 calls
+wla980-1 390x844 ua: 97ce481ed421307c, 561 calls
+wla980-2 1366x768 en: c4c1b45e418f4509, 724 calls
+wla980-2 390x844 ua: 65e7d0ac1d0927b8, 573 calls
+wla980-1 numbers: 675a61ee4be73899, 742 calls
+wla980-1 orange in a teal row: 8ef1f6d04ca9e7bc, 716 calls
+wla980-1 silhouette: 7eb7304ee5f5c6d0, 1063 calls
+wla980-1 won with hints: 3921429e37f480b6, 763 calls

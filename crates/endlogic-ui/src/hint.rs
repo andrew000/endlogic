@@ -8,8 +8,8 @@
 
 use alloc::vec::Vec;
 
-use endlogic_core::Solution;
 use endlogic_core::solver::{Progress, Search};
+use endlogic_core::{Color, Solution};
 
 use crate::app::{App, Fly};
 use crate::board::Board;
@@ -21,9 +21,9 @@ use crate::theme;
 pub(crate) struct Hints {
     /// Hints given so far.
     pub used: u32,
-    /// For each cell, row-major, whether a piece covers it in the reference
-    /// solution. Empty until the first hint.
-    pub silhouette: Vec<bool>,
+    /// For each cell, row-major, the color of the piece that covers it in
+    /// the reference solution, if any. Empty until the first hint.
+    pub silhouette: Vec<Option<Color>>,
     /// The solution hints lean on.
     pub reference: Option<Solution>,
     /// A search in progress for the hint asked for.
@@ -41,31 +41,40 @@ pub(crate) struct Job {
     spent: u64,
 }
 
-/// The sorted cell lists of every piece in `solution`.
-fn piece_cells(board: &Board, solution: &Solution) -> Vec<Vec<(usize, usize)>> {
+/// A place of the solution: the color of its piece and its sorted cells.
+type Slot = (Color, Vec<(usize, usize)>);
+
+/// The places of every piece in `solution`.
+fn piece_cells(board: &Board, solution: &Solution) -> Vec<Slot> {
     let puzzle = board.puzzle();
     puzzle
         .pieces()
         .iter()
         .zip(&solution.placements)
         .map(|(piece, at)| {
-            piece
+            let cells = piece
                 .shape
                 .rotated(at.rotation)
                 .cells()
                 .iter()
                 .map(|&(r, c)| (at.row + r, at.col + c))
-                .collect()
+                .collect();
+            (piece.color, cells)
         })
         .collect()
 }
 
+/// The place piece `i` holds on the board.
+fn slot_of(board: &Board, i: usize) -> Slot {
+    (board.piece_color(i), board.cells_of(i))
+}
+
 /// The first piece on the board that does not stand where some piece of
-/// `solution` stands (identical pieces are interchangeable).
+/// `solution` of its color stands (identical pieces are interchangeable).
 fn misplaced(board: &Board, solution: &Solution) -> Option<usize> {
-    let cells = piece_cells(board, solution);
+    let slots = piece_cells(board, solution);
     (0..board.piece_count())
-        .find(|&i| board.piece(i).at.is_some() && !cells.contains(&board.cells_of(i)))
+        .find(|&i| board.piece(i).at.is_some() && !slots.contains(&slot_of(board, i)))
 }
 
 /// The next piece to put down by `solution`: the first tray piece that
@@ -73,27 +82,30 @@ fn misplaced(board: &Board, solution: &Solution) -> Option<usize> {
 /// the turns and top-left cell to put it at.
 fn next_move(board: &Board, solution: &Solution) -> Option<(usize, u8, usize, usize)> {
     let slots = piece_cells(board, solution);
-    let taken: Vec<Vec<(usize, usize)>> = (0..board.piece_count())
-        .map(|i| board.cells_of(i))
-        .filter(|cells| !cells.is_empty())
+    let taken: Vec<Slot> = (0..board.piece_count())
+        .map(|i| slot_of(board, i))
+        .filter(|(_, cells)| !cells.is_empty())
         .collect();
-    let open: Vec<&Vec<(usize, usize)>> = slots.iter().filter(|s| !taken.contains(s)).collect();
+    let open: Vec<&Slot> = slots.iter().filter(|s| !taken.contains(s)).collect();
     (0..board.piece_count())
         .filter(|&i| board.piece(i).at.is_none())
         .find_map(|i| {
-            open.iter().find_map(|slot| {
-                let row = slot.iter().map(|c| c.0).min()?;
-                let col = slot.iter().map(|c| c.1).min()?;
-                (0..4u8).find_map(|turns| {
-                    let cells: Vec<(usize, usize)> = board
-                        .shape_turned(i, turns)
-                        .cells()
-                        .iter()
-                        .map(|&(r, c)| (row + r, col + c))
-                        .collect();
-                    (cells == **slot).then_some((i, turns, row, col))
+            let color = board.piece_color(i);
+            open.iter()
+                .filter(|(c, _)| *c == color)
+                .find_map(|(_, slot)| {
+                    let row = slot.iter().map(|c| c.0).min()?;
+                    let col = slot.iter().map(|c| c.1).min()?;
+                    (0..4u8).find_map(|turns| {
+                        let cells: Vec<(usize, usize)> = board
+                            .shape_turned(i, turns)
+                            .cells()
+                            .iter()
+                            .map(|&(r, c)| (row + r, col + c))
+                            .collect();
+                        (cells == *slot).then_some((i, turns, row, col))
+                    })
                 })
-            })
         })
 }
 
@@ -117,10 +129,10 @@ impl App {
         self.game.as_ref().map_or(0, |g| g.hints.used)
     }
 
-    /// For each cell, row-major, whether the hint silhouette covers it;
-    /// empty when there is no silhouette.
+    /// For each cell, row-major, the color of the hint silhouette on it,
+    /// if it covers the cell; empty when there is no silhouette.
     #[must_use]
-    pub fn silhouette(&self) -> &[bool] {
+    pub fn silhouette(&self) -> &[Option<Color>] {
         self.game.as_ref().map_or(&[], |g| &g.hints.silhouette)
     }
 
@@ -157,6 +169,7 @@ impl App {
     /// Runs the hint search for one frame.
     pub(crate) fn step_hint(&mut self) {
         let budget = self.budgets;
+        let per_frame = self.frame_budget();
         let outcome = {
             let Some(game) = &mut self.game else {
                 return;
@@ -165,7 +178,7 @@ impl App {
                 return;
             };
             let before = job.search.nodes();
-            let allowed = budget.per_frame.min(budget.hint.saturating_sub(job.spent));
+            let allowed = per_frame.min(budget.hint.saturating_sub(job.spent));
             let progress = job.search.step(allowed);
             job.spent += job.search.nodes() - before;
             match progress {
@@ -219,7 +232,11 @@ impl App {
         let owners = reference
             .cell_owners(game.board.puzzle())
             .unwrap_or_default();
-        game.hints.silhouette = owners.iter().map(Option::is_some).collect();
+        let puzzle = game.board.puzzle();
+        game.hints.silhouette = owners
+            .iter()
+            .map(|owner| owner.map(|i| puzzle.pieces()[i].color))
+            .collect();
         game.hints.reference = Some(reference.clone());
         if first {
             game.hints.used += 1;

@@ -1,5 +1,7 @@
 //! Colors and timings.
 
+use endlogic_core::Color;
+
 use crate::painter::Rgba;
 
 /// Page background; a shell may use it around the drawing area (a window
@@ -29,8 +31,6 @@ pub const LOCK: Rgba = Rgba::hex(0x12_A88E);
 pub const DEAD: Rgba = Rgba::hex(0x4A_4D4C);
 /// Dead cell hatching.
 pub const DEAD_HATCH: Rgba = Rgba::hex(0x5E_6160);
-/// Hint silhouette: cells the pieces cover in the solution.
-pub const SILHOUETTE: Rgba = Rgba::hex(0x19_E3C0);
 /// Dead cell icon.
 pub const DEAD_ICON: Rgba = Rgba::hex(0x7A_7D7C);
 /// Errors and over-filled lines.
@@ -41,6 +41,54 @@ pub const MARKER: Rgba = Rgba::hex(0xFF_D51F);
 pub const TEXT: Rgba = Rgba::hex(0xE6_ECEA);
 /// Secondary text.
 pub const MUTED: Rgba = Rgba::hex(0x7E_8886);
+
+/// The look of one puzzle color: piece fill, bright edge (also counters
+/// that match), counter ticks and outlines, and locked cells.
+#[derive(Debug, Clone, Copy, PartialEq)]
+pub struct Palette {
+    /// Piece fill.
+    pub fill: Rgba,
+    /// Piece edges, satisfied counters.
+    pub bright: Rgba,
+    /// Counter ticks and outlines, the drop shadow, the hint silhouette.
+    pub accent: Rgba,
+    /// Locked cell fill.
+    pub lock: Rgba,
+}
+
+/// The palettes of the four colors: teal, orange, violet, lime.
+pub const PALETTES: [Palette; 4] = [
+    Palette {
+        fill: PIECE,
+        bright: BRIGHT,
+        accent: ACCENT,
+        lock: LOCK,
+    },
+    Palette {
+        fill: Rgba::hex(0xC9_8A3C),
+        bright: Rgba::hex(0xF7_B65A),
+        accent: Rgba::hex(0xE8_9B3E),
+        lock: Rgba::hex(0xA8_6F2C),
+    },
+    Palette {
+        fill: Rgba::hex(0x8D_6FE0),
+        bright: Rgba::hex(0xB8_A2FF),
+        accent: Rgba::hex(0xA0_86F5),
+        lock: Rgba::hex(0x74_58C4),
+    },
+    Palette {
+        fill: Rgba::hex(0x9D_BF3A),
+        bright: Rgba::hex(0xCC_EC5E),
+        accent: Rgba::hex(0xB5_D645),
+        lock: Rgba::hex(0x80_9E2C),
+    },
+];
+
+/// The palette of `color`; colors past the fourth look like the first.
+#[must_use]
+pub fn palette(color: Color) -> Palette {
+    PALETTES.get(color.index()).copied().unwrap_or(PALETTES[0])
+}
 
 /// Seconds for a dropped piece to settle into its cells.
 pub const SNAP_TIME: f32 = 0.12;

@@ -27,11 +27,15 @@ mod text;
 mod theme;
 
 pub use app::{
-    App, Control, CounterMode, DRAG_THRESHOLD, NODES_PER_FRAME, TOUCH_DRAG_THRESHOLD, TOUCH_LIFT,
-    TOUCH_SLACK, Toast,
+    App, Control, CounterMode, DRAG_THRESHOLD, MAX_PLAY_COLORS, MIN_NODES_PER_FRAME,
+    NODES_PER_FRAME, SMALL_FIELD, TOUCH_DRAG_THRESHOLD, TOUCH_LIFT, TOUCH_SLACK, Toast,
+    frame_nodes,
 };
 pub use board::{Board, Line, LineState, PieceState, Turned};
-pub use counters::{CounterView, MAX_TICKS, MAX_TWO_LINES, MIN_SQUARE, counter_view};
+pub use counters::{
+    ACROSS, Counter, CounterView, EMPTY_DEPTH, MIN_TICK, TICK_LONG, TICK_PITCH, TICK_THICK,
+    band_depth, line_counters, ticks_fit,
+};
 pub use draw::draw_icon;
 pub use editor::{
     ClueRef, DRAFT_SIDE, Draft, DraftError, EditControl, Editor, SOLUTION_LIMIT, SolveState,
@@ -48,7 +52,8 @@ pub use layout::{
 pub use painter::{Painter, Point, Rect, Rgba};
 pub use shell::{
     Budgets, CodeKind, Config, Cursor, Effect, Event, Insets, Key, Pointer, PointerKind,
-    SETTING_COUNTERS, SETTING_DIFFICULTY, SETTING_EDITOR, SETTING_KEYS, SETTING_LANG,
+    SETTING_COLORS, SETTING_COUNTERS, SETTING_DIFFICULTY, SETTING_EDITOR, SETTING_KEYS,
+    SETTING_LANG,
 };
 pub use text::{Lang, Text, difficulty_label, problem_text, solution_of, text};
-pub use theme::BACKGROUND;
+pub use theme::{BACKGROUND, PALETTES, Palette, palette};

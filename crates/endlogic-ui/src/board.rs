@@ -3,7 +3,7 @@
 use alloc::vec;
 use alloc::vec::Vec;
 
-use endlogic_core::{Cell, Placement, Puzzle, Rotation, Shape};
+use endlogic_core::{Cell, Color, Placement, Puzzle, Rotation, Shape};
 
 /// Where a piece is and how it is turned.
 #[derive(Debug, Clone, Copy, PartialEq, Eq, Hash, Default)]
@@ -27,7 +27,7 @@ pub enum LineState {
 }
 
 /// Filled cells and clue of one row or column.
-#[derive(Debug, Clone, Copy, PartialEq, Eq, Hash)]
+#[derive(Debug, Clone, Copy, PartialEq, Eq, Hash, Default)]
 pub struct Line {
     /// Filled cells: placed piece cells plus locks.
     pub filled: usize,
@@ -63,6 +63,8 @@ pub enum Turned {
 #[derive(Debug, Clone, PartialEq, Eq, Hash)]
 pub struct Board {
     puzzle: Puzzle,
+    /// The puzzle's colors; the first color alone if it names none.
+    colors: Vec<Color>,
     /// `shapes[i][t]` is piece `i` turned `t` times.
     shapes: Vec<[Shape; 4]>,
     pieces: Vec<PieceState>,
@@ -80,7 +82,12 @@ impl Board {
             .map(|p| Rotation::ALL.map(|r| p.shape.rotated(r)))
             .collect();
         let cells = puzzle.grid().width() * puzzle.grid().height();
+        let mut colors = puzzle.colors();
+        if colors.is_empty() {
+            colors.push(Color::DEFAULT);
+        }
         Board {
+            colors,
             pieces: vec![PieceState::default(); puzzle.pieces().len()],
             owner: vec![None; cells],
             shapes,
@@ -92,6 +99,18 @@ impl Board {
     #[must_use]
     pub fn puzzle(&self) -> &Puzzle {
         &self.puzzle
+    }
+
+    /// The colors of the puzzle, in order; at least one.
+    #[must_use]
+    pub fn colors(&self) -> &[Color] {
+        &self.colors
+    }
+
+    /// The color of piece `i`.
+    #[must_use]
+    pub fn piece_color(&self, i: usize) -> Color {
+        self.puzzle.pieces()[i].color
     }
 
     /// Board width in cells.
@@ -273,50 +292,64 @@ impl Board {
         }
     }
 
-    /// Row counts, top to bottom.
+    /// Counts of the first color for the rows, top to bottom.
     #[must_use]
     pub fn rows(&self) -> Vec<Line> {
-        (0..self.height())
-            .map(|r| Line {
-                filled: (0..self.width()).filter(|&c| self.filled(r, c)).count(),
-                clue: self.clue(r, true),
-            })
-            .collect()
+        self.rows_of(self.colors[0])
     }
 
-    /// Column counts, left to right.
+    /// Counts of the first color for the columns, left to right.
     #[must_use]
     pub fn cols(&self) -> Vec<Line> {
-        (0..self.width())
-            .map(|c| Line {
-                filled: (0..self.height()).filter(|&r| self.filled(r, c)).count(),
-                clue: self.clue(c, false),
+        self.cols_of(self.colors[0])
+    }
+
+    /// Counts of `color` for the rows, top to bottom.
+    #[must_use]
+    pub fn rows_of(&self, color: Color) -> Vec<Line> {
+        (0..self.height())
+            .map(|r| Line {
+                filled: (0..self.width())
+                    .filter(|&c| self.cell_color(r, c) == Some(color))
+                    .count(),
+                clue: self.puzzle.row_clue(color, r),
             })
             .collect()
     }
 
-    /// Whether every piece is on the board and every line matches its clue.
+    /// Counts of `color` for the columns, left to right.
+    #[must_use]
+    pub fn cols_of(&self, color: Color) -> Vec<Line> {
+        (0..self.width())
+            .map(|c| Line {
+                filled: (0..self.height())
+                    .filter(|&r| self.cell_color(r, c) == Some(color))
+                    .count(),
+                clue: self.puzzle.col_clue(color, c),
+            })
+            .collect()
+    }
+
+    /// Whether every piece is on the board and every line matches its clue
+    /// in every color.
     #[must_use]
     pub fn is_solved(&self) -> bool {
         self.pieces.iter().all(|p| p.at.is_some())
-            && self
-                .rows()
-                .into_iter()
-                .chain(self.cols())
-                .all(|line| line.state() == LineState::Exact)
+            && self.colors.iter().all(|&color| {
+                self.rows_of(color)
+                    .into_iter()
+                    .chain(self.cols_of(color))
+                    .all(|line| line.state() == LineState::Exact)
+            })
     }
 
-    fn filled(&self, row: usize, col: usize) -> bool {
-        matches!(self.cell(row, col), Cell::Lock(_)) || self.owner(row, col).is_some()
-    }
-
-    fn clue(&self, index: usize, row: bool) -> usize {
-        // Only single-color puzzles are played, so the first color's clues
-        // are the clues.
-        self.puzzle.clues().values().next().map_or(0, |clues| {
-            let line = if row { &clues.rows } else { &clues.cols };
-            line.get(index).copied().unwrap_or(0)
-        })
+    /// The color a cell counts towards: of its lock or of the piece on it.
+    #[must_use]
+    pub fn cell_color(&self, row: usize, col: usize) -> Option<Color> {
+        match self.cell(row, col) {
+            Cell::Lock(color) => Some(color),
+            _ => self.owner(row, col).map(|i| self.piece_color(i)),
+        }
     }
 
     fn mark(&mut self, i: usize, value: Option<usize>) {

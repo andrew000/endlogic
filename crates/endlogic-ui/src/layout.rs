@@ -12,7 +12,8 @@
 //!
 //! In all of them the grid of cells is centered on one vertical axis: the
 //! row counters take a band on its left and an empty band of the same width
-//! is kept on its right.
+//! is kept on its right. The depth of the counter bands comes with the
+//! input: as deep as the longest counter of the puzzle.
 
 use alloc::borrow::ToOwned;
 use alloc::format;
@@ -22,6 +23,7 @@ use alloc::vec::Vec;
 
 use crate::math;
 
+use crate::counters::ticks_fit;
 use crate::font::{Font, MIN_FONT_SIZE, text_width};
 use crate::painter::{Point, Rect};
 use crate::shell::Insets;
@@ -37,7 +39,8 @@ pub const MIN_TARGET: f32 = 44.0;
 /// Below this height (logical pixels) a wide area gets the low arrangement.
 pub const LOW_WIDE_HEIGHT: f32 = 520.0;
 
-/// Depth of a counter band, in cells.
+/// Depth of a counter band that shows numbers (or the editor's clue
+/// fields), in cells.
 pub const BAND: f32 = 0.75;
 /// Space between the grid and its counters, in cells.
 pub const COUNTER_GAP: f32 = 0.15;
@@ -99,6 +102,10 @@ pub struct LayoutInput {
     pub max_piece_side: usize,
     /// Playing or editing.
     pub mode: Mode,
+    /// Depth of the row counter band, in cells.
+    pub row_band: f32,
+    /// Depth of the column counter band, in cells.
+    pub col_band: f32,
 }
 
 /// Text broken into lines, drawn from the top of `rect`.
@@ -224,6 +231,13 @@ pub struct Layout {
     /// The editor's controls, in the edit mode. The play controls (reset,
     /// hint, new, the counter switch, the banner) are then empty.
     pub edit: Option<EditLayout>,
+    /// Ticks would be too thin at this cell size: every counter shows
+    /// numbers, in bands [`BAND`] deep.
+    pub numbers_only: bool,
+    /// The switch of the number of colors (`1 | 2`), or with
+    /// [`compact`](Layout::compact) one button showing the current number;
+    /// `None` in the editor.
+    pub colors: Option<Rect>,
 }
 
 /// Names of the tabs for test messages.
@@ -258,13 +272,27 @@ impl Layout {
         } else {
             Arrangement::Wide
         };
-        match (input.mode, kind) {
-            (Mode::Play, Arrangement::Wide) => wide(&input),
-            (Mode::Play, Arrangement::LowWide) => low_wide(&input),
-            (Mode::Play, Arrangement::Tall) => tall(&input),
-            (Mode::Edit, Arrangement::Wide) => edit::wide(&input),
-            (Mode::Edit, Arrangement::LowWide) => edit::low_wide(&input),
-            (Mode::Edit, Arrangement::Tall) => edit::tall(&input),
+        let arrange = |input: &LayoutInput| match (input.mode, kind) {
+            (Mode::Play, Arrangement::Wide) => wide(input),
+            (Mode::Play, Arrangement::LowWide) => low_wide(input),
+            (Mode::Play, Arrangement::Tall) => tall(input),
+            (Mode::Edit, Arrangement::Wide) => edit::wide(input),
+            (Mode::Edit, Arrangement::LowWide) => edit::low_wide(input),
+            (Mode::Edit, Arrangement::Tall) => edit::tall(input),
+        };
+        let layout = arrange(&input);
+        if input.mode == Mode::Edit || ticks_fit(layout.cell) {
+            return layout;
+        }
+        // Ticks this thin would not read: numbers, in bands of their own.
+        let numbers = LayoutInput {
+            row_band: BAND,
+            col_band: BAND,
+            ..input
+        };
+        Layout {
+            numbers_only: true,
+            ..arrange(&numbers)
         }
     }
 
@@ -360,6 +388,9 @@ impl Layout {
             ("counters", self.counters),
             ("new", self.new),
         ]);
+        if let Some(colors) = self.colors {
+            rects.push(("colors", colors));
+        }
         if let Some(hint) = self.tab_hint {
             rects.push(("tab hint", hint));
         }
@@ -392,10 +423,15 @@ impl Layout {
             targets.extend(edit.targets());
         } else if self.compact {
             targets.extend([("lang", self.lang), ("counters", self.counters)]);
+            targets.extend(self.colors.map(|c| ("colors", c)));
         } else {
             let (grid, numbers) = Layout::halves(self.counters);
             let (en, ua) = Layout::halves(self.lang);
             targets.extend([("en", en), ("ua", ua), ("grid", grid), ("numbers", numbers)]);
+            if let Some(colors) = self.colors {
+                let (one, two) = Layout::halves(colors);
+                targets.extend([("one color", one), ("two colors", two)]);
+            }
         }
         if self.edit.is_none() {
             targets.extend([
@@ -526,10 +562,9 @@ fn cell_to_fit(input: &LayoutInput, width: f32, height: f32) -> f32 {
 }
 
 fn board_size(input: &LayoutInput, cell: f32) -> (f32, f32) {
-    let side = BAND + COUNTER_GAP;
     (
-        (to_f32(input.grid_width) + 2.0 * side) * cell,
-        (to_f32(input.grid_height) + side + FRAME_PAD) * cell,
+        (to_f32(input.grid_width) + 2.0 * (input.row_band + COUNTER_GAP)) * cell,
+        (to_f32(input.grid_height) + input.col_band + COUNTER_GAP + FRAME_PAD) * cell,
     )
 }
 
@@ -544,20 +579,20 @@ struct Board {
 
 /// The board with its grid centered on `axis` and its block's top at `top`.
 fn board_at(input: &LayoutInput, axis: f32, top: f32, cell: f32) -> Board {
-    let band = BAND * cell;
-    let offset = band + COUNTER_GAP * cell;
+    let (row_band, col_band) = (input.row_band * cell, input.col_band * cell);
+    let gap = COUNTER_GAP * cell;
     let width = to_f32(input.grid_width) * cell;
     let cells = Rect::new(
         axis - width / 2.0,
-        top + offset,
+        top + col_band + gap,
         width,
         to_f32(input.grid_height) * cell,
     );
     Board {
         frame: cells.inset(-FRAME_PAD * cell),
-        row_counters: Rect::new(cells.x - offset, cells.y, band, cells.h),
-        col_counters: Rect::new(cells.x, cells.y - offset, cells.w, band),
-        right_band: Rect::new(cells.right() + COUNTER_GAP * cell, cells.y, band, cells.h),
+        row_counters: Rect::new(cells.x - gap - row_band, cells.y, row_band, cells.h),
+        col_counters: Rect::new(cells.x, cells.y - gap - col_band, cells.w, col_band),
+        right_band: Rect::new(cells.right() + gap, cells.y, row_band, cells.h),
         cells,
     }
 }
@@ -892,8 +927,11 @@ fn wide(input: &LayoutInput) -> Layout {
     let share = Rect::new(x1 - share_w, top, share_w, m.button);
     let lang_w = m.switch_width("EN", "UA");
     let lang = Rect::new(share.x - m.gap - lang_w, top, lang_w, m.button);
-    let half = (axis - (x0 + side + m.gap)).min(lang.x - m.gap - axis);
+    // The colors switch right of the tabs, which stay centered on the axis.
+    let colors_w = m.switch_width("1", "2");
+    let half = (axis - (x0 + side + m.gap)).min(lang.x - 2.0 * m.gap - colors_w - axis);
     let tabs = tab_row(input.lang, m.font, m.pad(), axis, half, top, m.button);
+    let colors = Rect::new(tabs[4].right() + m.gap, top, colors_w, m.button);
     let bottom = bottom_row(input, m.font, m.gap, x0, x1, axis, bottom_y, m.button);
     let panel = panel(input, &m, x0, top, side, bottom_y - m.gap);
 
@@ -971,6 +1009,8 @@ fn wide(input: &LayoutInput) -> Layout {
         banner,
         next,
         edit: None,
+        numbers_only: false,
+        colors: Some(colors),
     }
 }
 
@@ -989,6 +1029,7 @@ const TALL_BUTTON: f32 = 40.0;
 /// Space kept above the bottom safe inset.
 const TALL_BOTTOM: f32 = 12.0;
 
+#[allow(clippy::too_many_lines)]
 fn tall(input: &LayoutInput) -> Layout {
     let safe = safe_rect(input);
     let gap = 8.0;
@@ -1015,7 +1056,8 @@ fn tall(input: &LayoutInput) -> Layout {
     let share = header_button(x1 - share_w, share_w);
     let lang = header_button(share.x - gap - MIN_TARGET, MIN_TARGET);
     let counters = header_button(lang.x - gap - MIN_TARGET, MIN_TARGET);
-    let title_w = (counters.x - gap - x0).max(1.0);
+    let colors = header_button(counters.x - gap - MIN_TARGET, MIN_TARGET);
+    let title_w = (colors.x - gap - x0).max(1.0);
     let title = Rect::new(x0, top + 3.0, title_w, 22.0);
     let puzzle_id = Rect::new(x0, title.bottom(), title_w, 16.0);
 
@@ -1065,7 +1107,7 @@ fn tall(input: &LayoutInput) -> Layout {
     Layout {
         kind: Arrangement::Tall,
         font,
-        title_font: 15.0,
+        title_font: title_size(15.0, title.w),
         id_font: 11.0,
         safe,
         axis,
@@ -1099,6 +1141,8 @@ fn tall(input: &LayoutInput) -> Layout {
         banner,
         next,
         edit: None,
+        numbers_only: false,
+        colors: Some(colors),
     }
 }
 
@@ -1244,6 +1288,8 @@ struct LeftTop {
     title: Rect,
     puzzle_id: Rect,
     tabs: [Rect; 5],
+    /// The colors switch, beside the custom tab (unused in the editor).
+    colors: Rect,
     lang: Rect,
     share: Rect,
 }
@@ -1279,16 +1325,23 @@ fn left_top(
     };
     let tab_w = (side - gap) / 2.0;
     let tabs_y = title.bottom().max(puzzle_id.bottom()) + gap;
-    // Tabs a full target apart, so their zones just touch; the custom tab
-    // takes the whole width under the 2×2 grid.
+    // Tabs a full target apart, so their zones just touch; under the 2×2
+    // grid the custom tab takes the whole width in the editor, and shares
+    // the row with the colors switch while playing.
+    let playing = input.mode == Mode::Play;
     let tabs = core::array::from_fn(|k| {
-        let (w, x) = if k == 4 {
+        let (w, x) = if k == 4 && !playing {
             (side, lx)
+        } else if k == 4 {
+            (side - gap - tab_w.max(2.0 * MIN_TARGET), lx)
         } else {
             (tab_w, lx + to_f32(k % 2) * (tab_w + gap))
         };
         Rect::new(x, tabs_y + to_f32(k / 2) * MIN_TARGET, w, LOW_TAB)
     });
+    // The switch needs two targets; the custom tab gives it room.
+    let colors_w = tab_w.max(2.0 * MIN_TARGET);
+    let colors = Rect::new(lx + side - colors_w, tabs[4].y, colors_w, LOW_TAB);
     let row_y = tabs_y + tabs_h + gap;
     let lang_w = switch_width("EN", "UA", font);
     let lang = Rect::new(lx, row_y, lang_w, MIN_TARGET);
@@ -1298,6 +1351,7 @@ fn left_top(
         title,
         puzzle_id,
         tabs,
+        colors,
         lang,
         share,
     }
@@ -1435,5 +1489,7 @@ fn low_wide(input: &LayoutInput) -> Layout {
         banner,
         next,
         edit: None,
+        numbers_only: false,
+        colors: Some(left.top.colors),
     }
 }

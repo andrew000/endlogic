@@ -5,16 +5,17 @@ mod common;
 use common::*;
 use endlogic_core::code::encode;
 use endlogic_core::solver::{DEFAULT_NODE_BUDGET, search};
-use endlogic_core::{Puzzle, Solution};
+use endlogic_core::{Color, Puzzle, Solution};
 use endlogic_ui::{App, Budgets, CodeKind, Event, Key, PointerKind, Text};
 
 /// Cells covered in `solution`, row-major.
-fn coverage(puzzle: &Puzzle, solution: &Solution) -> Vec<bool> {
+/// For each cell, the color of the piece on it in `solution`.
+fn coverage(puzzle: &Puzzle, solution: &Solution) -> Vec<Option<Color>> {
     solution
         .cell_owners(puzzle)
         .unwrap()
         .iter()
-        .map(Option::is_some)
+        .map(|owner| owner.map(|i| puzzle.pieces()[i].color))
         .collect()
 }
 
@@ -38,7 +39,7 @@ fn placed(app: &App) -> Vec<Option<(usize, usize)>> {
 fn the_first_hint_shows_the_silhouette() {
     let puzzle = sample("wln006-2.txt");
     let mut app = open(&puzzle);
-    assert_eq!(app.silhouette(), &[] as &[bool]);
+    assert_eq!(app.silhouette(), &[] as &[Option<Color>]);
     hint(&mut app);
     assert_eq!(app.hints_used(), 1);
     assert_eq!(app.silhouette(), coverage(&puzzle, &all(&puzzle)[0]));
@@ -51,7 +52,10 @@ fn the_first_hint_shows_the_silhouette() {
         .iter()
         .filter(|c| matches!(c, Call::FillRect(_, k) if *k == faint))
         .count();
-    assert_eq!(cells, app.silhouette().iter().filter(|&&on| on).count());
+    assert_eq!(
+        cells,
+        app.silhouette().iter().filter(|on| on.is_some()).count()
+    );
 }
 
 #[test]
@@ -168,11 +172,11 @@ fn reset_keeps_hints_and_a_new_puzzle_clears_them() {
     settle(&mut app);
     assert!(placed(&app).iter().all(Option::is_none));
     assert_eq!(app.hints_used(), 2);
-    assert_ne!(app.silhouette(), &[] as &[bool]);
+    assert_ne!(app.silhouette(), &[] as &[Option<Color>]);
     app.click(app.layout().new.center());
     settle(&mut app);
     assert_eq!(app.hints_used(), 0);
-    assert_eq!(app.silhouette(), &[] as &[bool]);
+    assert_eq!(app.silhouette(), &[] as &[Option<Color>]);
 }
 
 #[test]
