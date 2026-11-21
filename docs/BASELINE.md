@@ -435,3 +435,84 @@ idle frame with the painter that does nothing now costs 10 to 18 µs
 (Expert) and 45 µs (editor 16x16) instead of 4 to 5 and 30 µs, because
 every glyph is a polyline and every text width is measured; the layout
 alone takes 0.6 to 5 µs.
+
+## After the solver work
+
+Measured on 2026-11-21 on the same machine and toolchain. *Before* is the
+solver of commit `b44408c`, run with the current benchmarks in the same
+session; *after* is commit `ad987a7`. The search tree is the same node for
+node: node counts, solutions, their order and every golden file are
+unchanged.
+
+Where the time went before (sampled): for wln006-2, 49% in setting up
+the search and 30% in narrowing the candidate lists after each placement;
+for the Expert uniqueness checks and the 12x12 field, 87% and 94% in that
+narrowing. What changed:
+
+- candidates are compact, the lists of all levels live in one arena, and
+  a node allocates nothing;
+- each candidate keeps its cells as a 16x16 bit mask and its cells per
+  row and per column as one byte per line, all in one cache line; the fit
+  test is a mask test and two byte-lane comparisons, without branches;
+- the line checks (does every line still have enough reachable cells)
+  compare all lines of a color at once, one byte per line;
+- one small heapsort replaces the standard sorts (they were compiled once
+  per element type).
+
+| case | before | after | speed-up |
+|---|---:|---:|---:|
+| full search, dead-cells | 7.6 µs | 5.5 µs | 1.4x |
+| full search, permutations-4 | 26.3 µs | 14.9 µs | 1.8x |
+| full search, wlh9000-1 | 51.0 µs | 22.9 µs | 2.2x |
+| full search, wln006-2 | 96.4 µs | 27.7 µs | 3.5x |
+| uniqueness, easy | 20.2 µs | 9.2 µs | 2.2x |
+| uniqueness, normal | 46.4 µs | 17.9 µs | 2.6x |
+| uniqueness, hard | 121.2 µs | 41.5 µs | 2.9x |
+| uniqueness, expert (worst) | 2.28 ms (30.74 ms) | 0.85 ms (11.95 ms) | 2.7x |
+| 10x10, first solution | 6.64 ms | 2.28 ms | 2.9x |
+| 12x12, first solution | 309.67 ms | 106.01 ms | 2.9x |
+| 12x12, uniqueness | 388.36 ms | 132.78 ms | 2.9x |
+| 16x16, first solution | 51.08 ms | 16.20 ms | 3.2x |
+| 16x16, uniqueness | 76.31 ms | 24.72 ms | 3.1x |
+| generator, easy | 40.0 µs | 21.9 µs | 1.8x |
+| generator, normal | 136.2 µs | 53.6 µs | 2.5x |
+| generator, hard | 173.8 µs | 73.6 µs | 2.4x |
+| generator, expert (worst) | 2.45 ms (31.73 ms) | 0.88 ms (11.34 ms) | 2.8x |
+
+Against the first measurement of this file the Expert uniqueness check is
+2.9x faster (2.47 ms) and the 12x12 first solution 3.2x (338.63 ms).
+
+Crowded 16x16 fields (`crowded` in the core benchmarks: 14, 15 and 16
+pieces of 4 to 9 cells planted on a 16x16 grid with 10 to 16 locks, seeds
+0 to 4, not checked by the solver): none of the 15 finds its first
+solution within 2,000,000 nodes, before or after. Spending the budget
+took 4.3 to 14.9 s before and 1.4 to 4.4 s after.
+
+The trainer runs 20,000 nodes per frame. One such step of a uniqueness
+check (two solutions wanted):
+
+| puzzle | nodes | steps | step before | step after |
+|---|---:|---:|---:|---:|
+| Expert with the most nodes (seed 16) | 15,666 | 1 | 31.0 ms | 11.3 ms |
+| 12x12 field | 114,132 | 6 | 65.3 ms (slowest 72.9) | 22.3 ms (slowest 25.0) |
+
+Tried and dropped, each measured alone: a per-line bound of what the
+remaining copies of each piece can still put into a line (5 to 45% fewer
+nodes, but 30 to 50% slower per search: Expert 1.20 ms, 12x12 163 ms);
+keeping the coverable cells of each color as counters updated per
+placement (slower: Expert 2.51 ms, 12x12 307 ms); a second test of only
+the candidates that touch the placed piece (no gain).
+
+Sizes (`just size`; the wasm of every column goes through binaryen 133):
+
+| artifact | before | solver | heapsort |
+|---|---:|---:|---:|
+| `endlogic-win.exe` | 359,424 | 363,520 | 353,280 |
+| `endlogic.exe` (CLI) | 229,376 | 232,960 | 222,720 |
+| `endlogic_web_bg.wasm` | 209,595 | 212,047 | 197,460 |
+| `endlogic_web_bg.wasm`, gzip -9 | 91,094 | — | 85,247 |
+| `endlogic_web.js` | 29,080 | 29,080 | 29,080 |
+
+The solver's tables and lane code add 2.5 to 4 KB; the heapsort removes
+about 10 KB from each `.exe` and 14.6 KB from the wasm (the "std:
+sorting" part above).
