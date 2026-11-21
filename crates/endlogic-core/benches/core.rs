@@ -12,7 +12,7 @@ use endlogic_core::format::parse;
 use endlogic_core::generator::{Difficulty, GeneratorParams, SizeRange, generate};
 use endlogic_core::rng::Rng;
 use endlogic_core::solver::{
-    DEFAULT_NODE_BUDGET, StopReason, Uniqueness, check_uniqueness, search,
+    DEFAULT_NODE_BUDGET, Progress, Search, StopReason, Uniqueness, check_uniqueness, search,
 };
 use endlogic_core::{Cell, Color, Grid, Piece, Puzzle, Rotation, Shape};
 use measure::{Table, rate, show, time};
@@ -351,6 +351,70 @@ fn codes(big: &Puzzle) {
     table.print();
 }
 
+/// Nodes the trainer runs per frame (`NODES_PER_FRAME` in the interface).
+const FRAME_NODES: u64 = 20_000;
+
+/// Runs of each stepped search.
+const FRAME_RUNS: u32 = 10;
+
+/// A uniqueness check (two solutions wanted) run in steps of `FRAME_NODES`
+/// nodes, the way the trainer runs it: the time of each step.
+fn frame_steps(fields: &[(usize, Puzzle)]) {
+    let mut table = Table::new(
+        &format!(
+            "Solver: uniqueness check in steps of {FRAME_NODES} nodes, mean of {FRAME_RUNS} runs"
+        ),
+        &[
+            "puzzle",
+            "nodes",
+            "steps",
+            "first step",
+            "step, mean",
+            "step, slowest",
+        ],
+    );
+    let hardest = (0..SEEDS)
+        .map(|seed| generate(Difficulty::Expert.params(), seed).unwrap().puzzle)
+        .max_by_key(|puzzle| check_uniqueness(puzzle, DEFAULT_NODE_BUDGET).nodes)
+        .unwrap();
+    let puzzles = [
+        ("expert, most nodes".to_owned(), &hardest),
+        ("12x12 field".to_owned(), &fields[1].1),
+    ];
+    for (name, puzzle) in puzzles {
+        let mut steps: Vec<std::time::Duration> = Vec::new();
+        let mut nodes = 0;
+        for _ in 0..FRAME_RUNS {
+            let mut search = Search::new(puzzle, 2);
+            for i in 0.. {
+                let start = Instant::now();
+                let progress = std::hint::black_box(search.step(FRAME_NODES));
+                let took = start.elapsed();
+                if steps.len() <= i {
+                    steps.push(took);
+                } else {
+                    steps[i] += took;
+                }
+                if let Progress::Done(result) = progress {
+                    nodes = result.nodes;
+                    break;
+                }
+            }
+        }
+        let steps: Vec<_> = steps.iter().map(|d| *d / FRAME_RUNS).collect();
+        let total: std::time::Duration = steps.iter().sum();
+        table.row(vec![
+            name,
+            nodes.to_string(),
+            steps.len().to_string(),
+            show(steps[0]),
+            show(total / u32::try_from(steps.len()).unwrap()),
+            show(*steps.iter().max().unwrap()),
+        ]);
+    }
+    table.print();
+}
+
 fn main() {
     let start = Instant::now();
     println!("## endlogic-core");
@@ -359,6 +423,7 @@ fn main() {
     let fields = large_fields();
     large_search(&fields);
     crowded_search();
+    frame_steps(&fields);
     generator();
     codes(&fields[2].1);
     println!("\nendlogic-core benchmarks took {}", show(start.elapsed()));
