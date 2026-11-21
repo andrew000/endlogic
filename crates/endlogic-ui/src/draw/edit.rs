@@ -19,8 +19,8 @@ use crate::font::{Align, Font};
 use crate::ink::Ink;
 use crate::layout::{EditLayout, Stepper, to_f32};
 use crate::painter::{Point, Rect, Rgba};
-use crate::text::{Text, problem_text, solution_of, text};
-use crate::theme;
+use crate::text::{Text, problem_line, problem_text, solution_of, text};
+use crate::theme::{self, palette};
 
 pub(super) fn draw(app: &App, p: &mut Ink<'_>) {
     let l = &app.layout;
@@ -76,49 +76,34 @@ fn draw_board(app: &App, editor: &Editor, p: &mut Ink<'_>) {
     }
 }
 
-/// The clues as plain numbers; the one being edited is highlighted.
+/// The clue fields as plain numbers in the color of their clue, split
+/// among the colors like the counters in play; the one being edited is
+/// highlighted.
 fn draw_clues(app: &App, editor: &Editor, p: &mut Ink<'_>) {
     let l = &app.layout;
     let selected = app.selected_clue();
-    let mut one = |area: Rect, clue: ClueRef| {
-        let value = editor.clue(clue.row, clue.index);
+    let several = app.clue_colors().len() > 1;
+    for (clue, area) in app.clue_fields() {
+        let accent = palette(clue.color).accent;
+        let value = editor.clue(clue.color, clue.row, clue.index);
         let label = value.to_string();
         let size = (area.w.min(area.h) * 0.6).min(l.font * 1.1).max(6.0);
         let mark = Rect::centered(area.center(), area.w * 0.9, area.h * 0.9);
+        let radius = (mark.w.min(mark.h) * 0.25).min(4.0);
         let color = if selected == Some(clue) {
-            p.fill_rect(mark, 4.0, theme::ACCENT);
+            p.fill_rect(mark, radius, accent);
             theme::BACKGROUND
         } else {
-            p.stroke_rect(mark.inset(0.5), 4.0, 1.0, theme::CELL_MARK);
-            if value == 0 {
-                theme::MUTED
+            // With several colors each field is outlined in its color.
+            let outline = if several {
+                accent.alpha(0.5)
             } else {
-                theme::ACCENT
-            }
+                theme::CELL_MARK
+            };
+            p.stroke_rect(mark.inset(0.5), radius, 1.0, outline);
+            if value == 0 { theme::MUTED } else { accent }
         };
         centered_text(p, &label, area, text_font(size, true), color);
-    };
-    for row in 0..editor.height() {
-        let cell = l.cell_rect(row, 0);
-        let area = Rect::new(l.row_counters.x, cell.y, l.row_counters.w, cell.h);
-        one(
-            area,
-            ClueRef {
-                row: true,
-                index: row,
-            },
-        );
-    }
-    for col in 0..editor.width() {
-        let cell = l.cell_rect(0, col);
-        let area = Rect::new(cell.x, l.col_counters.y, cell.w, l.col_counters.h);
-        one(
-            area,
-            ClueRef {
-                row: false,
-                index: col,
-            },
-        );
     }
 }
 
@@ -128,13 +113,26 @@ fn draw_solution(app: &App, p: &mut Ink<'_>) {
         return;
     };
     let l = &app.layout;
-    for (shape, at) in editor.pieces().iter().zip(&solution.placements) {
-        let shape = shape.rotated(at.rotation);
+    for (piece_of, at) in editor.pieces().iter().zip(&solution.placements) {
+        let shape = piece_of.shape.rotated(at.rotation);
         let center = Point::new(
             l.cells.x + (to_f32(at.col) + to_f32(shape.width()) / 2.0) * l.cell,
             l.cells.y + (to_f32(at.row) + to_f32(shape.height()) / 2.0) * l.cell,
         );
-        piece(p, &shape, center, l.cell, 0.0, Tint::of(Color::DEFAULT));
+        piece(p, &shape, center, l.cell, 0.0, Tint::of(piece_of.color));
+    }
+}
+
+/// Four color marks; `active` is ringed.
+fn color_marks(p: &mut Ink<'_>, marks: &[Rect; 4], active: Color) {
+    for (color, mark) in Color::ALL.into_iter().zip(marks) {
+        let look = palette(color);
+        let swatch = mark.inset(mark.w * 0.22);
+        p.fill_rect(swatch, 3.0, look.fill);
+        p.stroke_rect(swatch.inset(0.5), 3.0, 1.0, look.bright);
+        if color == active {
+            p.stroke_rect(mark.inset(2.0), 6.0, 2.0, theme::TEXT);
+        }
     }
 }
 
@@ -192,9 +190,10 @@ fn block(p: &mut Ink<'_>, text: &str, rect: Rect, size: f32, color: Rgba, align:
 fn draw_status(app: &App, e: &EditLayout, p: &mut Ink<'_>) {
     if let Some(problem) = app.first_problem() {
         let font = app.layout.font * 0.9;
+        let colored = app.editor().is_some_and(|ed| ed.colors().len() > 1);
         block(
             p,
-            &problem_text(app.lang, &problem),
+            &problem_line(app.lang, &problem, colored),
             e.status,
             font,
             theme::ERROR,
@@ -213,14 +212,14 @@ fn draw_tray(app: &App, editor: &Editor, p: &mut Ink<'_>) {
             continue;
         };
         p.fill_rect(card, 8.0, theme::CARD);
-        if let Some(shape) = editor.pieces().get(i) {
+        if let Some(shown) = editor.pieces().get(i) {
             piece(
                 p,
-                shape,
+                &shown.shape,
                 card.center(),
                 l.tray_cell,
                 0.0,
-                Tint::of(Color::DEFAULT),
+                Tint::of(shown.color),
             );
         } else {
             p.stroke_rect(card.inset(3.5), 6.0, 1.0, theme::ACCENT.alpha(0.6));
@@ -330,6 +329,9 @@ fn stepper(p: &mut Ink<'_>, s: &Stepper, label: &str, value: usize, font: f32) {
 fn draw_controls(app: &App, e: &EditLayout, editor: &Editor, p: &mut Ink<'_>) {
     let lang = app.lang;
     let font = app.layout.font;
+    if !e.palette.iter().any(|&m| app.under_overlay(m)) {
+        color_marks(p, &e.palette, app.active_color());
+    }
     stepper(p, &e.width, text(lang, Text::Width), editor.width(), font);
     stepper(
         p,
@@ -379,6 +381,8 @@ fn draw_piece_editor(app: &App, e: &EditLayout, draft: &Draft, p: &mut Ink<'_>) 
     let font = app.layout.font;
     let parts = e.piece_editor(draft.side);
     panel(p, e.piece);
+    color_marks(p, &parts.colors, draft.color);
+    let look = palette(draft.color);
     p.fill_rect(parts.grid, 0.0, theme::GRID_LINE);
     for (k, &on) in draft.cells.iter().enumerate() {
         let (r, c) = (k / draft.side, k % draft.side);
@@ -390,8 +394,8 @@ fn draw_piece_editor(app: &App, e: &EditLayout, draft: &Draft, p: &mut Ink<'_>) 
         )
         .inset(1.0);
         if on {
-            p.fill_rect(cell, 2.0, theme::PIECE);
-            p.stroke_rect(cell.inset(0.5), 2.0, 1.0, theme::BRIGHT);
+            p.fill_rect(cell, 2.0, look.fill);
+            p.stroke_rect(cell.inset(0.5), 2.0, 1.0, look.bright);
         } else {
             p.fill_rect(cell, 2.0, theme::CELL);
         }
@@ -460,7 +464,7 @@ fn draw_strip(app: &App, e: &EditLayout, editor: &Editor, clue: ClueRef, p: &mut
     };
     let keys = e.digit_keys(len + 1);
     panel(p, e.strip);
-    let current = editor.clue(clue.row, clue.index);
+    let current = editor.clue(clue.color, clue.row, clue.index);
     for (k, &key) in keys.iter().enumerate() {
         if k <= len {
             let style = if k == current {

@@ -68,11 +68,16 @@ pub struct EditLayout {
     pub result: Rect,
     /// Width each of the piece editor's buttons needs for its label.
     pub piece_button: f32,
+    /// The marks of the active color, one per color in order, next to the
+    /// board size.
+    pub palette: [Rect; 4],
 }
 
 /// The parts of the piece editor.
 #[derive(Debug, Clone, PartialEq)]
 pub struct PieceEditor {
+    /// The color marks over the grid, one per color in order.
+    pub colors: [Rect; 4],
     /// The grid of cells.
     pub grid: Rect,
     /// Side of one cell.
@@ -104,6 +109,12 @@ pub struct ResultPanel {
     pub action: Rect,
 }
 
+/// Names of the color marks for test messages.
+const PALETTE_NAMES: [&str; 4] = ["teal", "orange", "violet", "lime"];
+
+/// Side of a color mark of the piece editor.
+const MARK: f32 = 30.0;
+
 /// Height of a status line of two text lines.
 const STATUS_H: f32 = 34.0;
 /// Smallest area for the piece editor and the digit strip in the tall
@@ -116,6 +127,27 @@ const KEY: f32 = 40.0;
 const KEY_PITCH: f32 = 44.0;
 /// Least room around the digit keys.
 const KEY_EDGE: f32 = 2.0;
+
+/// Four color marks of `side` (at most a target) spread over `area`'s
+/// width, centered on its height.
+fn marks_in(area: Rect) -> [Rect; 4] {
+    let side = MIN_TARGET.min(area.w / 4.0).min(area.h);
+    let step = if area.w > 4.0 * side {
+        (area.w - side) / 3.0
+    } else {
+        side
+    }
+    .min(side + PAD * 2.0);
+    let x0 = area.center().x - f32::midpoint(3.0 * step, side);
+    core::array::from_fn(|k| {
+        Rect::new(
+            x0 + to_f32(k) * step,
+            area.center().y - side / 2.0,
+            side,
+            side,
+        )
+    })
+}
 
 impl Stepper {
     /// `[label][−][value][+]` in `w` from `x`, buttons `button` wide.
@@ -152,6 +184,7 @@ impl EditLayout {
             ("play", self.play),
             ("solve", self.solve),
         ]);
+        rects.extend(PALETTE_NAMES.into_iter().zip(self.palette));
         rects
     }
 
@@ -166,6 +199,10 @@ impl EditLayout {
             ("clear", self.clear),
             ("play", self.play),
             ("solve", self.solve),
+            ("teal", self.palette[0]),
+            ("orange", self.palette[1]),
+            ("violet", self.palette[2]),
+            ("lime", self.palette[3]),
         ]
     }
 
@@ -214,7 +251,16 @@ impl EditLayout {
     /// narrow one.
     #[must_use]
     pub fn piece_editor(&self, side: usize) -> PieceEditor {
-        let inner = self.piece.inset(PAD);
+        // The color marks over the grid: drawn smaller than a target, their
+        // zones still a full target and apart.
+        let area = self.piece.inset(PAD);
+        let colors = marks_in(Rect::new(area.x, area.y, area.w, MARK));
+        let inner = Rect::new(
+            area.x,
+            area.y + MARK + PAD,
+            area.w,
+            (area.h - MARK - PAD).max(1.0),
+        );
         let buttons_h = 2.0 * MIN_TARGET + PAD;
         let reason_h = STATUS_H;
         let buttons_w = 2.0 * self.piece_button + PAD;
@@ -256,6 +302,7 @@ impl EditLayout {
         let row2 = rest.bottom() - MIN_TARGET;
         let row1 = row2 - PAD - MIN_TARGET;
         PieceEditor {
+            colors,
             cell: grid.w / to_f32(side.max(1)),
             grid,
             reason: Rect::new(rest.x, rest.y, rest.w, (row1 - PAD - rest.y).max(0.0)),
@@ -428,6 +475,7 @@ fn layout(parts: Parts) -> Layout {
 
 // ---- tall ----
 
+#[allow(clippy::too_many_lines)]
 pub(super) fn tall(input: &LayoutInput) -> Layout {
     let safe = safe_rect(input);
     let gap = 8.0;
@@ -485,6 +533,8 @@ pub(super) fn tall(input: &LayoutInput) -> Layout {
     let play = Rect::new(play_x, bottom_y, play_w, TALL_BUTTON);
 
     // Board, status line and the tray (or what opens in its place).
+    // Under the board: the status line, and the color marks on its right
+    // (a phone has no room for another row of controls).
     let region_top = size_y + MIN_TARGET + gap;
     let region = (bottom_y - gap - region_top).max(0.0);
     let (fit, cell) = tall_tray_with(input, width, region, gap, STATUS_H + gap, PANEL_MIN);
@@ -493,7 +543,10 @@ pub(super) fn tall(input: &LayoutInput) -> Layout {
     let stack = block_h + gap + STATUS_H + gap + panel_h;
     let board_top = region_top + (region - stack).max(0.0) / 2.0;
     let board = board_at(input, axis, board_top, cell);
-    let status = Rect::new(x0, board.frame.bottom() + gap, width, STATUS_H);
+    let marks_w = 4.0 * MIN_TARGET;
+    let row_y = board.frame.bottom() + gap;
+    let palette = marks_in(Rect::new(x1 - marks_w, row_y, marks_w, STATUS_H));
+    let status = Rect::new(x0, row_y, width - marks_w - gap, STATUS_H);
     let tray = Rect::new(x0, status.bottom() + gap, width, panel_h);
     let cards = cards_at(fit.per_page, fit.cols, fit.card, gap, axis, tray.y);
     let result_h = result_height(width, font).min(tray.h);
@@ -509,6 +562,7 @@ pub(super) fn tall(input: &LayoutInput) -> Layout {
         strip: tray,
         piece: tray,
         result: Rect::new(x0, tray.center().y - result_h / 2.0, width, result_h),
+        palette,
     };
     let common = Common {
         kind: Arrangement::Tall,
@@ -577,6 +631,7 @@ struct LeftPanel {
     puzzle_id: Rect,
     width: Stepper,
     height: Stepper,
+    palette: [Rect; 4],
     status: Rect,
 }
 
@@ -589,9 +644,15 @@ fn left_panel(m: &Metrics, x0: f32, top: f32, side: f32) -> LeftPanel {
     let row = |y: f32| Stepper::at(inner_x, y, inner_w, MIN_TARGET, MIN_TARGET, 32.0);
     let width = row(puzzle_id.bottom() + m.gap);
     let height = row(width.minus.bottom() + m.gap);
-    let status = Rect::new(
+    let palette = marks_in(Rect::new(
         inner_x,
         height.minus.bottom() + m.gap,
+        inner_w,
+        MIN_TARGET,
+    ));
+    let status = Rect::new(
+        inner_x,
+        palette[0].bottom() + m.gap,
         inner_w,
         m.font * 0.9 * 1.35 * 4.0,
     );
@@ -601,6 +662,7 @@ fn left_panel(m: &Metrics, x0: f32, top: f32, side: f32) -> LeftPanel {
         puzzle_id,
         width,
         height,
+        palette,
         status,
     }
 }
@@ -677,6 +739,7 @@ pub(super) fn wide(input: &LayoutInput) -> Layout {
         strip: under,
         piece: column,
         result,
+        palette: left.palette,
     };
     let common = Common {
         kind: Arrangement::Wide,
@@ -727,6 +790,7 @@ fn stepper_row(x0: f32, side: f32, y: f32) -> (Stepper, Stepper, Rect) {
     )
 }
 
+#[allow(clippy::too_many_lines)]
 pub(super) fn low_wide(input: &LayoutInput) -> Layout {
     let safe = safe_rect(input);
     let gap = 8.0;
@@ -744,7 +808,16 @@ pub(super) fn low_wide(input: &LayoutInput) -> Layout {
     let top = super::left_top(input, x0, side, y0, y1, gap, font, gap + button);
     let size_y = top.lang.bottom() + gap;
     let (width_stepper, height_stepper, times) = stepper_row(x0, side, size_y);
-    let left_room = size_y + button + gap + 18.0 + gap + button <= y1;
+    // The color marks under the size, or on top of the right column when
+    // the left one is too short.
+    let marks_left = size_y + button + gap + button <= y1;
+    let marks_y = size_y + button + gap;
+    let below_size = if marks_left {
+        marks_y + button
+    } else {
+        size_y + button
+    };
+    let left_room = below_size + gap + 18.0 + gap + button <= y1;
 
     // Right column: the tray, then the buttons in one row at the bottom.
     let rx = x1 - side;
@@ -752,7 +825,7 @@ pub(super) fn low_wide(input: &LayoutInput) -> Layout {
     let (clear, play, solve, status) = if left_room {
         let w = (side - gap) / 2.0;
         let clear = Rect::new(x0, row_y, clear_width(input, font).min(side), button);
-        let status_y = size_y + button + gap;
+        let status_y = below_size + gap;
         (
             clear,
             Rect::new(rx, row_y, w, button),
@@ -768,10 +841,18 @@ pub(super) fn low_wide(input: &LayoutInput) -> Layout {
             Rect::new(rx, row_y - gap - STATUS_H, side, STATUS_H),
         )
     };
+    let palette_area = if marks_left {
+        Rect::new(x0, marks_y, side, button)
+    } else {
+        Rect::new(rx, y0, side, button)
+    };
+    let palette = marks_in(palette_area);
+    let tray_top = if marks_left { y0 } else { y0 + button + gap };
     let room_bottom = if left_room { row_y } else { status.y };
-    let room = room_bottom - gap - y0;
+    let room = room_bottom - gap - tray_top;
     let tgap = LOW_TRAY_GAP;
-    let (fit, tray, cards) = column_tray(input, Rect::new(rx, y0, side, room), tgap, false);
+    let (fit, tray, cards) = column_tray(input, Rect::new(rx, tray_top, side, room), tgap, false);
+    // The overlays take the whole column, marks included.
     let column = Rect::new(rx, y0, side, y1 - y0);
 
     // The board takes the full height between the columns.
@@ -792,8 +873,9 @@ pub(super) fn low_wide(input: &LayoutInput) -> Layout {
         piece: column,
         result: {
             let h = result_height(side, font).min(room);
-            Rect::new(rx, y0 + (room - h) / 2.0, side, h)
+            Rect::new(rx, tray_top + (room - h) / 2.0, side, h)
         },
+        palette,
     };
     let common = Common {
         kind: Arrangement::LowWide,

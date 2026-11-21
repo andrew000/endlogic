@@ -113,8 +113,12 @@ fn the_custom_tab_opens_an_empty_editor_and_remembers_it() {
     let ed = editor(&app);
     assert_eq!(ed, Editor::default());
     assert_eq!((ed.width(), ed.height()), (5, 5));
-    assert_eq!(ed.pieces(), &[] as &[endlogic_core::Shape]);
-    assert!((0..5).all(|i| ed.clue(true, i) == 0 && ed.clue(false, i) == 0));
+    assert_eq!(ed.pieces(), &[] as &[endlogic_core::Piece]);
+    assert!(
+        (0..5).all(
+            |i| ed.clue(Color::DEFAULT, true, i) == 0 && ed.clue(Color::DEFAULT, false, i) == 0
+        )
+    );
     assert!(app.puzzle_id().unwrap().starts_with("Δ-C-"));
     // Every change is saved and shown in the address.
     app.press(app.layout().cell_rect(0, 0));
@@ -155,10 +159,16 @@ fn resizing_keeps_what_stays_inside() {
             assert_eq!(ed.cell(r, c), before.cell(r, c));
         }
         // Row 1 asked for 7; six cells are all it has now.
-        assert_eq!(ed.clue(true, r), before.clue(true, r).min(6));
+        assert_eq!(
+            ed.clue(Color::DEFAULT, true, r),
+            before.clue(Color::DEFAULT, true, r).min(6)
+        );
     }
     for c in 0..6 {
-        assert_eq!(ed.clue(false, c), before.clue(false, c));
+        assert_eq!(
+            ed.clue(Color::DEFAULT, false, c),
+            before.clue(Color::DEFAULT, false, c)
+        );
     }
     assert_eq!(ed.pieces(), before.pieces());
     app.press(edit(&app).width.plus);
@@ -166,7 +176,13 @@ fn resizing_keeps_what_stays_inside() {
     let ed = editor(&app);
     assert_eq!((ed.width(), ed.height()), (7, 8));
     assert_eq!(ed.cell(0, 6), Cell::Free);
-    assert_eq!((ed.clue(false, 6), ed.clue(true, 7)), (0, 0));
+    assert_eq!(
+        (
+            ed.clue(Color::DEFAULT, false, 6),
+            ed.clue(Color::DEFAULT, true, 7)
+        ),
+        (0, 0)
+    );
     assert_eq!(ed.cell(0, 1), before.cell(0, 1));
     // Sizes stay within 1..=16.
     for _ in 0..20 {
@@ -197,6 +213,7 @@ fn clues_take_one_tap_each_and_move_on() {
     assert_eq!(
         app.selected_clue(),
         Some(ClueRef {
+            color: Color::DEFAULT,
             row: true,
             index: 0
         })
@@ -208,17 +225,22 @@ fn clues_take_one_tap_each_and_move_on() {
     }
     let ed = editor(&app);
     assert_eq!(
-        (0..5).map(|r| ed.clue(true, r)).collect::<Vec<_>>(),
+        (0..5)
+            .map(|r| ed.clue(Color::DEFAULT, true, r))
+            .collect::<Vec<_>>(),
         [1, 2, 3, 4, 5]
     );
     assert_eq!(
-        (0..5).map(|c| ed.clue(false, c)).collect::<Vec<_>>(),
+        (0..5)
+            .map(|c| ed.clue(Color::DEFAULT, false, c))
+            .collect::<Vec<_>>(),
         [0, 1, 2, 3, 4]
     );
     // The strip stays open, back at the first row.
     assert_eq!(
         app.selected_clue(),
         Some(ClueRef {
+            color: Color::DEFAULT,
             row: true,
             index: 0
         })
@@ -228,6 +250,7 @@ fn clues_take_one_tap_each_and_move_on() {
     assert_eq!(
         app.selected_clue(),
         Some(ClueRef {
+            color: Color::DEFAULT,
             row: false,
             index: 3
         })
@@ -269,18 +292,18 @@ fn pieces_are_added_changed_duplicated_and_deleted() {
     app.press(parts(&app).done);
     assert!(app.draft().is_none());
     assert_eq!(editor(&app).pieces().len(), 1);
-    assert_eq!(editor(&app).pieces()[0].area(), 3);
+    assert_eq!(editor(&app).pieces()[0].shape.area(), 3);
     // Changing it.
     app.press(app.card_of(0).unwrap());
     assert_eq!(app.draft().unwrap().index, Some(0));
     draft_cell(&mut app, 2, 1);
     app.press(parts(&app).done);
-    assert_eq!(editor(&app).pieces()[0].area(), 4);
+    assert_eq!(editor(&app).pieces()[0].shape.area(), 4);
     // Cancel keeps it as it was.
     app.press(app.card_of(0).unwrap());
     draft_cell(&mut app, 0, 0);
     app.press(parts(&app).cancel);
-    assert_eq!(editor(&app).pieces()[0].area(), 4);
+    assert_eq!(editor(&app).pieces()[0].shape.area(), 4);
     // Duplicate.
     app.press(app.card_of(0).unwrap());
     app.press(parts(&app).duplicate);
@@ -718,4 +741,240 @@ fn the_three_code_kinds_go_both_ways() {
     // Edit codes open the editor directly.
     let app = open(CodeKind::Edit);
     assert!(app.is_editing());
+}
+
+// ---- colors ----
+
+const TEAL: Color = Color(0);
+const ORANGE: Color = Color(1);
+
+/// The clue field of `color` for row (`row`) or column `index`.
+fn field(app: &App, color: Color, row: bool, index: usize) -> Rect {
+    app.clue_fields()
+        .into_iter()
+        .find(|(c, _)| c.color == color && c.row == row && c.index == index)
+        .map_or_else(|| panic!("no field {color:?} {row} {index}"), |(_, r)| r)
+}
+
+fn mark(app: &App, color: Color) -> Rect {
+    edit(app).palette[color.index()]
+}
+
+#[test]
+fn one_color_editing_shows_one_field_per_line() {
+    let mut app = editing(&Editor::default().puzzle(), 1366.0, 768.0);
+    assert_eq!(app.active_color(), TEAL);
+    assert_eq!(app.clue_colors(), [TEAL]);
+    assert_eq!(app.clue_fields().len(), 10);
+    // The field is the whole band part, as before colors.
+    assert_eq!(field(&app, TEAL, true, 2), row_counter(&app, 2));
+    // The marks: four, teal ringed.
+    let drawing = settle(&mut app);
+    for color in Color::ALL {
+        let fill = endlogic_ui::palette(color).fill;
+        assert!(count_color(&drawing, fill) >= 1, "{color:?} mark not drawn");
+    }
+}
+
+#[test]
+fn the_active_color_colors_locks_and_new_pieces() {
+    let mut app = editing(&Editor::default().puzzle(), 390.0, 844.0);
+    let cell = app.layout().cell_rect(1, 1);
+    app.press(cell);
+    assert_eq!(editor(&app).cell(1, 1), Cell::Lock(TEAL));
+    // Another active color: a lock of another color turns at once.
+    app.press(mark(&app, ORANGE));
+    assert_eq!(app.active_color(), ORANGE);
+    app.press(cell);
+    assert_eq!(editor(&app).cell(1, 1), Cell::Lock(ORANGE));
+    app.press(cell);
+    assert_eq!(editor(&app).cell(1, 1), Cell::Dead);
+    app.press(cell);
+    assert_eq!(editor(&app).cell(1, 1), Cell::Free);
+    app.press(cell);
+    assert_eq!(editor(&app).cell(1, 1), Cell::Lock(ORANGE));
+    // Orange is in use now: it has clue fields, below... above teal.
+    assert_eq!(app.clue_colors(), [TEAL, ORANGE]);
+    let (t, o) = (field(&app, TEAL, true, 0), field(&app, ORANGE, true, 0));
+    assert!(o.bottom() <= t.y + 0.01, "orange over teal in a row");
+    let (t, o) = (field(&app, TEAL, false, 0), field(&app, ORANGE, false, 0));
+    assert!(t.right() <= o.x + 0.01, "teal left of orange in a column");
+    // A new piece takes the active color.
+    app.press(app.card_of(0).unwrap());
+    assert_eq!(app.draft().unwrap().color, ORANGE);
+    draft_cell(&mut app, 0, 0);
+    app.press(parts(&app).done);
+    assert_eq!(editor(&app).pieces()[0].color, ORANGE);
+    // Its color can be changed with the marks over the grid.
+    app.press(app.card_of(0).unwrap());
+    app.press(parts(&app).colors[2]);
+    assert_eq!(app.draft().unwrap().color, Color(2));
+    app.press(parts(&app).done);
+    assert_eq!(editor(&app).pieces()[0].color, Color(2));
+    assert_eq!(app.clue_colors(), [TEAL, ORANGE, Color(2)]);
+}
+
+#[test]
+fn clue_fields_go_rows_then_columns_then_the_next_color() {
+    let mut app = editing(&Editor::default().puzzle(), 1366.0, 768.0);
+    app.press(mark(&app, ORANGE));
+    assert_eq!(app.clue_colors(), [TEAL, ORANGE]);
+    app.press(field(&app, TEAL, true, 0));
+    let mut order = Vec::new();
+    for _ in 0..21 {
+        let clue = app.selected_clue().unwrap();
+        order.push(clue);
+        key(&mut app, 1);
+    }
+    let at = |color, row, index| ClueRef { color, row, index };
+    let mut expected: Vec<ClueRef> = Vec::new();
+    for color in [TEAL, ORANGE] {
+        expected.extend((0..5).map(|i| at(color, true, i)));
+        expected.extend((0..5).map(|i| at(color, false, i)));
+    }
+    expected.push(at(TEAL, true, 0));
+    assert_eq!(order, expected);
+    let ed = editor(&app);
+    assert!((0..5).all(|i| ed.clue(ORANGE, true, i) == 1 && ed.clue(TEAL, false, i) == 1));
+}
+
+#[test]
+fn the_status_line_names_the_color_of_the_problem() {
+    let text = "endlogic 2\ncolors 2\ngrid\n...\n...\n...\nrows a 1 0 0\nrows b 3 2 0\ncols a 1 0 0\ncols b 2 2 0\npiece a\n#\npiece b\n##\n##\n";
+    let puzzle = parse(text).unwrap();
+    for (lang, expected) in [
+        ("en", "Orange: rows give 5, columns give 4"),
+        ("ua", "Помаранчевий: рядки дають 5, стовпці 4"),
+    ] {
+        let mut config = config(1366.0, 768.0);
+        config.code = Some((CodeKind::Edit, encode(&puzzle).unwrap()));
+        config.settings = vec![("lang".to_owned(), lang.to_owned())];
+        let mut app = with(config);
+        let drawing = settle(&mut app);
+        let line: String = texts(&drawing).join(" ");
+        assert!(line.contains(expected), "{lang}: {line}");
+    }
+    // One color: no name.
+    let single = parse("endlogic 1\ngrid\n..\n..\nrows 2 0\ncols 1 0\npiece\n#\n").unwrap();
+    let mut app = editing(&single, 1366.0, 768.0);
+    let drawing = settle(&mut app);
+    let line: String = texts(&drawing).join(" ");
+    assert!(line.contains("Rows give 2, columns give 1"), "{line}");
+    assert!(!line.contains("Teal"), "{line}");
+}
+
+/// Types a game sample into an empty editor by taps only.
+fn type_in(app: &mut App, puzzle: &Puzzle) {
+    let grid = puzzle.grid();
+    let (w, h) = (grid.width(), grid.height());
+    while editor(app).width() < w {
+        app.press(edit(app).width.plus);
+    }
+    while editor(app).height() < h {
+        app.press(edit(app).height.plus);
+    }
+    for r in 0..h {
+        for c in 0..w {
+            let taps = match grid.get(r, c).unwrap() {
+                Cell::Free => 0,
+                Cell::Lock(color) => {
+                    app.press(mark(app, color));
+                    1
+                }
+                Cell::Dead => 2,
+            };
+            for _ in 0..taps {
+                app.press(app.layout().cell_rect(r, c));
+            }
+        }
+    }
+    // Every color's fields appear once the color is active.
+    for color in puzzle.colors() {
+        app.press(mark(app, color));
+        app.press(field(app, color, true, 0));
+        let clues = puzzle.clues_for(color).unwrap();
+        for &v in clues.rows.iter().chain(&clues.cols) {
+            key(app, v);
+        }
+        key(app, usize::MAX);
+    }
+    for piece in puzzle.pieces() {
+        app.press(mark(app, piece.color));
+        let cards = app.editor().unwrap().pieces().len();
+        while app.card_of(cards).is_none() {
+            app.press(app.layout().pager.unwrap().next);
+        }
+        app.press(app.card_of(cards).unwrap());
+        for &(r, c) in piece.shape.cells() {
+            draft_cell(app, r, c);
+        }
+        app.press(parts(app).done);
+    }
+}
+
+#[test]
+fn typing_in_the_game_samples_gives_their_codes_and_one_solution() {
+    for (name, size) in [
+        ("wla980-1.txt", (1366.0, 768.0)),
+        ("wla980-2.txt", (390.0, 844.0)),
+    ] {
+        let puzzle = sample(name);
+        let mut app = with({
+            let mut config = config(size.0, size.1);
+            config.code = Some((
+                CodeKind::Edit,
+                encode(&Editor::empty(5, 5).puzzle()).unwrap(),
+            ));
+            config
+        });
+        type_in(&mut app, &puzzle);
+        let typed = editor(&app).puzzle();
+        assert_eq!(encode(&typed).unwrap(), encode(&puzzle).unwrap(), "{name}");
+        assert!(app.first_problem().is_none(), "{name}");
+        solve(&mut app);
+        assert_eq!(
+            app.solve_state(),
+            Some(SolveState::Finished(StopReason::Exhausted)),
+            "{name}"
+        );
+        assert_eq!(app.solutions().0.len(), 1, "{name}");
+        // Its colors are drawn on the board in the solution.
+        let drawing = settle(&mut app);
+        let orange = endlogic_ui::palette(ORANGE).fill;
+        assert!(count_color(&drawing, orange) > 0, "{name}");
+    }
+}
+
+#[test]
+fn colored_links_of_every_kind_keep_their_colors() {
+    let puzzle = sample("wla980-1.txt");
+    let code = encode(&puzzle).unwrap();
+    // The editor's link.
+    let mut app = editing(&puzzle, 1366.0, 768.0);
+    assert_eq!(editor(&app).puzzle(), puzzle);
+    assert_eq!(app.clue_colors(), [TEAL, ORANGE]);
+    // Play it, then back to the editor: nothing lost.
+    app.take_effects();
+    app.press(edit(&app).play);
+    assert!(!app.is_editing() && app.is_custom());
+    assert_eq!(app.board().unwrap().puzzle(), &puzzle);
+    assert_eq!(last_code(&mut app, CodeKind::Custom), Some(code.clone()));
+    app.press(app.layout().new);
+    assert!(app.is_editing());
+    assert_eq!(editor(&app).puzzle(), puzzle);
+    // The custom play link.
+    let mut config = config(390.0, 844.0);
+    config.code = Some((CodeKind::Custom, code.clone()));
+    let mut app = App::new(config);
+    settle(&mut app);
+    assert!(app.is_custom() && !app.is_editing());
+    assert_eq!(app.board().unwrap().puzzle(), &puzzle);
+    assert!(app.toast().is_none());
+    // The editor's setting keeps the colors too.
+    let mut config = common::config(1366.0, 768.0);
+    config.settings = vec![(SETTING_EDITOR.to_owned(), code)];
+    let mut app = App::new(config);
+    settle(&mut app);
+    app.press(app.layout().tabs[4]);
+    assert_eq!(editor(&app).puzzle(), puzzle);
 }

@@ -27,17 +27,27 @@ wln006-2 silhouette: f96f12e35abda54d, 1057 calls
 wln006-2 blamed piece: a0ff3422aa351569, 1056 calls
 wln006-2 blamed piece fading: 05defcab978cb001, 1056 calls
 wln006-2 won with hints: 193edbaa449f53ff, 817 calls
-editor empty: e5e7f78cd56690cc, 371 calls
-editor wln006-2 1366x768 en: f2677e0de1842605, 602 calls
-editor digit strip 1366x768 en: a9c83e6f2fb2497e, 637 calls
-editor piece editor 1366x768 en: bb49feb072082278, 579 calls
-editor wln006-2 390x844 ua: 97901dd019c28899, 607 calls
-editor digit strip 390x844 ua: d7d8872e24d821e3, 534 calls
-editor piece editor 390x844 ua: 244d85d3aa0c5699, 595 calls
-editor solutions of wlh9000-1 1366x768: 7ce9acc12a78085d, 535 calls
-editor solutions of wlh9000-1 390x844: 23efb31895a3ed19, 463 calls
-editor tray pages: 9561d99ef2f65ec9, 1973 calls
-editor tray page 2: afafdef743d85eca, 1972 calls
+editor empty: 72e310e62db0b674, 380 calls
+editor wln006-2 1366x768 en: 1120b76788231a9a, 611 calls
+editor digit strip 1366x768 en: 6e261ac1defed85f, 646 calls
+editor piece editor 1366x768 en: f9999e73a26ca4d8, 597 calls
+editor wln006-2 390x844 ua: 4467a36fbd163c67, 616 calls
+editor digit strip 390x844 ua: cc9b6f0de7432e01, 543 calls
+editor piece editor 390x844 ua: a7964e83233f0b1f, 613 calls
+editor solutions of wlh9000-1 1366x768: 0ef35d94600e4c1a, 544 calls
+editor solutions of wlh9000-1 390x844: 1c2ba881a857f466, 472 calls
+editor wla980-1 1366x768 en: 0b4a44bbdb288b84, 580 calls
+editor wla980-1 orange field 1366x768: aea70894af3137c3, 612 calls
+editor wla980-1 orange piece 1366x768: 3e242bbd550ba3cd, 543 calls
+editor wla980-1 390x844 ua: 09b81f9666793470, 585 calls
+editor wla980-1 orange field 390x844: ee049a9eef8897ea, 486 calls
+editor wla980-1 orange piece 390x844: 3260dca8358098be, 559 calls
+editor wla980-1 844x390 en: 538f953f3e77f526, 563 calls
+editor wla980-1 orange field 844x390: 5d0cf5a94f1fd037, 436 calls
+editor wla980-1 orange piece 844x390: 41faf8bff793b2ba, 500 calls
+editor solution of wla980-1: 62d5ba33a21e37e2, 748 calls
+editor tray pages: 0ba23fefabab3798, 1982 calls
+editor tray page 2: c35e0cf0f9b6cb9f, 1981 calls
 custom play wln006-2 1366x768 en: 26c665062e42fa77, 759 calls
 custom play wln006-2 844x390 ua: 786a927c551ec45c, 645 calls
 normal two colors 1366x768: 9a003224e08ca47e, 687 calls

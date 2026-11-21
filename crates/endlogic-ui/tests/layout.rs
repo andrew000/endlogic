@@ -1113,10 +1113,18 @@ fn check_overlays(layout: &Layout, input: &LayoutInput, apart: &Apart, what: &st
             ("cancel", parts.cancel),
             ("duplicate", parts.duplicate),
             ("delete", parts.delete),
+            ("teal", parts.colors[0]),
+            ("orange", parts.colors[1]),
+            ("violet", parts.colors[2]),
+            ("lime", parts.colors[3]),
         ]
         .into_iter()
         .map(|(n, r)| {
             assert!(!r.intersects(parts.grid), "{what}: {n} over the grid");
+            assert!(
+                !Layout::zone(r).intersects(parts.grid),
+                "{what}: {n} zone over the grid"
+            );
             (n.to_owned(), Layout::zone(r))
         })
         .collect();

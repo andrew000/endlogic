@@ -4,9 +4,9 @@ use alloc::borrow::ToOwned;
 use alloc::format;
 use alloc::string::String;
 
-use endlogic_core::Axis;
 use endlogic_core::diagnose::Problem;
 use endlogic_core::generator::Difficulty;
+use endlogic_core::{Axis, Color};
 
 /// Interface language.
 #[derive(Debug, Clone, Copy, PartialEq, Eq, Hash)]
@@ -299,5 +299,47 @@ pub fn problem_text(lang: Lang, problem: &Problem) -> String {
             format!("{} замків більше за підказку", line(axis, index))
         }
         (_, Problem::NoPieces) => text(lang, Text::NoPieces).to_owned(),
+    }
+}
+
+/// The name of a puzzle color: Teal, Orange, Violet, Lime.
+#[must_use]
+pub fn color_name(lang: Lang, color: Color) -> &'static str {
+    match (lang, color.index()) {
+        (Lang::En, 0) => "Teal",
+        (Lang::En, 1) => "Orange",
+        (Lang::En, 2) => "Violet",
+        (Lang::En, _) => "Lime",
+        (Lang::Ua, 0) => "Бірюзовий",
+        (Lang::Ua, 1) => "Помаранчевий",
+        (Lang::Ua, 2) => "Фіолетовий",
+        (Lang::Ua, _) => "Лаймовий",
+    }
+}
+
+/// [`problem_text`], led by the name of the problem's color when the
+/// puzzle has more than one (`colored`): "Orange: rows give 9, columns
+/// give 8".
+#[must_use]
+pub fn problem_line(lang: Lang, problem: &Problem, colored: bool) -> String {
+    let text = problem_text(lang, problem);
+    let color = match *problem {
+        Problem::LineSums { color, .. }
+        | Problem::Area { color, .. }
+        | Problem::LineTooLong { color, .. }
+        | Problem::TooManyLocks { color, .. } => Some(color),
+        Problem::NoPieces => None,
+    };
+    match color {
+        Some(color) if colored => {
+            let mut chars = text.chars();
+            let first: String = chars
+                .next()
+                .into_iter()
+                .flat_map(char::to_lowercase)
+                .collect();
+            format!("{}: {first}{}", color_name(lang, color), chars.as_str())
+        }
+        _ => text,
     }
 }

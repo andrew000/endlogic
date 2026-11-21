@@ -321,7 +321,6 @@ impl App {
             custom: false,
             editor: setting(SETTING_EDITOR)
                 .and_then(|code| decode(code).ok())
-                .filter(|p| p.colors().len() <= 1)
                 .map_or_else(Editor::default, |p| Editor::from_puzzle(&p)),
             edit: EditState::default(),
             layout: Layout::compute(&LayoutInput {
@@ -814,9 +813,6 @@ impl App {
         let Ok(puzzle) = decode(code) else {
             return false;
         };
-        if kind == CodeKind::Edit && puzzle.colors().len() > 1 {
-            return false;
-        }
         if kind == CodeKind::Edit {
             self.open_editor(Editor::from_puzzle(&puzzle));
             return true;

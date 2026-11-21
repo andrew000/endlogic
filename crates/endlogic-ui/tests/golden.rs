@@ -19,7 +19,7 @@ use common::*;
 use endlogic_core::code::{decode, encode};
 use endlogic_core::format::parse;
 use endlogic_core::solver::{DEFAULT_NODE_BUDGET, search};
-use endlogic_core::{Puzzle, Solution};
+use endlogic_core::{Color, Puzzle, Solution};
 use endlogic_ui::{
     App, CodeKind, Config, Event, Key, Painter, Point, PointerKind, Rect, Rgba, SETTING_COLORS,
     SETTING_COUNTERS, SETTING_DIFFICULTY, SETTING_LANG,
@@ -617,6 +617,39 @@ fn editor_scenes() -> Vec<(String, Writer)> {
             rest(&mut app),
         ));
     }
+    let wla = sample("wla980-1.txt");
+    for (size, w, h, lang) in [
+        ("1366x768", 1366.0, 768.0, "en"),
+        ("390x844", 390.0, 844.0, "ua"),
+        ("844x390", 844.0, 390.0, "en"),
+    ] {
+        let mut app = with_code(CodeKind::Edit, &wla, w, h, lang);
+        out.push((format!("editor wla980-1 {size} {lang}"), rest(&mut app)));
+        // An orange clue field selected, then the piece editor of an
+        // orange piece.
+        let field = app
+            .clue_fields()
+            .into_iter()
+            .find(|(c, _)| c.color == Color(1) && c.row && c.index == 1)
+            .unwrap()
+            .1;
+        press(&mut app, field);
+        out.push((
+            format!("editor wla980-1 orange field {size}"),
+            rest(&mut app),
+        ));
+        app.handle(Event::Key(Key::Escape));
+        let card = app.card_of(0).unwrap();
+        press(&mut app, card);
+        out.push((
+            format!("editor wla980-1 orange piece {size}"),
+            rest(&mut app),
+        ));
+    }
+    let mut app = with_code(CodeKind::Edit, &wla, 1366.0, 768.0, "ua");
+    let solve = app.layout().edit.unwrap().solve;
+    press(&mut app, solve);
+    out.push(("editor solution of wla980-1".to_owned(), rest(&mut app)));
     let mut app = with_code(CodeKind::Edit, &dominoes(), 390.0, 844.0, "en");
     assert!(app.tray_pages() > 1);
     out.push(("editor tray pages".to_owned(), rest(&mut app)));

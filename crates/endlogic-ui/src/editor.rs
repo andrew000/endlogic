@@ -1,16 +1,20 @@
 //! The custom tab: an editor for puzzles copied from the game, a solver
 //! that lists their solutions, and a way to play them.
 
+use alloc::collections::BTreeMap;
 use alloc::vec;
 use alloc::vec::Vec;
 
 use endlogic_core::code::encode;
 use endlogic_core::diagnose::{Problem, diagnose};
 use endlogic_core::solver::{Progress, Search, StopReason};
-use endlogic_core::{Cell, Color, Grid, MAX_GRID_SIZE, MAX_PIECES, Piece, Puzzle, Shape, Solution};
+use endlogic_core::{
+    Cell, Color, Grid, LineClues, MAX_COLORS, MAX_GRID_SIZE, MAX_PIECES, Piece, Puzzle, Shape,
+    Solution,
+};
 
 use crate::app::{App, Control, Gesture};
-use crate::layout::{EditLayout, Layout, Mode};
+use crate::layout::{EditLayout, Layout, Mode, to_f32};
 use crate::painter::Rect;
 use crate::shell::{CodeKind, Effect, SETTING_EDITOR};
 use crate::theme;
@@ -20,15 +24,18 @@ pub const DRAFT_SIDE: usize = 6;
 /// Most solutions the solver lists.
 pub const SOLUTION_LIMIT: usize = 50;
 
-/// A puzzle being edited: any size, any clues, any pieces.
+/// A puzzle being edited: any size, any clues of any of the four colors,
+/// any pieces.
 #[derive(Debug, Clone, PartialEq, Eq, Hash)]
 pub struct Editor {
     width: usize,
     height: usize,
     cells: Vec<Cell>,
-    rows: Vec<usize>,
-    cols: Vec<usize>,
-    pieces: Vec<Shape>,
+    /// Row clues of each color, `rows[color][row]`.
+    rows: [Vec<usize>; MAX_COLORS],
+    /// Column clues of each color.
+    cols: [Vec<usize>; MAX_COLORS],
+    pieces: Vec<Piece>,
 }
 
 impl Default for Editor {
@@ -46,39 +53,37 @@ impl Editor {
             width,
             height,
             cells: vec![Cell::Free; width * height],
-            rows: vec![0; height],
-            cols: vec![0; width],
+            rows: core::array::from_fn(|_| vec![0; height]),
+            cols: core::array::from_fn(|_| vec![0; width]),
             pieces: Vec::new(),
         }
     }
 
-    /// The editor holding `puzzle` (its first color's clues; every piece).
+    /// The editor holding `puzzle`: its cells, every color's clues and
+    /// every piece.
     #[must_use]
     pub fn from_puzzle(puzzle: &Puzzle) -> Editor {
         let grid = puzzle.grid();
-        let color = puzzle.colors().first().copied().unwrap_or(Color::DEFAULT);
         Editor {
             width: grid.width(),
             height: grid.height(),
-            cells: grid
-                .cells()
-                .iter()
-                .map(|c| match c {
-                    Cell::Lock(_) => Cell::Lock(Color::DEFAULT),
-                    other => *other,
-                })
-                .collect(),
-            rows: (0..grid.height())
-                .map(|r| puzzle.row_clue(color, r))
-                .collect(),
-            cols: (0..grid.width())
-                .map(|c| puzzle.col_clue(color, c))
-                .collect(),
-            pieces: puzzle.pieces().iter().map(|p| p.shape.clone()).collect(),
+            cells: grid.cells().to_vec(),
+            rows: core::array::from_fn(|k| {
+                (0..grid.height())
+                    .map(|r| puzzle.row_clue(Color::ALL[k], r))
+                    .collect()
+            }),
+            cols: core::array::from_fn(|k| {
+                (0..grid.width())
+                    .map(|c| puzzle.col_clue(Color::ALL[k], c))
+                    .collect()
+            }),
+            pieces: puzzle.pieces().to_vec(),
         }
     }
 
-    /// The puzzle as it stands.
+    /// The puzzle as it stands. It has clues for every color in use (see
+    /// [`colors`](Editor::colors)), or for the first color when none is.
     ///
     /// # Panics
     ///
@@ -87,13 +92,37 @@ impl Editor {
     pub fn puzzle(&self) -> Puzzle {
         let grid = Grid::from_cells(self.width, self.height, self.cells.clone())
             .expect("the size stays within 1..=16");
-        let pieces = self
-            .pieces
-            .iter()
-            .map(|s| Piece::new(Color::DEFAULT, s.clone()))
+        let mut colors = self.colors();
+        if colors.is_empty() {
+            colors.push(Color::DEFAULT);
+        }
+        let clues: BTreeMap<Color, LineClues> = colors
+            .into_iter()
+            .map(|color| {
+                let k = color.index();
+                let clues = LineClues {
+                    rows: self.rows[k].clone(),
+                    cols: self.cols[k].clone(),
+                };
+                (color, clues)
+            })
             .collect();
-        Puzzle::single_color(grid, pieces, self.rows.clone(), self.cols.clone())
-            .expect("clues match the grid")
+        Puzzle::new(grid, self.pieces.clone(), clues).expect("clues match the grid")
+    }
+
+    /// The colors in use: those with a piece, a lock or a clue above 0, in
+    /// order.
+    #[must_use]
+    pub fn colors(&self) -> Vec<Color> {
+        Color::ALL
+            .into_iter()
+            .filter(|&color| {
+                let k = color.index();
+                self.pieces.iter().any(|p| p.color == color)
+                    || self.cells.contains(&Cell::Lock(color))
+                    || self.rows[k].iter().chain(&self.cols[k]).any(|&v| v > 0)
+            })
+            .collect()
     }
 
     /// Columns.
@@ -114,19 +143,20 @@ impl Editor {
         self.cells[row * self.width + col]
     }
 
-    /// The clue of row `index` (`row`) or column `index`.
+    /// The clue of `color` for row `index` (`row`) or column `index`.
     #[must_use]
-    pub fn clue(&self, row: bool, index: usize) -> usize {
+    pub fn clue(&self, color: Color, row: bool, index: usize) -> usize {
+        let k = color.index().min(MAX_COLORS - 1);
         if row {
-            self.rows[index]
+            self.rows[k][index]
         } else {
-            self.cols[index]
+            self.cols[k][index]
         }
     }
 
     /// The pieces.
     #[must_use]
-    pub fn pieces(&self) -> &[Shape] {
+    pub fn pieces(&self) -> &[Piece] {
         &self.pieces
     }
 
@@ -142,34 +172,41 @@ impl Editor {
             }
         }
         self.cells = cells;
-        self.rows.resize(height, 0);
-        self.cols.resize(width, 0);
-        for clue in &mut self.rows {
-            *clue = (*clue).min(width);
+        for rows in &mut self.rows {
+            rows.resize(height, 0);
+            for clue in rows.iter_mut() {
+                *clue = (*clue).min(width);
+            }
         }
-        for clue in &mut self.cols {
-            *clue = (*clue).min(height);
+        for cols in &mut self.cols {
+            cols.resize(width, 0);
+            for clue in cols.iter_mut() {
+                *clue = (*clue).min(height);
+            }
         }
         self.width = width;
         self.height = height;
     }
 
-    /// Turns a cell free → lock → dead → free.
-    pub fn cycle(&mut self, row: usize, col: usize) {
+    /// Turns a cell free → lock of `active` → dead → free; a lock of
+    /// another color becomes a lock of `active` at once.
+    pub fn cycle(&mut self, row: usize, col: usize, active: Color) {
         let cell = &mut self.cells[row * self.width + col];
         *cell = match *cell {
-            Cell::Free => Cell::Lock(Color::DEFAULT),
+            Cell::Free => Cell::Lock(active),
+            Cell::Lock(color) if color != active => Cell::Lock(active),
             Cell::Lock(_) => Cell::Dead,
             Cell::Dead => Cell::Free,
         };
     }
 
-    /// Sets a clue, cut to the length of its line.
-    pub fn set_clue(&mut self, row: bool, index: usize, value: usize) {
+    /// Sets a clue of `color`, cut to the length of its line.
+    pub fn set_clue(&mut self, color: Color, row: bool, index: usize, value: usize) {
+        let k = color.index().min(MAX_COLORS - 1);
         if row {
-            self.rows[index] = value.min(self.width);
+            self.rows[k][index] = value.min(self.width);
         } else {
-            self.cols[index] = value.min(self.height);
+            self.cols[k][index] = value.min(self.height);
         }
     }
 
@@ -178,15 +215,17 @@ impl Editor {
     pub fn max_piece_side(&self) -> usize {
         self.pieces
             .iter()
-            .map(|s| s.width().max(s.height()))
+            .map(|p| p.shape.width().max(p.shape.height()))
             .max()
             .unwrap_or(1)
     }
 }
 
-/// A row (`row`) or column counter.
+/// The clue field of one color for a row (`row`) or a column.
 #[derive(Debug, Clone, Copy, PartialEq, Eq, Hash)]
 pub struct ClueRef {
+    /// The color.
+    pub color: Color,
     /// A row counter, else a column counter.
     pub row: bool,
     /// The line, from 0.
@@ -202,6 +241,8 @@ pub struct Draft {
     pub cells: Vec<bool>,
     /// The piece being changed, or `None` for a new one.
     pub index: Option<usize>,
+    /// The piece's color.
+    pub color: Color,
 }
 
 /// Why a drawn piece cannot be accepted.
@@ -214,7 +255,7 @@ pub enum DraftError {
 }
 
 impl Draft {
-    fn new(shape: Option<&Shape>, index: Option<usize>) -> Draft {
+    fn new(shape: Option<&Shape>, index: Option<usize>, color: Color) -> Draft {
         let side = shape
             .map_or(0, |s| s.width().max(s.height()))
             .max(DRAFT_SIDE);
@@ -224,7 +265,12 @@ impl Draft {
                 cells[r * side + c] = true;
             }
         }
-        Draft { side, cells, index }
+        Draft {
+            side,
+            cells,
+            index,
+            color,
+        }
     }
 
     /// The piece drawn, or why there is none.
@@ -284,6 +330,8 @@ pub(crate) struct EditState {
     /// Seconds since the clear button asked for a second tap.
     pub clear_armed: Option<f32>,
     pub solver: Option<Solver>,
+    /// The color new locks and pieces get.
+    pub active: Color,
 }
 
 /// An editor action from a control.
@@ -296,6 +344,8 @@ pub enum EditControl {
         /// +, else −.
         plus: bool,
     },
+    /// A mark of the active color row.
+    Active(Color),
     /// A board cell.
     Cell(usize, usize),
     /// A counter.
@@ -312,6 +362,8 @@ pub enum EditControl {
     AddPiece,
     /// A cell of the piece editor.
     DraftCell(usize),
+    /// A color mark of the piece editor.
+    DraftColor(Color),
     /// Accept the drawn piece.
     DraftDone,
     /// Leave the piece editor.
@@ -412,6 +464,23 @@ impl App {
     #[must_use]
     pub fn first_problem(&self) -> Option<Problem> {
         diagnose(&self.editor.puzzle()).into_iter().next()
+    }
+
+    /// The color new locks and pieces get in the editor.
+    #[must_use]
+    pub fn active_color(&self) -> Color {
+        self.edit.active
+    }
+
+    /// The colors that have clue fields: the first color, those in use and
+    /// the active one, in order.
+    #[must_use]
+    pub fn clue_colors(&self) -> Vec<Color> {
+        let used = self.editor.colors();
+        Color::ALL
+            .into_iter()
+            .filter(|&c| c == Color::DEFAULT || used.contains(&c) || c == self.edit.active)
+            .collect()
     }
 
     /// Cards in the editor's tray: the pieces, then the one that adds a
@@ -532,6 +601,9 @@ impl App {
         }
         let ed_size = |width: bool, plus: bool| ed(EditControl::Size { width, plus });
         let size = (self.editor.width, self.editor.height);
+        for (color, mark) in Color::ALL.into_iter().zip(e.palette) {
+            controls.push((ed(EditControl::Active(color)), mark, true));
+        }
         controls.extend([
             (ed_size(true, false), e.width.minus, size.0 > 1),
             (ed_size(true, true), e.width.plus, size.0 < MAX_GRID_SIZE),
@@ -599,6 +671,9 @@ impl App {
             );
             controls.push((ed(EditControl::DraftCell(k)), cell, true));
         }
+        for (color, mark) in Color::ALL.into_iter().zip(parts.colors) {
+            controls.push((ed(EditControl::DraftColor(color)), mark, true));
+        }
         let valid = draft.shape().is_ok();
         let existing = draft.index.is_some();
         let room = self.editor.pieces.len() < MAX_PIECES;
@@ -629,33 +704,48 @@ impl App {
             .collect()
     }
 
-    /// The counter areas: the band part beside each row and above each
-    /// column.
-    pub(crate) fn clue_controls(&self) -> Vec<(Control, Rect, bool)> {
-        let l = &self.layout;
-        let rows = (0..self.editor.height).map(|r| {
-            let cell = l.cell_rect(r, 0);
-            let area = Rect::new(l.row_counters.x, cell.y, l.row_counters.w, cell.h);
-            (
-                ClueRef {
+    /// The clue fields: the band part beside each row and above each column,
+    /// split among the colors that have fields like the counters in play
+    /// (for a row the first color at the bottom, for a column on the left).
+    #[must_use]
+    pub fn clue_fields(&self) -> Vec<(ClueRef, Rect)> {
+        let layout = &self.layout;
+        let colors = self.clue_colors();
+        let share = to_f32(colors.len().max(1));
+        let mut fields = Vec::new();
+        for (slot, &color) in colors.iter().enumerate() {
+            let slot = to_f32(slot);
+            for index in 0..self.editor.height {
+                let cell = layout.cell_rect(index, 0);
+                let h = cell.h / share;
+                let y = cell.y + (share - 1.0 - slot) * h;
+                let band = layout.row_counters;
+                let clue = ClueRef {
+                    color,
                     row: true,
-                    index: r,
-                },
-                area,
-            )
-        });
-        let cols = (0..self.editor.width).map(|c| {
-            let cell = l.cell_rect(0, c);
-            let area = Rect::new(cell.x, l.col_counters.y, cell.w, l.col_counters.h);
-            (
-                ClueRef {
+                    index,
+                };
+                fields.push((clue, Rect::new(band.x, y, band.w, h)));
+            }
+            for index in 0..self.editor.width {
+                let cell = layout.cell_rect(0, index);
+                let w = cell.w / share;
+                let band = layout.col_counters;
+                let clue = ClueRef {
+                    color,
                     row: false,
-                    index: c,
-                },
-                area,
-            )
-        });
-        rows.chain(cols)
+                    index,
+                };
+                fields.push((clue, Rect::new(cell.x + slot * w, band.y, w, band.h)));
+            }
+        }
+        fields
+    }
+
+    /// The clue fields as controls.
+    pub(crate) fn clue_controls(&self) -> Vec<(Control, Rect, bool)> {
+        self.clue_fields()
+            .into_iter()
             .map(|(clue, area)| (Control::Edit(EditControl::Clue(clue)), area, true))
             .collect()
     }
@@ -682,8 +772,9 @@ impl App {
                 }
                 self.edited();
             }
+            EditControl::Active(color) => self.edit.active = color,
             EditControl::Cell(r, c) => {
-                self.editor.cycle(r, c);
+                self.editor.cycle(r, c, self.edit.active);
                 self.edited();
             }
             EditControl::Clue(clue) => self.edit.selected = Some(clue),
@@ -691,17 +782,23 @@ impl App {
                 let Some(clue) = self.edit.selected else {
                     return;
                 };
-                self.editor.set_clue(clue.row, clue.index, value);
+                self.editor
+                    .set_clue(clue.color, clue.row, clue.index, value);
                 self.edit.selected = Some(self.next_clue(clue));
                 self.edited();
             }
             EditControl::DigitsDone | EditControl::Dismiss => self.edit.selected = None,
             EditControl::Card(i) => {
-                let shape = self.editor.pieces.get(i).cloned();
-                self.edit.draft = Some(Draft::new(shape.as_ref(), Some(i)));
+                let piece = self.editor.pieces.get(i).cloned();
+                let color = piece.as_ref().map_or(self.edit.active, |p| p.color);
+                let shape = piece.map(|p| p.shape);
+                self.edit.draft = Some(Draft::new(shape.as_ref(), Some(i), color));
             }
-            EditControl::AddPiece => self.edit.draft = Some(Draft::new(None, None)),
+            EditControl::AddPiece => {
+                self.edit.draft = Some(Draft::new(None, None, self.edit.active));
+            }
             EditControl::DraftCell(_)
+            | EditControl::DraftColor(_)
             | EditControl::DraftDone
             | EditControl::DraftDuplicate
             | EditControl::DraftCancel
@@ -709,6 +806,7 @@ impl App {
             EditControl::Clear => {
                 if self.edit.clear_armed.is_some() {
                     self.editor = Editor::empty(self.editor.width, self.editor.height);
+                    self.edit.active = Color::DEFAULT;
                     self.tray_page = 0;
                     self.edited();
                 } else {
@@ -763,6 +861,11 @@ impl App {
                     *cell = !*cell;
                 }
             }
+            EditControl::DraftColor(color) => {
+                if let Some(draft) = &mut self.edit.draft {
+                    draft.color = color;
+                }
+            }
             EditControl::DraftDone | EditControl::DraftDuplicate => {
                 let Some(draft) = self.edit.draft.take() else {
                     return;
@@ -771,12 +874,13 @@ impl App {
                     self.edit.draft = Some(draft);
                     return;
                 };
+                let piece = Piece::new(draft.color, shape);
                 match draft.index {
-                    Some(i) => self.editor.pieces[i] = shape.clone(),
-                    None => self.editor.pieces.push(shape.clone()),
+                    Some(i) => self.editor.pieces[i] = piece.clone(),
+                    None => self.editor.pieces.push(piece.clone()),
                 }
                 if control == EditControl::DraftDuplicate && self.editor.pieces.len() < MAX_PIECES {
-                    self.editor.pieces.push(shape);
+                    self.editor.pieces.push(piece);
                 }
                 self.edited();
                 let last = self.editor.pieces.len().saturating_sub(1);
@@ -793,27 +897,28 @@ impl App {
         }
     }
 
-    /// The counter after `clue`: rows top to bottom, then columns left to
-    /// right, then the first row again.
+    /// The clue field after `clue`: the rows of its color top to bottom,
+    /// then its columns left to right, then the next color with fields,
+    /// and after the last color the first row of the first again.
     fn next_clue(&self, clue: ClueRef) -> ClueRef {
+        let (width, height) = (self.editor.width, self.editor.height);
+        let colors = self.clue_colors();
+        let at = |color: Color, row: bool, index: usize| ClueRef { color, row, index };
         match (clue.row, clue.index + 1) {
-            (true, i) if i < self.editor.height => ClueRef {
-                row: true,
-                index: i,
-            },
-            (true, _) => ClueRef {
-                row: false,
-                index: 0,
-            },
-            (false, i) if i < self.editor.width => ClueRef {
-                row: false,
-                index: i,
-            },
-            (false, _) => ClueRef {
-                row: true,
-                index: 0,
-            },
+            (true, i) if i < height => return at(clue.color, true, i),
+            (true, _) => return at(clue.color, false, 0),
+            (false, i) if i < width => return at(clue.color, false, i),
+            (false, _) => {}
         }
+        // The next color with fields; the first if `clue`'s color was the
+        // last or no longer has fields.
+        let next = colors
+            .iter()
+            .copied()
+            .find(|&c| c > clue.color)
+            .or_else(|| colors.first().copied())
+            .unwrap_or(Color::DEFAULT);
+        at(next, true, 0)
     }
 
     /// Leaves play in the custom tab for the editor, with the same puzzle.

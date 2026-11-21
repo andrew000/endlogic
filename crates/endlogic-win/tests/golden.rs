@@ -105,6 +105,19 @@ fn scenes() -> Vec<(&'static str, &'static str, Vec<String>)> {
         ),
         ("wla980-1-1366x768-en", "1366x768", code(WLA_1)),
         (
+            "editor-wla980-1-1366x768-en",
+            "1366x768",
+            code(&format!("{web}#e={WLA_1}")),
+        ),
+        (
+            "editor-wla980-1-390x844-touch-uk",
+            "390x844",
+            with(
+                code(&format!("{web}#e={WLA_1}")),
+                &["--touch", "--lang", "uk"],
+            ),
+        ),
+        (
             "wla980-2-390x844-touch-uk",
             "390x844",
             with(code(WLA_2), &["--touch", "--lang", "uk"]),

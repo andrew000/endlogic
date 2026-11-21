@@ -55,5 +55,7 @@ pub use shell::{
     SETTING_COLORS, SETTING_COUNTERS, SETTING_DIFFICULTY, SETTING_EDITOR, SETTING_KEYS,
     SETTING_LANG,
 };
-pub use text::{Lang, Text, difficulty_label, problem_text, solution_of, text};
+pub use text::{
+    Lang, Text, color_name, difficulty_label, problem_line, problem_text, solution_of, text,
+};
 pub use theme::{BACKGROUND, PALETTES, Palette, palette};
