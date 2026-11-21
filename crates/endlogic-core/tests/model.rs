@@ -142,6 +142,30 @@ fn puzzle_errors() {
     );
 }
 
+#[test]
+fn colors_past_the_fourth_are_errors() {
+    let grid = Grid::new(1, 1).unwrap();
+    let fifth = Piece::new(Color(4), shape(&["#"]));
+    assert_eq!(
+        Puzzle::single_color(grid.clone(), vec![fifth], vec![0], vec![0]),
+        Err(ModelError::ColorOutOfRange(Color(4)))
+    );
+    let locked = Grid::from_cells(1, 1, vec![Cell::Lock(Color(7))]).unwrap();
+    assert_eq!(
+        Puzzle::single_color(locked, Vec::new(), vec![0], vec![0]),
+        Err(ModelError::ColorOutOfRange(Color(7)))
+    );
+    let fourth = Piece::new(Color(3), shape(&["#"]));
+    assert!(Puzzle::single_color(grid, vec![fourth], vec![0], vec![0]).is_ok());
+    assert_eq!(
+        Color::ALL.map(Color::letter),
+        [Some('a'), Some('b'), Some('c'), Some('d')]
+    );
+    assert_eq!(Color(4).letter(), None);
+    assert_eq!(Color::from_letter('c'), Some(Color(2)));
+    assert_eq!(Color::from_letter('e'), None);
+}
+
 /// A 3×3 board with a lock at (0, 0) and a dead cell at (2, 1); pieces are a
 /// monomino (0) and a horizontal domino (1).
 fn small() -> Puzzle {

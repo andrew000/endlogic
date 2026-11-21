@@ -1,0 +1,34 @@
+endlogic 2
+colors 2
+grid
+......
+......
+......
+....a.
+......
+..a...
+rows a 6 3 3 4 4 2
+rows b 0 2 3 1 2 1
+cols a 6 3 3 4 4 2
+cols b 0 2 3 1 2 1
+piece b
+##
+#.
+piece b
+##
+#.
+piece b
+##
+#.
+piece a
+#.#
+###
+piece a
+####
+#..#
+#...
+##..
+piece a
+...#
+####
+#...

@@ -7,6 +7,9 @@
 //! generated puzzles the solver is checked on are a fixed list,
 //! `solver-puzzles.txt`, written once and never blessed, so a change in the
 //! generator does not change the solver's inputs.
+//!
+//! Puzzles with more than one color have files of their own (`*-colors`),
+//! so the single-color files stay as they were before colors.
 
 mod support;
 
@@ -27,8 +30,26 @@ const LIMIT: usize = 1000;
 const BUDGET: u64 = 50_000_000;
 /// The fixed list of generated puzzles the solver is checked on.
 const INPUTS: &str = "solver-puzzles.txt";
+/// The same for two-color puzzles.
+const COLOR_INPUTS: &str = "colors-puzzles.txt";
+/// Seeds per level of the two-color inputs.
+const COLOR_SEEDS: u64 = 5;
 
+/// The single-color sample puzzles.
 fn samples() -> Vec<(String, Puzzle)> {
+    let mut all = sample_files();
+    all.retain(|(_, puzzle)| puzzle.colors().len() <= 1);
+    all
+}
+
+/// The sample puzzles with more than one color.
+fn colored_samples() -> Vec<(String, Puzzle)> {
+    let mut all = sample_files();
+    all.retain(|(_, puzzle)| puzzle.colors().len() > 1);
+    all
+}
+
+fn sample_files() -> Vec<(String, Puzzle)> {
     let dir = format!("{}/../../puzzles", env!("CARGO_MANIFEST_DIR"));
     let mut files: Vec<_> = std::fs::read_dir(dir)
         .unwrap()
@@ -48,16 +69,33 @@ fn samples() -> Vec<(String, Puzzle)> {
 
 /// The generated puzzles of every level and seed, by name, e.g. `hard-07`.
 fn generated() -> Vec<(String, Puzzle)> {
-    let path = support::golden_path(INPUTS);
+    fixed_inputs(INPUTS, 1, SEEDS)
+}
+
+/// Generated two-color puzzles, by name, e.g. `hard-2c-03`.
+fn generated_colored() -> Vec<(String, Puzzle)> {
+    fixed_inputs(COLOR_INPUTS, 2, COLOR_SEEDS)
+}
+
+/// A fixed list of generated puzzles kept as codes in `name`, made once by
+/// `just bless` from `colors` colors and seeds `0..seeds` of every level.
+fn fixed_inputs(name: &str, colors: usize, seeds: u64) -> Vec<(String, Puzzle)> {
+    let path = support::golden_path(name);
     let text = match std::fs::read_to_string(&path) {
         Ok(text) => text,
         Err(err) if err.kind() == std::io::ErrorKind::NotFound && support::blessing() => {
             let mut text = String::new();
             for level in Difficulty::ALL {
-                for seed in 0..SEEDS {
-                    let puzzle = generate(level.params(), seed).unwrap().puzzle;
+                for seed in 0..seeds {
+                    let params = level.params().with_colors(colors);
+                    let puzzle = generate(params, seed).unwrap().puzzle;
                     let code = encode(&puzzle).unwrap();
-                    writeln!(text, "{}-{seed:02} {code}", level.name()).unwrap();
+                    let level = level.name();
+                    if colors == 1 {
+                        writeln!(text, "{level}-{seed:02} {code}").unwrap();
+                    } else {
+                        writeln!(text, "{level}-{colors}c-{seed:02} {code}").unwrap();
+                    }
                 }
             }
             std::fs::write(&path, &text).unwrap();
@@ -194,11 +232,21 @@ fn run(mut search: Search) -> SearchResult {
 
 #[test]
 fn generator() {
+    support::check("generator.txt", &generator_results(1));
+}
+
+#[test]
+fn generator_two_colors() {
+    support::check("generator-colors.txt", &generator_results(2));
+}
+
+/// Every level and seed of the generator with `colors` colors.
+fn generator_results(colors: usize) -> String {
     let mut out = String::new();
     for level in Difficulty::ALL {
         for seed in 0..SEEDS {
             let name = level.name();
-            match generate(level.params(), seed) {
+            match generate(level.params().with_colors(colors), seed) {
                 Ok(g) => writeln!(
                     out,
                     "{name} {seed:2}: attempt {}, nodes {}, all attempts {}, code {}",
@@ -212,7 +260,7 @@ fn generator() {
             .unwrap();
         }
     }
-    support::check("generator.txt", &out);
+    out
 }
 
 /// Pieces fixed in place for [`fixed_searches`]: the puzzle, a title and
@@ -263,15 +311,13 @@ fn fixed_cases() -> Vec<(String, Puzzle, Vec<Option<Placement>>)> {
     cases
 }
 
-/// The search results of every puzzle and fixed-piece case: what was found
-/// (`solver-solutions.txt`) and how many nodes it took (`solver-nodes.txt`).
-fn solver_results() -> (String, String) {
-    let mut solutions = String::new();
-    let mut nodes = String::new();
-    for (name, puzzle) in all_puzzles() {
+/// The search results of `puzzles`: what was found and how many nodes it
+/// took.
+fn search_results(puzzles: Vec<(String, Puzzle)>, solutions: &mut String, nodes: &mut String) {
+    for (name, puzzle) in puzzles {
         let first = search(&puzzle, 1, BUDGET);
         let full = search(&puzzle, LIMIT, BUDGET);
-        describe_solutions(&mut solutions, &name, &puzzle, &full);
+        describe_solutions(solutions, &name, &puzzle, &full);
         writeln!(
             nodes,
             "{name}: first solution {} nodes, all solutions {} nodes",
@@ -279,6 +325,33 @@ fn solver_results() -> (String, String) {
         )
         .unwrap();
     }
+}
+
+/// The two-color samples and generated puzzles.
+fn colored_results() -> (String, String) {
+    let (mut solutions, mut nodes) = (String::new(), String::new());
+    let mut puzzles = colored_samples();
+    puzzles.extend(generated_colored());
+    search_results(puzzles, &mut solutions, &mut nodes);
+    (solutions, nodes)
+}
+
+#[test]
+fn solver_solutions_two_colors() {
+    support::check("colors-solutions.txt", &colored_results().0);
+}
+
+#[test]
+fn solver_nodes_two_colors() {
+    support::check("colors-nodes.txt", &colored_results().1);
+}
+
+/// The search results of every puzzle and fixed-piece case: what was found
+/// (`solver-solutions.txt`) and how many nodes it took (`solver-nodes.txt`).
+fn solver_results() -> (String, String) {
+    let mut solutions = String::new();
+    let mut nodes = String::new();
+    search_results(all_puzzles(), &mut solutions, &mut nodes);
     for (title, puzzle, fixed) in fixed_cases() {
         let first = run(Search::with_fixed(&puzzle, 1, &fixed));
         let full = run(Search::with_fixed(&puzzle, LIMIT, &fixed));
@@ -366,4 +439,55 @@ fn diagnosis() {
         out.push('\n');
     }
     support::check("diagnosis.txt", &out);
+}
+
+/// Two-color puzzles, each broken in one color, written in format version
+/// 2 (without the header).
+#[test]
+fn diagnosis_two_colors() {
+    let head = "colors 2\ngrid\n";
+    let cases = [
+        (
+            "orange row and column sums differ",
+            "...\n...\nrows a 1 0\nrows b 2 1\ncols a 1 0 0\ncols b 1 1 0\npiece a\n#\npiece b\n##\n",
+        ),
+        (
+            "teal pieces cover more than the teal clues ask",
+            "a..\n...\nrows a 1 1\nrows b 0 1\ncols a 2 0 0\ncols b 0 1 0\npiece a\n##\npiece b\n#\n",
+        ),
+        (
+            "an orange row runs into teal locks",
+            "aa.\n...\nrows a 2 0\nrows b 2 0\ncols a 1 1 0\ncols b 1 1 0\npiece b\n##\n",
+        ),
+        (
+            "too many orange locks in a column",
+            "b.\nb.\nrows a 0 1\nrows b 1 1\ncols a 0 1\ncols b 1 0\npiece a\n#\n",
+        ),
+        (
+            "a color with pieces and no clues",
+            "..\n..\nrows a 1 0\nrows b 0 0\ncols a 1 0\ncols b 0 0\npiece a\n#\npiece b\n#\n",
+        ),
+        (
+            "both colors broken",
+            "ab\n..\nrows a 2 0\nrows b 1 1\ncols a 1 0\ncols b 0 1\npiece a\n#\npiece b\n##\n",
+        ),
+        (
+            "a sound two-color puzzle",
+            "..\n..\nrows a 1 0\nrows b 0 1\ncols a 1 0\ncols b 0 1\npiece a\n#\npiece b\n#\n",
+        ),
+    ];
+    let mut out = String::new();
+    for (title, text) in cases {
+        let puzzle = parse(&format!("endlogic 2\n{head}{text}")).unwrap();
+        writeln!(out, "== {title}").unwrap();
+        let problems = diagnose(&puzzle);
+        if problems.is_empty() {
+            out.push_str("no problems\n");
+        }
+        for problem in problems {
+            writeln!(out, "{problem:?}").unwrap();
+        }
+        out.push('\n');
+    }
+    support::check("diagnosis-colors.txt", &out);
 }

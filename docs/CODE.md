@@ -38,7 +38,7 @@ zero bits to a whole byte. Fields, in order:
 | width − 1 | 4 | grid width 1–16 |
 | height − 1 | 4 | grid height 1–16 |
 | colors − 1 | 3 | palette size 1–8 |
-| color id | 8 each | palette, strictly increasing |
+| color id | 8 each | palette, strictly increasing; 0–3 (`a`–`d`) |
 | per palette color: has clues | 1 | `1` if clues follow |
 | — row clues | `bits(width)` each | `height` values, top to bottom |
 | — column clues | `bits(height)` each | `width` values, left to right |
@@ -56,7 +56,8 @@ zero bits to a whole byte. Fields, in order:
 - Cells: `0` free; `10` followed by an `ibits` palette index — locked;
   `11` — dead.
 - The palette is exactly the set of colors used by clues, pieces and locks
-  (sorted). A puzzle that uses no color at all stores the single color 0
+  (sorted). The layout has room for eight colors, but a puzzle has at most
+  four, so a color id above 3 is rejected. A puzzle that uses no color at all stores the single color 0
   with no clues.
 - A shape's bitmap has no empty border row or column.
 

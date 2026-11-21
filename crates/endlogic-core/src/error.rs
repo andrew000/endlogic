@@ -46,6 +46,9 @@ pub enum ModelError {
     DisconnectedShape,
     /// More than `MAX_PIECES` pieces.
     TooManyPieces(usize),
+    /// A piece, lock or clue uses a color past the first
+    /// [`MAX_COLORS`](crate::MAX_COLORS).
+    ColorOutOfRange(Color),
     /// A clue list for some color does not have one value per line.
     ClueLength {
         /// Color whose clues are malformed.
@@ -75,6 +78,12 @@ impl fmt::Display for ModelError {
             ModelError::TooManyPieces(n) => {
                 write!(f, "{n} pieces, at most {} allowed", crate::MAX_PIECES)
             }
+            ModelError::ColorOutOfRange(color) => write!(
+                f,
+                "color {} is outside the {} a puzzle can use",
+                color.0,
+                crate::MAX_COLORS
+            ),
             ModelError::ClueLength {
                 color,
                 axis,

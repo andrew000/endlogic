@@ -124,6 +124,7 @@ fn large(n: usize) -> GeneratorParams {
         node_budget: GENERATOR_BUDGET,
         max_attempts: 50,
         require_unique: false,
+        colors: 1,
     }
 }
 

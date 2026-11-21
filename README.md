@@ -14,6 +14,10 @@ Every piece must be placed exactly once on free cells, without overlaps;
 pieces may be rotated but not mirrored. Locked cells count as filled, dead
 cells do not.
 
+A puzzle may have up to four colors. Every piece and every locked cell has
+a color, and every row and column has a separate count for each color; a
+cell counts only towards the counts of its own color.
+
 ## Layout
 
 - `crates/endlogic-core` — dependency-free `no_std` library: model, text
@@ -134,7 +138,12 @@ valid puzzle file:
 cargo run --release -p endlogic-cli -- gen --difficulty hard --seed 1 --solution --code
 ```
 
-`--allow-multiple` also accepts puzzles with more than one solution.
+`--allow-multiple` also accepts puzzles with more than one solution, and
+`--colors 2` (up to 4) gives puzzles with more than one color:
+
+```sh
+cargo run --release -p endlogic-cli -- gen --difficulty normal --colors 2 --seed 1
+```
 
 Convert between puzzle files and shareable codes:
 

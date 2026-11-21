@@ -1,11 +1,12 @@
 //! Generator tests. Boards stay at 8×8 or smaller.
 
+use endlogic_core::diagnose::diagnose;
 use endlogic_core::generator::{
     Difficulty, GenerateError, Generated, Generator, GeneratorParams, ParamsError, SizeRange, Step,
     generate,
 };
 use endlogic_core::solver::{Uniqueness, check_uniqueness};
-use endlogic_core::{Cell, verify};
+use endlogic_core::{Cell, Color, verify};
 
 const SEEDS: u64 = 20;
 
@@ -208,6 +209,15 @@ fn invalid_params_are_rejected() {
             },
             ParamsError::NoPieceSide,
         ),
+        (base.with_colors(0), ParamsError::Colors),
+        (base.with_colors(5), ParamsError::Colors),
+        (
+            GeneratorParams {
+                pieces: SizeRange::new(1, 2),
+                ..base.with_colors(3)
+            },
+            ParamsError::TooFewPieces,
+        ),
     ];
     for (params, expected) in cases {
         assert_eq!(Generator::new(params, 0).unwrap_err(), expected);
@@ -275,4 +285,84 @@ fn a_small_step_budget_keeps_working() {
         "AWYAGPbauz28AgIAAEAABiH4SuItyQvoTGfEl628"
     );
     assert_eq!((generated.attempt, generated.nodes), (1, 323));
+}
+
+/// Two-color puzzles of every level: every color has a piece, the clues of
+/// every color add up, and the solution is unique.
+#[test]
+fn two_colors_give_every_color_a_piece_and_a_unique_solution() {
+    for level in Difficulty::ALL {
+        for seed in 0..20 {
+            let generated = generate(level.params().with_colors(2), seed).unwrap();
+            check_colored(&generated, 2, &format!("{} {seed}", level.name()));
+        }
+    }
+}
+
+/// Three and four colors work on the larger levels.
+#[test]
+fn three_and_four_colors() {
+    for colors in [3, 4] {
+        for level in [Difficulty::Hard, Difficulty::Expert] {
+            for seed in 0..4 {
+                let generated = generate(level.params().with_colors(colors), seed).unwrap();
+                check_colored(
+                    &generated,
+                    colors,
+                    &format!("{colors} {} {seed}", level.name()),
+                );
+            }
+        }
+    }
+}
+
+fn check_colored(generated: &Generated, colors: usize, name: &str) {
+    let puzzle = &generated.puzzle;
+    assert_eq!(verify(puzzle, &generated.solution), Ok(()), "{name}");
+    assert_eq!(puzzle.colors(), Color::ALL[..colors], "{name}");
+    assert!(
+        diagnose(puzzle).is_empty(),
+        "{name}: {:?}",
+        diagnose(puzzle)
+    );
+    let mut areas = vec![0; colors];
+    for piece in puzzle.pieces() {
+        areas[piece.color.index()] += piece.shape.area();
+    }
+    assert!(areas.iter().all(|&a| a > 0), "{name}: {areas:?}");
+    let largest = puzzle
+        .pieces()
+        .iter()
+        .map(|p| p.shape.area())
+        .max()
+        .unwrap();
+    let (least, most) = (areas.iter().min().unwrap(), areas.iter().max().unwrap());
+    assert!(most - least <= largest, "{name}: areas {areas:?}");
+    for color in &Color::ALL[..colors] {
+        let clues = puzzle.clues_for(*color).unwrap();
+        let locks = puzzle
+            .grid()
+            .cells()
+            .iter()
+            .filter(|&&c| c == Cell::Lock(*color))
+            .count();
+        let rows: usize = clues.rows.iter().sum();
+        assert_eq!(rows, clues.cols.iter().sum::<usize>(), "{name}");
+        assert_eq!(rows, areas[color.index()] + locks, "{name}");
+    }
+    let check = check_uniqueness(puzzle, 10_000_000);
+    assert!(matches!(check.uniqueness, Uniqueness::Unique(_)), "{name}");
+}
+
+/// With one color the generator gives what `with_colors(1)` gives, and
+/// the same as before colors (the golden file `generator.txt` holds that).
+#[test]
+fn one_color_is_the_default() {
+    for level in Difficulty::ALL {
+        assert_eq!(level.params().colors, 1);
+        assert_eq!(
+            generate(level.params().with_colors(1), 3),
+            generate(level.params(), 3)
+        );
+    }
 }

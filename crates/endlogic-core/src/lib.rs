@@ -21,7 +21,7 @@ mod shape;
 mod solution;
 mod sort;
 
-pub use color::Color;
+pub use color::{Color, MAX_COLORS};
 pub use error::{Axis, ModelError};
 pub use grid::{Cell, Grid, MAX_GRID_SIZE};
 pub use puzzle::{LineClues, MAX_PIECES, Piece, Puzzle};

@@ -3,7 +3,7 @@
 use alloc::collections::BTreeMap;
 use alloc::vec::Vec;
 
-use crate::color::Color;
+use crate::color::{Color, MAX_COLORS};
 use crate::error::{Axis, ModelError};
 use crate::grid::{Cell, Grid};
 use crate::shape::Shape;
@@ -52,15 +52,17 @@ pub struct Puzzle {
 }
 
 impl Puzzle {
-    /// Assembles a puzzle, checking that the clue lists match the grid size
-    /// and that there are at most [`MAX_PIECES`] pieces.
+    /// Assembles a puzzle, checking that the clue lists match the grid size,
+    /// that there are at most [`MAX_PIECES`] pieces and that every color is
+    /// one of the first [`MAX_COLORS`].
     ///
     /// Logical consistency (for example clue sums versus piece area) is not
     /// checked; an inconsistent puzzle simply has no solutions.
     ///
     /// # Errors
     ///
-    /// [`ModelError::TooManyPieces`] or [`ModelError::ClueLength`].
+    /// [`ModelError::TooManyPieces`], [`ModelError::ColorOutOfRange`] or
+    /// [`ModelError::ClueLength`].
     pub fn new(
         grid: Grid,
         pieces: Vec<Piece>,
@@ -68,6 +70,14 @@ impl Puzzle {
     ) -> Result<Puzzle, ModelError> {
         if pieces.len() > MAX_PIECES {
             return Err(ModelError::TooManyPieces(pieces.len()));
+        }
+        let locks = grid.cells().iter().filter_map(|cell| match cell {
+            Cell::Lock(color) => Some(*color),
+            _ => None,
+        });
+        let used = clues.keys().copied().chain(pieces.iter().map(|p| p.color));
+        if let Some(color) = used.chain(locks).find(|c| c.index() >= MAX_COLORS) {
+            return Err(ModelError::ColorOutOfRange(color));
         }
         for (&color, line_clues) in &clues {
             if line_clues.rows.len() != grid.height() {

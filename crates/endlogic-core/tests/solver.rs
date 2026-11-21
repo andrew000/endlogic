@@ -680,3 +680,29 @@ fn invalid_fixed_pieces_give_no_solution() {
         "on a dead cell"
     );
 }
+
+/// The second two-color game sample has one solution, but with every piece and
+/// lock of one color and the clues added up it has more: the solver keeps
+/// the colors apart.
+#[test]
+fn colors_make_the_game_sample_unique() {
+    let colored = sample("wla980-2.txt");
+    assert_eq!(count(&colored), 1);
+    let grid = colored.grid().clone();
+    let pieces: Vec<Piece> = colored
+        .pieces()
+        .iter()
+        .map(|p| Piece::new(Color::DEFAULT, p.shape.clone()))
+        .collect();
+    let sum = |f: fn(&LineClues) -> &Vec<usize>| -> Vec<usize> {
+        let (a, b) = (
+            f(&colored.clues()[&Color(0)]),
+            f(&colored.clues()[&Color(1)]),
+        );
+        a.iter().zip(b).map(|(x, y)| x + y).collect()
+    };
+    let rows = sum(|c| &c.rows);
+    let cols = sum(|c| &c.cols);
+    let single = Puzzle::single_color(grid, pieces, rows, cols).unwrap();
+    assert!(count(&single) > 1);
+}

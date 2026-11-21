@@ -119,23 +119,23 @@ fn generated_puzzles_round_trip() {
 #[test]
 fn colors_survive_a_round_trip() {
     let mut grid = Grid::new(3, 2).unwrap();
-    grid.set(0, 0, Cell::Lock(Color(5)));
+    grid.set(0, 0, Cell::Lock(Color(3)));
     grid.set(1, 2, Cell::Dead);
     let pieces = vec![
-        Piece::new(Color(2), Shape::new([(0, 0), (0, 1)]).unwrap()),
-        Piece::new(Color(5), Shape::new([(0, 0)]).unwrap()),
+        Piece::new(Color(1), Shape::new([(0, 0), (0, 1)]).unwrap()),
+        Piece::new(Color(3), Shape::new([(0, 0)]).unwrap()),
     ];
     let mut clues = BTreeMap::new();
     clues.insert(
-        Color(2),
+        Color(1),
         LineClues {
             rows: vec![2, 0],
             cols: vec![0, 1, 1],
         },
     );
-    // Color 5 deliberately has no clues; color 9 has clues but nothing else.
+    // Color 3 deliberately has no clues; color 2 has clues but nothing else.
     clues.insert(
-        Color(9),
+        Color(2),
         LineClues {
             rows: vec![0, 0],
             cols: vec![0, 0, 0],
@@ -143,6 +143,63 @@ fn colors_survive_a_round_trip() {
     );
     let puzzle = Puzzle::new(grid, pieces, clues).unwrap();
     assert_eq!(decode(&encode(&puzzle).unwrap()).unwrap(), puzzle);
+}
+
+/// Generated puzzles of two, three and four colors keep every color.
+#[test]
+fn generated_colored_puzzles_round_trip() {
+    for colors in 2..=4 {
+        for difficulty in [Difficulty::Normal, Difficulty::Expert] {
+            for seed in 0..3 {
+                let params = difficulty.params().with_colors(colors);
+                let puzzle = generate(params, seed).unwrap().puzzle;
+                assert_eq!(puzzle.colors().len(), colors);
+                assert_eq!(decode(&encode(&puzzle).unwrap()).unwrap(), puzzle);
+            }
+        }
+    }
+}
+
+/// Codes of single-color puzzles are the same as before colors.
+#[test]
+fn single_color_codes_are_unchanged() {
+    let reference = samples()
+        .into_iter()
+        .find(|(name, _)| name == "wln006-2.txt")
+        .unwrap()
+        .1;
+    assert_eq!(
+        encode(&reference).unwrap(),
+        "AWYAG92sqX2JVQAAAAAAAURshXEtRHzP5EwZdQ"
+    );
+    let hard = generate(Difficulty::Hard.params(), 1).unwrap().puzzle;
+    assert_eq!(
+        encode(&hard).unwrap(),
+        "AWYAGPbauz28AgIAAEAABiH4SuItyQvoTGfEl628"
+    );
+}
+
+/// The game's two-color samples have fixed codes.
+#[test]
+fn game_sample_codes() {
+    let codes: Vec<(String, String)> = samples()
+        .into_iter()
+        .filter(|(name, _)| name.starts_with("wla980"))
+        .map(|(name, puzzle)| (name, encode(&puzzle).unwrap()))
+        .collect();
+    assert_eq!(
+        codes,
+        [
+            (
+                "wla980-1.txt".to_owned(),
+                "AVUgADzcizcihMohMogAABABANEeiPRHhDeM_mMGQ_B3zw".to_owned()
+            ),
+            (
+                "wla980-2.txt".to_owned(),
+                "AVUgADUKJUKJoxIoxIgMDAwMDHCPRHhD5EeiPRHhDyDLZQ".to_owned()
+            ),
+        ]
+    );
 }
 
 #[test]
@@ -165,9 +222,35 @@ fn encode_errors() {
             value: 3
         })
     );
-    let rainbow: Vec<Piece> = (0..9).map(|c| Piece::new(Color(c), mono.clone())).collect();
-    let rainbow = Puzzle::new(grid, rainbow, BTreeMap::new()).unwrap();
-    assert_eq!(encode(&rainbow), Err(EncodeError::TooManyColors(9)));
+    // A puzzle holds at most four colors, so a code never has too many.
+    let fifth = vec![Piece::new(Color(4), mono)];
+    assert!(Puzzle::new(grid, fifth, BTreeMap::new()).is_err());
+}
+
+/// A well-formed code whose palette names a fifth color is rejected.
+#[test]
+fn colors_past_the_fourth_are_rejected() {
+    // 1x1 grid, palette of one color with id 4, no clues, a free cell, no
+    // pieces: 4 + 4 + 3 + 8 + 1 + 1 + 6 bits.
+    let mut bits = String::from(concat!(
+        "0000", "0000", "000", "00000100", "0", "0", "000000"
+    ));
+    while bits.len() % 8 != 0 {
+        bits.push('0');
+    }
+    let mut body = vec![1u8];
+    for chunk in bits.as_bytes().chunks(8) {
+        body.push(u8::from_str_radix(std::str::from_utf8(chunk).unwrap(), 2).unwrap());
+    }
+    assert_eq!(
+        decode(&code_from_body(&body)),
+        Err(DecodeError::InvalidData("color id"))
+    );
+    // The same with color 0 decodes.
+    assert_eq!(body[3], 0b1000_0000);
+    body[3] = 0;
+    let zero = code_from_body(&body);
+    assert!(decode(&zero).is_ok(), "{:?}", decode(&zero));
 }
 
 #[test]

@@ -4,18 +4,18 @@
 use std::process::ExitCode;
 
 use endlogic_core::code::{decode, encode};
-use endlogic_core::format::{parse, render_solution, serialize};
+use endlogic_core::format::{parse, render_colors, render_solution, serialize};
 use endlogic_core::generator::{Difficulty, generate};
 use endlogic_core::solver::{DEFAULT_NODE_BUDGET, StopReason, search};
-use endlogic_core::{Puzzle, Solution};
+use endlogic_core::{MAX_COLORS, Puzzle, Solution};
 
 const USAGE: &str = "\
 endlogic - solver and generator for Arknights: Endfield mechanism repair puzzles
 
 Usage:
   endlogic solve <FILE> [--count [N]] [--budget N]
-  endlogic gen --difficulty <easy|normal|hard|expert> [--seed N]
-               [--allow-multiple] [--solution] [--code]
+  endlogic gen --difficulty <easy|normal|hard|expert> [--colors N]
+               [--seed N] [--allow-multiple] [--solution] [--code]
   endlogic encode <FILE>
   endlogic decode <CODE>
   endlogic --help
@@ -27,6 +27,7 @@ Commands:
   gen      Generate a puzzle and print it in the text format. The solution
            is unique unless --allow-multiple is given. Seed, attempt and
            solver nodes go to stderr.
+             --colors N    Use N colors, 1 to 4 (default 1)
              --seed N      Use this seed (default: taken from the clock)
              --allow-multiple
                            Accept puzzles with more than one solution
@@ -36,7 +37,9 @@ Commands:
   decode   Print the puzzle stored in a code, in the text format.
 
 In a printed solution, pieces are letters in file order (A, B, ...),
-`#` is a locked cell, `x` a dead cell and `.` an empty free cell.
+`#` is a locked cell, `x` a dead cell and `.` an empty free cell. A puzzle
+with more than one color also gets the colors of the cells: `a` to `d`,
+upper case for locks.
 
 Exit codes: 0 success, 1 no solution, 2 usage, file, parse or code error,
 3 search budget exhausted or generator gave up.
@@ -61,6 +64,7 @@ enum Command {
     },
     Gen {
         difficulty: Difficulty,
+        colors: usize,
         seed: Option<u64>,
         allow_multiple: bool,
         solution: bool,
@@ -156,6 +160,7 @@ fn parse_solve_args(args: &[String]) -> Result<Command, String> {
 
 fn parse_gen_args(args: &[String]) -> Result<Command, String> {
     let mut difficulty = None;
+    let mut colors = 1;
     let mut seed = None;
     let mut allow_multiple = false;
     let mut solution = false;
@@ -169,6 +174,12 @@ fn parse_gen_args(args: &[String]) -> Result<Command, String> {
                     Difficulty::from_name(name)
                         .ok_or_else(|| format!("unknown difficulty `{name}`"))?,
                 );
+            }
+            "--colors" => {
+                colors = positive("--colors", iter.next())?;
+                if colors > MAX_COLORS {
+                    return Err(format!("`--colors` must be 1 to {MAX_COLORS}"));
+                }
             }
             "--seed" => {
                 let value = iter.next().ok_or("`--seed` needs a value")?;
@@ -187,6 +198,7 @@ fn parse_gen_args(args: &[String]) -> Result<Command, String> {
     let difficulty = difficulty.ok_or("missing `--difficulty`")?;
     Ok(Command::Gen {
         difficulty,
+        colors,
         seed,
         allow_multiple,
         solution,
@@ -206,7 +218,13 @@ fn read_puzzle(path: &str) -> Result<Puzzle, ExitCode> {
 }
 
 fn draw(puzzle: &Puzzle, solution: &Solution) -> String {
-    render_solution(puzzle, solution).expect("solutions from the core are geometrically valid")
+    let valid = "solutions from the core are geometrically valid";
+    let mut out = render_solution(puzzle, solution).expect(valid);
+    if puzzle.colors().len() > 1 {
+        out.push('\n');
+        out.push_str(&render_colors(puzzle, solution).expect(valid));
+    }
+    out
 }
 
 fn run_solve(path: &str, count_limit: Option<usize>, budget: u64) -> ExitCode {
@@ -252,13 +270,14 @@ fn clock_seed() -> u64 {
 
 fn run_gen(
     difficulty: Difficulty,
+    colors: usize,
     seed: Option<u64>,
     allow_multiple: bool,
     with_solution: bool,
     with_code: bool,
 ) -> ExitCode {
     let seed = seed.unwrap_or_else(clock_seed);
-    let mut params = difficulty.params();
+    let mut params = difficulty.params().with_colors(colors);
     params.require_unique = !allow_multiple;
     let generated = match generate(params, seed) {
         Ok(generated) => generated,
@@ -268,8 +287,7 @@ fn run_gen(
         }
     };
     let puzzle = &generated.puzzle;
-    let text = serialize(puzzle).expect("generated puzzles are single-color");
-    let mut out = text;
+    let mut out = serialize(puzzle);
     if with_solution {
         out.push_str("// solution:\n");
         for line in draw(puzzle, &generated.solution).lines() {
@@ -317,16 +335,8 @@ fn run_decode(code: &str) -> ExitCode {
             return ExitCode::from(EXIT_ERROR);
         }
     };
-    match serialize(&puzzle) {
-        Ok(text) => {
-            print!("{text}");
-            ExitCode::SUCCESS
-        }
-        Err(err) => {
-            eprintln!("error: {err}");
-            ExitCode::from(EXIT_ERROR)
-        }
-    }
+    print!("{puzzle}");
+    ExitCode::SUCCESS
 }
 
 fn main() -> ExitCode {
@@ -343,11 +353,12 @@ fn main() -> ExitCode {
         }) => run_solve(&path, count_limit, budget),
         Ok(Command::Gen {
             difficulty,
+            colors,
             seed,
             allow_multiple,
             solution,
             code,
-        }) => run_gen(difficulty, seed, allow_multiple, solution, code),
+        }) => run_gen(difficulty, colors, seed, allow_multiple, solution, code),
         Ok(Command::Encode { path }) => run_encode(&path),
         Ok(Command::Decode { code }) => run_decode(&code),
         Err(message) => {
@@ -409,6 +420,7 @@ mod tests {
             ])),
             Ok(Command::Gen {
                 difficulty: Difficulty::Hard,
+                colors: 1,
                 seed: Some(1),
                 allow_multiple: false,
                 solution: false,
@@ -419,6 +431,7 @@ mod tests {
             parse_args(&args(&["gen", "--solution", "--difficulty", "easy"])),
             Ok(Command::Gen {
                 difficulty: Difficulty::Easy,
+                colors: 1,
                 seed: None,
                 allow_multiple: false,
                 solution: true,
@@ -429,8 +442,20 @@ mod tests {
             parse_args(&args(&["gen", "--difficulty", "easy", "--allow-multiple"])),
             Ok(Command::Gen {
                 difficulty: Difficulty::Easy,
+                colors: 1,
                 seed: None,
                 allow_multiple: true,
+                solution: false,
+                code: false,
+            })
+        );
+        assert_eq!(
+            parse_args(&args(&["gen", "--colors", "2", "--difficulty", "normal"])),
+            Ok(Command::Gen {
+                difficulty: Difficulty::Normal,
+                colors: 2,
+                seed: None,
+                allow_multiple: false,
                 solution: false,
                 code: false,
             })
@@ -466,6 +491,9 @@ mod tests {
             &["gen", "--difficulty", "insane"],
             &["gen", "--difficulty", "easy", "--seed", "-1"],
             &["gen", "--difficulty", "easy", "extra"],
+            &["gen", "--difficulty", "easy", "--colors"],
+            &["gen", "--difficulty", "easy", "--colors", "0"],
+            &["gen", "--difficulty", "easy", "--colors", "5"],
             &["encode"],
             &["encode", "a", "b"],
             &["decode"],

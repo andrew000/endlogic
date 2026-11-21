@@ -1,20 +1,23 @@
-//! Text format, version 1 (single color). See `docs/FORMAT.md`.
+//! Text format: version 1 (single color) and version 2 (up to four
+//! colors). See `docs/FORMAT.md`.
 
 use alloc::borrow::ToOwned;
+use alloc::collections::BTreeMap;
 use alloc::format;
 use alloc::string::String;
 use alloc::vec::Vec;
 use core::fmt;
 use core::fmt::Write as _;
 
-use crate::color::Color;
+use crate::color::{Color, MAX_COLORS};
 use crate::grid::{Cell, Grid, MAX_GRID_SIZE};
-use crate::puzzle::{MAX_PIECES, Piece, Puzzle};
+use crate::puzzle::{LineClues, MAX_PIECES, Piece, Puzzle};
 use crate::shape::Shape;
 use crate::solution::{Solution, VerifyError};
 
-/// The format version this module reads and writes.
-pub const FORMAT_VERSION: u32 = 1;
+/// The newest format version. [`parse`] also reads version 1, and
+/// [`serialize`] writes version 1 whenever it can.
+pub const FORMAT_VERSION: u32 = 2;
 
 /// A structural problem in puzzle text.
 #[derive(Debug, Clone, PartialEq, Eq)]
@@ -31,8 +34,29 @@ pub struct ParseError {
 pub enum ParseErrorKind {
     /// The first significant line is not `endlogic <version>`.
     BadHeader,
-    /// The header names a version other than [`FORMAT_VERSION`].
+    /// The header names a version other than 1 or [`FORMAT_VERSION`].
     UnsupportedVersion(String),
+    /// The `colors` line of version 2 does not give a number from 1 to 4.
+    InvalidColorCount(String),
+    /// A `rows`, `cols` or `piece` line of version 2 has no color letter, or
+    /// something other than one of `a` to `d`.
+    InvalidColor(String),
+    /// A color letter past the number of colors the puzzle declares.
+    UndeclaredColor(char),
+    /// A second `rows` or `cols` line for the same color.
+    DuplicateClues {
+        /// `"rows"` or `"cols"`.
+        section: &'static str,
+        /// The color's letter.
+        color: char,
+    },
+    /// A declared color has no `rows` or no `cols` line.
+    MissingClues {
+        /// `"rows"` or `"cols"`.
+        section: &'static str,
+        /// The color's letter.
+        color: char,
+    },
     /// The input ended before a required section.
     UnexpectedEnd {
         /// The section that was expected.
@@ -49,6 +73,14 @@ pub enum ParseErrorKind {
     EmptyGrid,
     /// A grid row contains a character other than `.`, `#` or `x`.
     InvalidGridChar {
+        /// The offending character.
+        ch: char,
+        /// One-based column of the character within the row.
+        column: usize,
+    },
+    /// A grid row of version 2 contains a character other than `.`, `x` or
+    /// the letter of a declared color.
+    InvalidColorGridChar {
         /// The offending character.
         ch: char,
         /// One-based column of the character within the row.
@@ -103,8 +135,26 @@ impl fmt::Display for ParseErrorKind {
             ParseErrorKind::BadHeader => f.write_str("expected header `endlogic <version>`"),
             ParseErrorKind::UnsupportedVersion(v) => write!(
                 f,
-                "unsupported format version `{v}`, expected {FORMAT_VERSION}"
+                "unsupported format version `{v}`, expected 1 or {FORMAT_VERSION}"
             ),
+            ParseErrorKind::InvalidColorCount(s) => {
+                write!(f, "`{s}` is not a number of colors from 1 to {MAX_COLORS}")
+            }
+            ParseErrorKind::InvalidColor(s) if s.is_empty() => {
+                f.write_str("missing color letter `a` to `d`")
+            }
+            ParseErrorKind::InvalidColor(s) => {
+                write!(f, "`{s}` is not a color letter `a` to `d`")
+            }
+            ParseErrorKind::UndeclaredColor(letter) => {
+                write!(f, "color `{letter}` is past the declared colors")
+            }
+            ParseErrorKind::DuplicateClues { section, color } => {
+                write!(f, "second `{section} {color}` line")
+            }
+            ParseErrorKind::MissingClues { section, color } => {
+                write!(f, "no `{section} {color}` line")
+            }
             ParseErrorKind::UnexpectedEnd { expected } => {
                 write!(f, "unexpected end of input, expected `{expected}`")
             }
@@ -115,6 +165,11 @@ impl fmt::Display for ParseErrorKind {
             ParseErrorKind::InvalidGridChar { ch, column } => write!(
                 f,
                 "invalid grid character `{ch}` at column {column}, expected `.`, `#` or `x`"
+            ),
+            ParseErrorKind::InvalidColorGridChar { ch, column } => write!(
+                f,
+                "invalid grid character `{ch}` at column {column}, \
+                 expected `.`, `x` or a declared color letter"
             ),
             ParseErrorKind::RaggedGrid { expected, found } => write!(
                 f,
@@ -147,29 +202,10 @@ impl fmt::Display for ParseErrorKind {
 
 impl core::error::Error for ParseError {}
 
-/// A puzzle that cannot be written in format version 1.
-#[derive(Debug, Clone, PartialEq, Eq)]
-pub enum SerializeError {
-    /// The puzzle uses a color other than [`Color::DEFAULT`]; version 1 is
-    /// single-color.
-    UnsupportedColor(Color),
-}
-
-impl fmt::Display for SerializeError {
-    fn fmt(&self, f: &mut fmt::Formatter<'_>) -> fmt::Result {
-        match self {
-            SerializeError::UnsupportedColor(color) => write!(
-                f,
-                "color {} cannot be written in format version {FORMAT_VERSION}",
-                color.0
-            ),
-        }
-    }
-}
-
-impl core::error::Error for SerializeError {}
-
-const KEYWORDS: [&str; 5] = ["endlogic", "grid", "rows", "cols", "piece"];
+/// Lines that start a section in version 1.
+const KEYWORDS_1: [&str; 5] = ["endlogic", "grid", "rows", "cols", "piece"];
+/// Lines that start a section in version 2.
+const KEYWORDS_2: [&str; 6] = ["endlogic", "colors", "grid", "rows", "cols", "piece"];
 
 /// A significant line: one-based number and trimmed text.
 type Line<'a> = (usize, &'a str);
@@ -178,6 +214,8 @@ struct Lines<'a> {
     items: Vec<Line<'a>>,
     pos: usize,
     end_line: usize,
+    /// Version 2: locks are color letters and some lines carry a color.
+    colored: bool,
 }
 
 impl<'a> Lines<'a> {
@@ -196,6 +234,7 @@ impl<'a> Lines<'a> {
             items: lines,
             pos: 0,
             end_line: total + 1,
+            colored: false,
         }
     }
 
@@ -207,6 +246,11 @@ impl<'a> Lines<'a> {
         let line = self.peek();
         self.pos += usize::from(line.is_some());
         line
+    }
+
+    /// The line number of the next line, or the end-of-input line number.
+    fn here(&self) -> usize {
+        self.peek().map_or(self.end_line, |(line, _)| line)
     }
 
     fn end_error(&self, expected: &'static str) -> ParseError {
@@ -234,10 +278,15 @@ impl<'a> Lines<'a> {
 
     /// Consumes lines up to the next keyword line.
     fn take_block(&mut self) -> Vec<Line<'a>> {
+        let keywords: &[&str] = if self.colored {
+            &KEYWORDS_2
+        } else {
+            &KEYWORDS_1
+        };
         let mut block = Vec::new();
         while let Some((line, text)) = self.peek() {
             let first = text.split_whitespace().next().unwrap_or("");
-            if KEYWORDS.contains(&first) {
+            if keywords.contains(&first) {
                 break;
             }
             block.push((line, text));
@@ -247,10 +296,10 @@ impl<'a> Lines<'a> {
     }
 }
 
-/// Parses puzzle text in format version 1.
+/// Parses puzzle text in format version 1 or 2.
 ///
-/// All pieces and locks get [`Color::DEFAULT`]; the clues are stored for that
-/// color.
+/// Version 1 gives every piece and lock [`Color::DEFAULT`] and stores the
+/// clues for that color; version 2 stores clues for every declared color.
 ///
 /// # Errors
 ///
@@ -273,33 +322,128 @@ pub fn parse(text: &str) -> Result<Puzzle, ParseError> {
             kind: ParseErrorKind::BadHeader,
         });
     };
-    if version.parse::<u32>().ok() != Some(FORMAT_VERSION) {
-        return Err(ParseError {
-            line,
-            kind: ParseErrorKind::UnsupportedVersion(version.to_owned()),
-        });
+    match version.parse::<u32>().ok() {
+        Some(1) => {}
+        Some(2) => return parse_colored(&mut lines),
+        _ => {
+            return Err(ParseError {
+                line,
+                kind: ParseErrorKind::UnsupportedVersion(version.to_owned()),
+            });
+        }
     }
 
-    let grid = parse_grid(&mut lines)?;
-    let rows = parse_clues(&mut lines, "rows", grid.height())?;
-    let cols = parse_clues(&mut lines, "cols", grid.width())?;
+    let grid = parse_grid(&mut lines, 1)?;
+    let (line, args) = lines.expect_keyword("rows")?;
+    let rows = parse_values(line, args, "rows", grid.height())?;
+    let (line, args) = lines.expect_keyword("cols")?;
+    let cols = parse_values(line, args, "cols", grid.width())?;
+    let pieces = parse_pieces(&mut lines, 1)?;
+    let puzzle = Puzzle::single_color(grid, pieces, rows, cols)
+        .expect("parser checks clue counts and piece count");
+    Ok(puzzle)
+}
 
+/// The rest of a version 2 text, after the header.
+fn parse_colored(lines: &mut Lines<'_>) -> Result<Puzzle, ParseError> {
+    lines.colored = true;
+    let (line, args) = lines.expect_keyword("colors")?;
+    let colors = match args.parse::<usize>() {
+        Ok(n) if (1..=MAX_COLORS).contains(&n) => n,
+        _ => {
+            return Err(ParseError {
+                line,
+                kind: ParseErrorKind::InvalidColorCount(args.to_owned()),
+            });
+        }
+    };
+    let grid = parse_grid(lines, colors)?;
+
+    // `rows <color> ...` and `cols <color> ...` lines, in any order.
+    let mut found: [[Option<Vec<usize>>; MAX_COLORS]; 2] = Default::default();
+    while let Some((line, text)) = lines.peek() {
+        let (axis, section, expected) = match text.split_whitespace().next() {
+            Some("rows") => (0, "rows", grid.height()),
+            Some("cols") => (1, "cols", grid.width()),
+            _ => break,
+        };
+        let (_, args) = lines.expect_keyword(section)?;
+        let (letter, values) = args.split_once(char::is_whitespace).unwrap_or((args, ""));
+        let color = read_color(line, letter, colors)?;
+        let slot = &mut found[axis][color.index()];
+        if slot.is_some() {
+            return Err(ParseError {
+                line,
+                kind: ParseErrorKind::DuplicateClues {
+                    section,
+                    color: letter_of(color),
+                },
+            });
+        }
+        *slot = Some(parse_values(line, values, section, expected)?);
+    }
+    let mut clues = BTreeMap::new();
+    for color in &Color::ALL[..colors] {
+        let rows = found[0][color.index()].take();
+        let cols = found[1][color.index()].take();
+        let missing = |section| ParseError {
+            line: lines.here(),
+            kind: ParseErrorKind::MissingClues {
+                section,
+                color: letter_of(*color),
+            },
+        };
+        let rows = rows.ok_or_else(|| missing("rows"))?;
+        let cols = cols.ok_or_else(|| missing("cols"))?;
+        clues.insert(*color, LineClues { rows, cols });
+    }
+
+    let pieces = parse_pieces(lines, colors)?;
+    let puzzle = Puzzle::new(grid, pieces, clues)
+        .expect("parser checks clue counts, piece count and colors");
+    Ok(puzzle)
+}
+
+/// The letter of a color a puzzle can use.
+fn letter_of(color: Color) -> char {
+    color.letter().unwrap_or('?')
+}
+
+/// Reads a color letter, one of the first `colors`.
+fn read_color(line: usize, letter: &str, colors: usize) -> Result<Color, ParseError> {
+    let mut chars = letter.chars();
+    let color = match (chars.next(), chars.next()) {
+        (Some(ch), None) => Color::from_letter(ch),
+        _ => None,
+    };
+    let kind = match color {
+        Some(color) if color.index() < colors => return Ok(color),
+        Some(color) => ParseErrorKind::UndeclaredColor(letter_of(color)),
+        None => ParseErrorKind::InvalidColor(letter.to_owned()),
+    };
+    Err(ParseError { line, kind })
+}
+
+/// Reads the `piece` blocks up to the end of the input.
+fn parse_pieces(lines: &mut Lines<'_>, colors: usize) -> Result<Vec<Piece>, ParseError> {
     let mut pieces = Vec::new();
     while lines.peek().is_some() {
         let (line, args) = lines.expect_keyword("piece")?;
-        reject_args(line, "piece", args)?;
+        let color = if lines.colored {
+            read_color(line, args, colors)?
+        } else {
+            reject_args(line, "piece", args)?;
+            Color::DEFAULT
+        };
         if pieces.len() == MAX_PIECES {
             return Err(ParseError {
                 line,
                 kind: ParseErrorKind::TooManyPieces,
             });
         }
-        pieces.push(parse_piece(line, &lines.take_block())?);
+        pieces.push(parse_piece(line, &lines.take_block(), color)?);
     }
-
-    let puzzle = Puzzle::single_color(grid, pieces, rows, cols)
-        .expect("parser checks clue counts and piece count");
-    Ok(puzzle)
+    Ok(pieces)
 }
 
 fn reject_args(line: usize, keyword: &'static str, args: &str) -> Result<(), ParseError> {
@@ -316,9 +460,12 @@ fn reject_args(line: usize, keyword: &'static str, args: &str) -> Result<(), Par
     }
 }
 
-fn parse_grid(lines: &mut Lines<'_>) -> Result<Grid, ParseError> {
+/// Reads the `grid` block: locks are `#` in version 1 and the letters of
+/// the first `colors` colors in version 2.
+fn parse_grid(lines: &mut Lines<'_>, colors: usize) -> Result<Grid, ParseError> {
     let (grid_line, args) = lines.expect_keyword("grid")?;
     reject_args(grid_line, "grid", args)?;
+    let colored = lines.colored;
     let block = lines.take_block();
     let Some(&(_, first)) = block.first() else {
         return Err(ParseError {
@@ -332,10 +479,18 @@ fn parse_grid(lines: &mut Lines<'_>) -> Result<Grid, ParseError> {
         let error = |kind| ParseError { line, kind };
         let mut row_len = 0;
         for (column, ch) in text.chars().enumerate() {
-            cells.push(match ch {
-                '.' => Cell::Free,
-                '#' => Cell::Lock(Color::DEFAULT),
-                'x' => Cell::Dead,
+            let lock = Color::from_letter(ch).filter(|c| colored && c.index() < colors);
+            cells.push(match (ch, lock) {
+                ('.', _) => Cell::Free,
+                ('#', _) if !colored => Cell::Lock(Color::DEFAULT),
+                ('x', _) => Cell::Dead,
+                (_, Some(color)) => Cell::Lock(color),
+                _ if colored => {
+                    return Err(error(ParseErrorKind::InvalidColorGridChar {
+                        ch,
+                        column: column + 1,
+                    }));
+                }
                 _ => {
                     return Err(error(ParseErrorKind::InvalidGridChar {
                         ch,
@@ -358,12 +513,14 @@ fn parse_grid(lines: &mut Lines<'_>) -> Result<Grid, ParseError> {
     Ok(Grid::from_cells(width, block.len(), cells).expect("parser checks grid dimensions"))
 }
 
-fn parse_clues(
-    lines: &mut Lines<'_>,
+/// Reads the values of a `rows` or `cols` line: `args` is the text after
+/// the keyword (and the color, in version 2).
+fn parse_values(
+    line: usize,
+    args: &str,
     section: &'static str,
     expected: usize,
 ) -> Result<Vec<usize>, ParseError> {
-    let (line, args) = lines.expect_keyword(section)?;
     let error = |kind| ParseError { line, kind };
     let values = args
         .split_whitespace()
@@ -383,7 +540,7 @@ fn parse_clues(
     Ok(values)
 }
 
-fn parse_piece(piece_line: usize, block: &[Line<'_>]) -> Result<Piece, ParseError> {
+fn parse_piece(piece_line: usize, block: &[Line<'_>], color: Color) -> Result<Piece, ParseError> {
     let mut cells = Vec::new();
     for (row, &(line, text)) in block.iter().enumerate() {
         for (col, ch) in text.chars().enumerate() {
@@ -415,7 +572,7 @@ fn parse_piece(piece_line: usize, block: &[Line<'_>]) -> Result<Piece, ParseErro
     if shape.width() > MAX_GRID_SIZE || shape.height() > MAX_GRID_SIZE {
         return Err(error(ParseErrorKind::PieceTooLarge));
     }
-    Ok(Piece::new(Color::DEFAULT, shape))
+    Ok(Piece::new(color, shape))
 }
 
 impl core::str::FromStr for Puzzle {
@@ -427,54 +584,73 @@ impl core::str::FromStr for Puzzle {
     }
 }
 
-/// Writes a puzzle in format version 1, in canonical form: no comments or
-/// blank lines, each piece as its bounding box.
+/// Writes a puzzle in canonical form: no comments or blank lines, each
+/// piece as its bounding box. A puzzle that uses no color but
+/// [`Color::DEFAULT`] is written in version 1; any other in version 2, with
+/// as many colors as the highest color it uses needs.
 ///
-/// `parse(&serialize(p)?)` returns a puzzle equal to `p`.
-///
-/// # Errors
-///
-/// [`SerializeError::UnsupportedColor`] if any piece, lock or clue uses a
-/// color other than [`Color::DEFAULT`].
-pub fn serialize(puzzle: &Puzzle) -> Result<String, SerializeError> {
-    if let Some(&color) = puzzle.colors().iter().find(|&&c| c != Color::DEFAULT) {
-        return Err(SerializeError::UnsupportedColor(color));
-    }
+/// `parse(&serialize(p))` returns a puzzle equal to `p` whenever `p` has
+/// clues for every color up to the highest it uses, as every parsed,
+/// generated or decoded puzzle does.
+#[must_use]
+pub fn serialize(puzzle: &Puzzle) -> String {
+    let count = puzzle.colors().last().map_or(1, |last| last.index() + 1);
+    let colored = count > 1;
     let grid = puzzle.grid();
     let mut out = String::new();
-    let _ = writeln!(out, "endlogic {FORMAT_VERSION}");
+    if colored {
+        let _ = writeln!(out, "endlogic {FORMAT_VERSION}");
+        let _ = writeln!(out, "colors {count}");
+    } else {
+        out.push_str("endlogic 1\n");
+    }
     out.push_str("grid\n");
     for row in 0..grid.height() {
         for &cell in grid.row(row) {
             out.push(match cell {
                 Cell::Free => '.',
+                Cell::Lock(color) if colored => letter_of(color),
                 Cell::Lock(_) => '#',
                 Cell::Dead => 'x',
             });
         }
         out.push('\n');
     }
-    let line = |label: &str, values: &[usize]| {
-        let mut s = String::from(label);
-        for v in values {
-            let _ = write!(s, " {v}");
+    for (label, len) in [("rows", grid.height()), ("cols", grid.width())] {
+        for &color in &Color::ALL[..count] {
+            out.push_str(label);
+            if colored {
+                out.push(' ');
+                out.push(letter_of(color));
+            }
+            for i in 0..len {
+                let value = if label == "rows" {
+                    puzzle.row_clue(color, i)
+                } else {
+                    puzzle.col_clue(color, i)
+                };
+                let _ = write!(out, " {value}");
+            }
+            out.push('\n');
         }
-        s.push('\n');
-        s
-    };
-    let rows: Vec<usize> = (0..grid.height())
-        .map(|r| puzzle.row_clue(Color::DEFAULT, r))
-        .collect();
-    let cols: Vec<usize> = (0..grid.width())
-        .map(|c| puzzle.col_clue(Color::DEFAULT, c))
-        .collect();
-    out.push_str(&line("rows", &rows));
-    out.push_str(&line("cols", &cols));
+    }
     for piece in puzzle.pieces() {
-        out.push_str("piece\n");
+        out.push_str("piece");
+        if colored {
+            out.push(' ');
+            out.push(letter_of(piece.color));
+        }
+        out.push('\n');
         out.push_str(&shape_to_text(&piece.shape));
     }
-    Ok(out)
+    out
+}
+
+impl fmt::Display for Puzzle {
+    /// The puzzle in canonical text, as [`serialize`] writes it.
+    fn fmt(&self, f: &mut fmt::Formatter<'_>) -> fmt::Result {
+        f.write_str(&serialize(self))
+    }
 }
 
 /// Draws a shape as rows of `#` and `.`, one line per row.
@@ -519,6 +695,31 @@ pub fn render_solution(puzzle: &Puzzle, solution: &Solution) -> Result<String, V
             out.push(match (cell, owners[row * grid.width() + col]) {
                 (_, Some(piece)) => piece_letter(piece),
                 (Cell::Lock(_), None) => '#',
+                (Cell::Dead, None) => 'x',
+                (Cell::Free, None) => '.',
+            });
+        }
+        out.push('\n');
+    }
+    Ok(out)
+}
+
+/// Draws the colors of a solved grid: the letter of each cell's color (`a`
+/// to `d`), upper case for a lock, `x` for a dead cell and `.` for an empty
+/// free cell. One line per row, each ending in `\n`.
+///
+/// # Errors
+///
+/// Any geometric [`VerifyError`] from [`Solution::cell_owners`].
+pub fn render_colors(puzzle: &Puzzle, solution: &Solution) -> Result<String, VerifyError> {
+    let owners = solution.cell_owners(puzzle)?;
+    let grid = puzzle.grid();
+    let mut out = String::new();
+    for row in 0..grid.height() {
+        for (col, &cell) in grid.row(row).iter().enumerate() {
+            out.push(match (cell, owners[row * grid.width() + col]) {
+                (_, Some(piece)) => letter_of(puzzle.pieces()[piece].color),
+                (Cell::Lock(color), None) => letter_of(color).to_ascii_uppercase(),
                 (Cell::Dead, None) => 'x',
                 (Cell::Free, None) => '.',
             });

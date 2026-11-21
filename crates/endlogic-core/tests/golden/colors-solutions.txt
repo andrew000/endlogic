@@ -1,0 +1,230 @@
+== wla980-1
+solutions: 1, all found
+
+EEEEDD
+EAAED.
+EABBDD
+EEBF#.
+FFFFCC
+F.#.C.
+
+== wla980-2
+solutions: 1, all found
+
+AABB..
+AxBCCC
+DDxCEE
+DGGxE.
+.GFFx.
+.GF..x
+
+== easy-2c-00
+solutions: 1, all found
+
+...CC
+.#CCA
+....A
+#B.AA
+BB...
+
+== easy-2c-01
+solutions: 1, all found
+
+CC.AA
+CCAAB
+DDDDB
+....B
+....B
+
+== easy-2c-02
+solutions: 1, all found
+
+.BBB.
+DD...
+.DA..
+AAA.C
+...CC
+
+== easy-2c-03
+solutions: 1, all found
+
+.....
+.#..A
+..BAA
+..BB.
+CCCB.
+
+== easy-2c-04
+solutions: 1, all found
+
+C..B.
+CCBBB
+.CAA.
+...A.
+.....
+
+== normal-2c-00
+solutions: 1, all found
+
+AA#...
+.A#DD.
+AADDDx
+.B##..
+.BBCC.
+x.B.C.
+
+== normal-2c-01
+solutions: 1, all found
+
+B..DD.
+BB..DA
+B...DA
+B....A
+.C..EE
+CC..EE
+
+== normal-2c-02
+solutions: 1, all found
+
+CC..BB
+.C...B
+.#.xD.
+.AA.D.
+AAEEDD
+A..EE.
+
+== normal-2c-03
+solutions: 1, all found
+
+.D..BB
+.DD.BB
+..D.B#
+..DA.#
+..#ACC
+.AAAC.
+
+== normal-2c-04
+solutions: 1, all found
+
+....AA
+....AA
+....AC
+....CC
+.DDDCB
+.DD#BB
+
+== hard-2c-00
+solutions: 1, all found
+
+EEAAA..
+EEEEx..
+EE#..#.
+D.#.Cx.
+D.#CC..
+Dx#CB#.
+DDDBB..
+
+== hard-2c-01
+solutions: 1, all found
+
+.DDD..C
+.#.D..C
+.#AACCC
+B.AACCC
+BB.AE#C
+BB.FEEE
+..FFFEE
+
+== hard-2c-02
+solutions: 1, all found
+
+..CFFFF
+E#CFFF.
+EECCDFF
+EEACD#x
+..ACD#B
+.AAAD#B
+x..ADBB
+
+== hard-2c-03
+solutions: 1, all found
+
+.CCCCCD
+#####CD
+E....DD
+E.BBDDD
+E.BBD..
+E.xAA..
+E..A...
+
+== hard-2c-04
+solutions: 1, all found
+
+..E..#.
+.EEE.#.
+.EA..#D
+AAACDDD
+CCCCDDD
+C.BB.D.
+CCCB.x.
+
+== expert-2c-00
+solutions: 1, all found
+
+.D...A..
+.DD..AAA
+FxF#..A.
+FFF#..AC
+xxF#..CC
+x#F#CCCC
+E.##C.BB
+EEEEx.B#
+
+== expert-2c-01
+solutions: 1, all found
+
+...CB###
+..CCBGA.
+.F.CBGA.
+FFFxGGA.
+..GGGG.E
+..DDDEEE
+..DDD..E
+..D...EE
+
+== expert-2c-02
+solutions: 1, all found
+
+.FFD.D..
+AF#DDDB.
+AF#DEDBx
+AAADExBB
+ACCDEEEB
+.CCxEE.G
+..##EGGG
+......GG
+
+== expert-2c-03
+solutions: 1, all found
+
+.....#EE
+D.DDEEEE
+DDD#####
+ADD...BF
+AA....BF
+A....BBF
+CCC....F
+CCCCC..x
+
+== expert-2c-04
+solutions: 1, all found
+
+C####AAA
+CCCC.AAA
+CCG..DDA
+CGGGGDDD
+FBBBGDDE
+F.BBDD.E
+F..BBEEE
+FFx.BE.E
+

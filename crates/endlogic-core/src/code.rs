@@ -238,6 +238,9 @@ fn read_puzzle(r: &mut BitReader<'_>) -> Result<Puzzle, DecodeError> {
     let mut palette = Vec::with_capacity(color_count);
     for _ in 0..color_count {
         let id = u8::try_from(r.read(8)?).map_err(|_| DecodeError::InvalidData("color id"))?;
+        if usize::from(id) >= crate::MAX_COLORS {
+            return Err(DecodeError::InvalidData("color id"));
+        }
         palette.push(Color(id));
     }
     if palette.windows(2).any(|pair| pair[0] >= pair[1]) {

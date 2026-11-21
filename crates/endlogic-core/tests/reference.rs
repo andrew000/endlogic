@@ -292,15 +292,26 @@ fn fits_anywhere(open: &[Vec<bool>], shape: &Shape) -> Vec<Vec<(usize, usize)>> 
     out
 }
 
+/// A color for a piece or a lock: with `palette` given, any of its colors;
+/// without, color 1 half the time when there are two colors.
+fn pick(rng: &mut Rand, count: usize, palette: Option<usize>) -> Color {
+    let index = match palette {
+        Some(n) => rng.below(n),
+        None => usize::from(count == 2 && rng.chance(50)),
+    };
+    Color(u8::try_from(index).unwrap())
+}
+
 /// A random puzzle (built from a planted solution, sometimes broken on
-/// purpose) and pieces to fix.
+/// purpose) and pieces to fix. With `palette` it has that many colors;
+/// without, two colors one time in five.
 #[allow(clippy::too_many_lines)]
-fn case(seed: u64) -> (Puzzle, Vec<Option<Placement>>, Kinds) {
+fn case(seed: u64, palette: Option<usize>) -> (Puzzle, Vec<Option<Placement>>, Kinds) {
     let mut rng = Rand::new(seed);
     let mut kinds = Kinds::default();
     let (w, h) = (2 + rng.below(5), 2 + rng.below(5));
-    let two_colors = rng.chance(20);
-    kinds.colors = two_colors;
+    let count = palette.unwrap_or_else(|| if rng.chance(20) { 2 } else { 1 });
+    kinds.colors = count > 1;
     let mut cells = vec![vec![Cell::Free; w]; h];
     for row in &mut cells {
         for cell in row.iter_mut() {
@@ -316,9 +327,13 @@ fn case(seed: u64) -> (Puzzle, Vec<Option<Placement>>, Kinds) {
         .collect();
     // Planted pieces: color, cells.
     let mut planted: Vec<(Color, Vec<(usize, usize)>)> = Vec::new();
-    let wanted = 1 + rng.below(4);
+    let wanted = if palette.is_some() {
+        2 + rng.below(4)
+    } else {
+        1 + rng.below(4)
+    };
     while planted.len() < wanted {
-        let color = Color(u8::from(two_colors && rng.chance(50)));
+        let color = pick(&mut rng, count, palette);
         let copy = !planted.is_empty() && rng.chance(30);
         let placed = if copy {
             let (color, model) = planted[rng.below(planted.len())].clone();
@@ -352,17 +367,13 @@ fn case(seed: u64) -> (Puzzle, Vec<Option<Placement>>, Kinds) {
     for (r, row) in cells.iter_mut().enumerate() {
         for (c, cell) in row.iter_mut().enumerate() {
             if open[r][c] && rng.chance(10) {
-                *cell = Cell::Lock(Color(u8::from(two_colors && rng.chance(50))));
+                *cell = Cell::Lock(pick(&mut rng, count, palette));
                 kinds.locks = true;
             }
         }
     }
     // Clues from the planted pieces and the locks.
-    let colors: Vec<Color> = if two_colors {
-        vec![Color(0), Color(1)]
-    } else {
-        vec![Color(0)]
-    };
+    let colors = &Color::ALL[..count];
     let mut clues: BTreeMap<Color, LineClues> = colors
         .iter()
         .map(|&k| {
@@ -394,7 +405,12 @@ fn case(seed: u64) -> (Puzzle, Vec<Option<Placement>>, Kinds) {
     // Sometimes break it: move one cell of a row clue to another row (the
     // sums still agree), or add a piece.
     if rng.chance(20) {
-        let clue = clues.get_mut(&Color(0)).unwrap();
+        let broken = if palette.is_some() {
+            pick(&mut rng, count, palette)
+        } else {
+            Color(0)
+        };
+        let clue = clues.get_mut(&broken).unwrap();
         if let Some(from) = (0..h).find(|&r| clue.rows[r] > 0) {
             let to = (from + 1 + rng.below(h - 1)) % h;
             clue.rows[from] -= 1;
@@ -444,12 +460,13 @@ fn case(seed: u64) -> (Puzzle, Vec<Option<Placement>>, Kinds) {
     (puzzle, fixed, kinds)
 }
 
-#[test]
-fn the_solver_finds_what_the_reference_finds() {
+/// Checks the solver against the reference on `cases` puzzles from
+/// [`case`], starting at `first`, and returns how many of each kind there
+/// were.
+fn compare(first: u64, cases: u64, palette: Option<usize>) -> BTreeMap<&'static str, usize> {
     let mut counts: BTreeMap<&str, usize> = BTreeMap::new();
-    let cases = 600;
-    for seed in 0..cases {
-        let (puzzle, fixed, kinds) = case(seed);
+    for seed in first..first + cases {
+        let (puzzle, fixed, kinds) = case(seed, palette);
         let want = reference(&puzzle, &fixed);
         let result = match Search::with_fixed(&puzzle, usize::MAX, &fixed).step(u64::MAX) {
             Progress::Done(result) => result,
@@ -485,7 +502,7 @@ fn the_solver_finds_what_the_reference_finds() {
             (kinds.identical, "identical pieces"),
             (kinds.zero_clue, "zero clues"),
             (kinds.fixed, "fixed pieces"),
-            (kinds.colors, "two colors"),
+            (kinds.colors, "several colors"),
         ] {
             if on {
                 *counts.entry(name).or_default() += 1;
@@ -493,20 +510,42 @@ fn the_solver_finds_what_the_reference_finds() {
         }
     }
     println!("{counts:?}");
-    for name in [
-        "no solution",
-        "one solution",
-        "several solutions",
-        "dead cells",
-        "locks",
-        "identical pieces",
-        "zero clues",
-        "fixed pieces",
-        "two colors",
-    ] {
+    counts
+}
+
+fn assert_covers(counts: &BTreeMap<&str, usize>, names: &[&str], least: usize) {
+    for name in names {
         assert!(
-            counts.get(name).copied().unwrap_or(0) >= 20,
+            counts.get(name).copied().unwrap_or(0) >= least,
             "{name}: {counts:?}"
         );
     }
+}
+
+const KINDS: [&str; 8] = [
+    "no solution",
+    "one solution",
+    "several solutions",
+    "dead cells",
+    "locks",
+    "identical pieces",
+    "zero clues",
+    "fixed pieces",
+];
+
+#[test]
+fn the_solver_finds_what_the_reference_finds() {
+    let counts = compare(0, 600, None);
+    assert_covers(&counts, &KINDS, 20);
+    assert_covers(&counts, &["several colors"], 20);
+}
+
+#[test]
+fn the_solver_finds_what_the_reference_finds_with_two_colors() {
+    assert_covers(&compare(10_000, 160, Some(2)), &KINDS, 10);
+}
+
+#[test]
+fn the_solver_finds_what_the_reference_finds_with_three_colors() {
+    assert_covers(&compare(20_000, 160, Some(3)), &KINDS, 10);
 }

@@ -1,0 +1,26 @@
+== orange row and column sums differ
+LineSums { color: Color(1), rows: 3, cols: 2 }
+Area { color: Color(1), clues: 3, cells: 2 }
+
+== teal pieces cover more than the teal clues ask
+Area { color: Color(0), clues: 2, cells: 3 }
+
+== an orange row runs into teal locks
+LineTooLong { color: Color(1), axis: Row, index: 0, clue: 2, room: 1 }
+
+== too many orange locks in a column
+LineSums { color: Color(1), rows: 2, cols: 1 }
+TooManyLocks { color: Color(1), axis: Column, index: 0, clue: 1, locks: 2 }
+
+== a color with pieces and no clues
+Area { color: Color(1), clues: 0, cells: 1 }
+
+== both colors broken
+LineSums { color: Color(0), rows: 2, cols: 1 }
+LineTooLong { color: Color(0), axis: Row, index: 0, clue: 2, room: 1 }
+LineSums { color: Color(1), rows: 2, cols: 1 }
+Area { color: Color(1), clues: 2, cells: 3 }
+
+== a sound two-color puzzle
+no problems
+

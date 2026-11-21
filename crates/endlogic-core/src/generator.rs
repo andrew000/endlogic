@@ -8,7 +8,9 @@
 //! 2. grows each piece directly on the board from a random free cell by
 //!    adding random free neighbours until it has the chosen size, never
 //!    letting its bounding box grow past [`GeneratorParams::max_piece_side`];
-//! 3. derives the row and column clues from the pieces and locks;
+//! 3. with more than one color, colors the pieces so that every color has
+//!    one and the colors cover similar areas, and colors each lock with one
+//!    of them; then derives the row and column clues of every color;
 //! 4. hides the solution by rotating every piece randomly and shuffling the
 //!    piece order;
 //! 5. checks the result with the solver under a node budget. With
@@ -21,17 +23,18 @@
 //! nodes per call, which lets an interactive front end spread even one
 //! attempt over several frames; the result does not depend on the step size.
 
+use alloc::collections::BTreeMap;
 use alloc::vec;
 use alloc::vec::Vec;
 use core::fmt;
 
 use crate::grid::{Cell, Grid, MAX_GRID_SIZE};
-use crate::puzzle::{MAX_PIECES, Piece, Puzzle};
+use crate::puzzle::{LineClues, MAX_PIECES, Piece, Puzzle};
 use crate::rng::Rng;
 use crate::shape::{Rotation, Shape};
 use crate::solution::{Placement, Solution};
 use crate::solver::{Progress, Search, StopReason};
-use crate::{Color, verify};
+use crate::{Color, MAX_COLORS, verify};
 
 /// An inclusive range of counts, `min..=max`.
 #[derive(Debug, Clone, Copy, PartialEq, Eq, Hash)]
@@ -79,6 +82,17 @@ pub struct GeneratorParams {
     pub max_attempts: u32,
     /// Accept only puzzles whose solution is provably unique.
     pub require_unique: bool,
+    /// Number of colors, 1 to [`MAX_COLORS`]; every color gets at least one
+    /// piece.
+    pub colors: usize,
+}
+
+impl GeneratorParams {
+    /// The same parameters with `colors` colors.
+    #[must_use]
+    pub const fn with_colors(self, colors: usize) -> GeneratorParams {
+        GeneratorParams { colors, ..self }
+    }
 }
 
 /// Why a [`GeneratorParams`] value is unusable.
@@ -96,6 +110,10 @@ pub enum ParamsError {
     NoPieceSide,
     /// `max_attempts` is zero.
     NoAttempts,
+    /// `colors` is outside `1..=MAX_COLORS`.
+    Colors,
+    /// Fewer pieces than colors at most.
+    TooFewPieces,
 }
 
 impl fmt::Display for ParamsError {
@@ -109,6 +127,8 @@ impl fmt::Display for ParamsError {
             ParamsError::EmptyPieces => f.write_str("pieces need at least one cell"),
             ParamsError::NoPieceSide => f.write_str("`max_piece_side` must be at least 1"),
             ParamsError::NoAttempts => f.write_str("`max_attempts` must be at least 1"),
+            ParamsError::Colors => write!(f, "`colors` must be between 1 and {MAX_COLORS}"),
+            ParamsError::TooFewPieces => f.write_str("every color needs a piece"),
         }
     }
 }
@@ -147,6 +167,12 @@ impl GeneratorParams {
         }
         if self.max_attempts == 0 {
             return Err(ParamsError::NoAttempts);
+        }
+        if !(1..=MAX_COLORS).contains(&self.colors) {
+            return Err(ParamsError::Colors);
+        }
+        if self.pieces.max < self.colors {
+            return Err(ParamsError::TooFewPieces);
         }
         Ok(())
     }
@@ -191,8 +217,9 @@ impl Difficulty {
         Difficulty::ALL.into_iter().find(|d| d.name() == name)
     }
 
-    /// The parameters for this level (unique solutions required, pieces at
-    /// most 5 cells long or wide).
+    /// The parameters for this level (one color, unique solutions required,
+    /// pieces at most 5 cells long or wide); see
+    /// [`GeneratorParams::with_colors`].
     #[must_use]
     pub const fn params(self) -> GeneratorParams {
         let (size, pieces, piece_size, locks, dead, node_budget, max_attempts) = match self {
@@ -212,6 +239,7 @@ impl Difficulty {
             node_budget,
             max_attempts,
             require_unique: true,
+            colors: 1,
         }
     }
 }
@@ -486,30 +514,89 @@ fn build_attempt(params: &GeneratorParams, rng: &mut Rng) -> Option<(Puzzle, Sol
         grown_pieces.push(grown);
     }
 
-    // Clues from pieces and locks.
-    let mut rows = vec![0; height];
-    let mut cols = vec![0; width];
-    for (i, cell) in cells.iter().enumerate() {
-        if matches!(cell, Cell::Lock(_)) || owner[i].is_some() {
-            rows[i / width] += 1;
-            cols[i % width] += 1;
+    // With one color nothing is drawn here, so single-color puzzles stay
+    // what they were before colors.
+    let piece_colors = if params.colors > 1 {
+        let piece_colors = color_pieces(&grown_pieces, params.colors, rng)?;
+        for cell in &mut cells {
+            if let Cell::Lock(color) = cell {
+                *color = Color::ALL[rng.index(params.colors)];
+            }
         }
+        piece_colors
+    } else {
+        vec![Color::DEFAULT; piece_count]
+    };
+
+    // Clues from pieces and locks, per color.
+    let mut clues = BTreeMap::new();
+    for &color in &Color::ALL[..params.colors] {
+        let mut rows = vec![0; height];
+        let mut cols = vec![0; width];
+        for (i, cell) in cells.iter().enumerate() {
+            let filled = match owner[i] {
+                Some(piece) => piece_colors[piece] == color,
+                None => *cell == Cell::Lock(color),
+            };
+            if filled {
+                rows[i / width] += 1;
+                cols[i % width] += 1;
+            }
+        }
+        clues.insert(color, LineClues { rows, cols });
     }
 
     // Hide the solution: rotate each piece and shuffle their order.
     let mut hidden: Vec<(Piece, Placement)> = grown_pieces
         .iter()
-        .map(|grown| hide_piece(grown, width, rng))
+        .zip(&piece_colors)
+        .map(|(grown, &color)| hide_piece(grown, color, width, rng))
         .collect();
     rng.shuffle(&mut hidden);
     let (pieces, placements): (Vec<Piece>, Vec<Placement>) = hidden.into_iter().unzip();
 
     let grid = Grid::from_cells(width, height, cells).expect("validated grid size");
-    let puzzle = Puzzle::single_color(grid, pieces, rows, cols).expect("clues match the grid");
+    let puzzle = Puzzle::new(grid, pieces, clues).expect("clues match the grid");
     let solution = Solution { placements };
     debug_assert_eq!(verify(&puzzle, &solution), Ok(()));
 
     Some((puzzle, solution))
+}
+
+/// Colors grown pieces with `colors` colors, every color at least once:
+/// the largest pieces first, one per color in random order, then each piece
+/// to the color with the least area so far (ties broken at random). `None`
+/// if there are fewer pieces than colors.
+fn color_pieces(grown: &[Vec<usize>], colors: usize, rng: &mut Rng) -> Option<Vec<Color>> {
+    if grown.len() < colors {
+        return None;
+    }
+    let mut largest_first: Vec<(usize, usize)> = grown
+        .iter()
+        .enumerate()
+        .map(|(piece, cells)| (usize::MAX - cells.len(), piece))
+        .collect();
+    crate::sort::sort(&mut largest_first);
+    let mut first: Vec<Color> = Color::ALL[..colors].to_vec();
+    rng.shuffle(&mut first);
+    let mut area = [0; MAX_COLORS];
+    let mut piece_colors = vec![Color::DEFAULT; grown.len()];
+    for (k, &(_, piece)) in largest_first.iter().enumerate() {
+        let color = if k < colors {
+            first[k]
+        } else {
+            let least = area[..colors].iter().copied().min().unwrap_or(0);
+            let tied: Vec<Color> = Color::ALL[..colors]
+                .iter()
+                .copied()
+                .filter(|c| area[c.index()] == least)
+                .collect();
+            tied[rng.index(tied.len())]
+        };
+        area[color.index()] += grown[piece].len();
+        piece_colors[piece] = color;
+    }
+    Some(piece_colors)
 }
 
 /// Lays `count` locks on free cells as straight runs along rows or columns.
@@ -605,7 +692,7 @@ fn grow_piece(
 
 /// Rotates a grown piece randomly and returns it with the placement that
 /// puts it back.
-fn hide_piece(grown: &[usize], width: usize, rng: &mut Rng) -> (Piece, Placement) {
+fn hide_piece(grown: &[usize], color: Color, width: usize, rng: &mut Rng) -> (Piece, Placement) {
     let coords: Vec<(usize, usize)> = grown.iter().map(|&i| (i / width, i % width)).collect();
     let top = coords.iter().map(|c| c.0).min().unwrap_or(0);
     let left = coords.iter().map(|c| c.1).min().unwrap_or(0);
@@ -617,7 +704,7 @@ fn hide_piece(grown: &[usize], width: usize, rng: &mut Rng) -> (Piece, Placement
         col: left,
     };
     (
-        Piece::new(Color::DEFAULT, shape.rotated(Rotation::ALL[turns])),
+        Piece::new(color, shape.rotated(Rotation::ALL[turns])),
         placement,
     )
 }
