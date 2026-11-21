@@ -144,8 +144,7 @@ impl Puzzle {
             Cell::Lock(color) => Some(*color),
             _ => None,
         }));
-        colors.sort_unstable();
-        colors.dedup();
+        crate::sort::sort_dedup(&mut colors);
         colors
     }
 

@@ -60,8 +60,7 @@ impl Shape {
         if cells.is_empty() {
             return Err(ModelError::EmptyShape);
         }
-        cells.sort_unstable();
-        cells.dedup();
+        crate::sort::sort_dedup(&mut cells);
         if !is_connected(&cells) {
             return Err(ModelError::DisconnectedShape);
         }
@@ -76,7 +75,7 @@ impl Shape {
             cell.0 -= min_row;
             cell.1 -= min_col;
         }
-        cells.sort_unstable();
+        crate::sort::sort(&mut cells);
         let height = cells.iter().map(|c| c.0).max().map_or(0, |r| r + 1);
         let width = cells.iter().map(|c| c.1).max().map_or(0, |c| c + 1);
         Shape {

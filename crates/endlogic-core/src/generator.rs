@@ -597,8 +597,7 @@ fn grow_piece(
             }
         }
         frontier.retain(|&i| available(i) && !piece.contains(&i) && within(i));
-        frontier.sort_unstable();
-        frontier.dedup();
+        crate::sort::sort_dedup(&mut frontier);
         piece.push(*rng.choose(&frontier)?);
     }
     Some(piece)
