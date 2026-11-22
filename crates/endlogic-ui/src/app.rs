@@ -528,6 +528,19 @@ impl App {
         self.colors
     }
 
+    /// The number of colors the colors switch shows: that of the puzzle
+    /// on the board (opened by a link, it may differ from the setting), or
+    /// the setting while one is generated; `None` for a puzzle with more
+    /// colors than the switch offers.
+    #[must_use]
+    pub fn shown_colors(&self) -> Option<usize> {
+        let n = match &self.game {
+            Some(game) if self.generator.is_none() => game.board.colors().len().max(1),
+            _ => self.colors,
+        };
+        (n <= MAX_PLAY_COLORS).then_some(n)
+    }
+
     /// Nodes a search may spend in the next frame on the field in play or
     /// in the editor.
     #[must_use]
@@ -1066,7 +1079,8 @@ impl App {
         }
         if let Some(colors) = l.colors.filter(|_| !self.custom) {
             if l.compact {
-                let other = self.colors % MAX_PLAY_COLORS + 1;
+                let shown = self.shown_colors().unwrap_or(self.colors);
+                let other = shown % MAX_PLAY_COLORS + 1;
                 controls.push((Control::Colors(other), colors, true));
             } else {
                 let (one, two) = Layout::halves(colors);
@@ -1389,9 +1403,14 @@ impl App {
             Control::Reset => self.reset(),
             Control::Counters(mode) => self.set_counters(mode),
             Control::Colors(colors) => {
+                // The setting for new puzzles; a new puzzle unless the one
+                // on the board (or being made) already has as many colors.
+                let shown = self.shown_colors();
                 if colors != self.colors {
                     self.colors = colors;
                     self.save(SETTING_COLORS, &colors.to_string());
+                }
+                if shown != Some(colors) {
                     self.start_generation();
                     self.relayout();
                 }

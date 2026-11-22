@@ -320,6 +320,53 @@ fn the_colors_switch_generates_and_is_saved() {
     assert_eq!(App::new(config).colors(), 1);
 }
 
+/// A level opened by a link shows its own number of colors on the switch,
+/// whatever the setting; a tap still sets the setting and makes a new
+/// puzzle when the count changes.
+#[test]
+fn the_colors_switch_shows_the_puzzle_on_the_board() {
+    let two = sample("wla980-1.txt");
+    for (w, h) in [(1366.0, 768.0), (390.0, 844.0)] {
+        let mut config = config(w, h);
+        config.code = Some((CodeKind::Play, encode(&two).unwrap()));
+        config.touch = w < 500.0;
+        let mut app = App::new(config);
+        settle(&mut app);
+        assert_eq!(app.colors(), 1);
+        assert_eq!(app.shown_colors(), Some(2));
+        let switch = app.layout().colors.unwrap();
+        if app.layout().compact {
+            // The one button shows 2 and switches to 1.
+            let drawing = settle(&mut app);
+            assert!(texts(&drawing).contains(&"2".to_owned()));
+            app.click(switch.center());
+            assert_eq!(app.colors(), 1);
+            assert!(app.is_generating());
+            assert_eq!(app.shown_colors(), Some(1));
+            settle(&mut app);
+            assert_eq!(app.board().unwrap().colors(), [TEAL]);
+        } else {
+            // "2" is highlighted: the dark text of the active half.
+            let (one, two_half) = Layout::halves(switch);
+            let drawing = settle(&mut app);
+            assert!(fills_in(&drawing, two_half, endlogic_ui::palette(TEAL).fill) >= 1);
+            assert_eq!(fills_in(&drawing, one, Rgba::hex(0xE6_ECEA)), 0);
+            assert!(fills_in(&drawing, two_half, Rgba::hex(0xE6_ECEA)) >= 1);
+            // Tapping 2 keeps this puzzle and remembers 2.
+            app.click(two_half.center());
+            assert_eq!(app.colors(), 2);
+            assert!(!app.is_generating());
+            // Tapping 1 makes a one-color puzzle.
+            app.click(one.center());
+            assert_eq!(app.colors(), 1);
+            assert!(app.is_generating());
+            settle(&mut app);
+            assert_eq!(app.board().unwrap().colors(), [TEAL]);
+            assert_eq!(app.shown_colors(), Some(1));
+        }
+    }
+}
+
 #[test]
 fn the_custom_tab_has_no_colors_switch() {
     let mut app = generated(config(1366.0, 768.0));

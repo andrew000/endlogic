@@ -360,7 +360,7 @@ fn the_status_line_names_the_first_problem() {
             "Column 1 has more locks than its clue",
         ),
         (
-            "grid\n..\n..\nrows 0 0\ncols 0 0\n",
+            "grid\n#.\n..\nrows 1 0\ncols 1 0\n",
             Problem::NoPieces,
             "Add a piece",
         ),
@@ -374,6 +374,24 @@ fn the_status_line_names_the_first_problem() {
         let shown = texts(&drawing).join(" ");
         assert!(shown.contains(words), "{words}: {shown}");
         assert_ne!(problem_text(Lang::Ua, &problem), "");
+    }
+    // A blank editor asks for the size first.
+    for (lang, words) in [
+        ("en", "Set the board size first"),
+        ("ua", "Спершу задайте розмір поля"),
+    ] {
+        let mut config = config(1366.0, 768.0);
+        config.code = Some((
+            CodeKind::Edit,
+            encode(&Editor::empty(3, 3).puzzle()).unwrap(),
+        ));
+        config.settings = vec![("lang".to_owned(), lang.to_owned())];
+        let mut app = with(config);
+        let shown = texts(&settle(&mut app)).join(" ");
+        assert!(shown.contains(words), "{shown}");
+        app.press(app.layout().cell_rect(0, 0));
+        let shown = texts(&settle(&mut app)).join(" ");
+        assert!(!shown.contains(words), "{shown}");
     }
     let mut app = editing(&sample("wln006-2.txt"), 1366.0, 768.0);
     assert_eq!(app.first_problem(), None);

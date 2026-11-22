@@ -278,7 +278,18 @@ fn draw_status(app: &App, e: &EditLayout, p: &mut Ink<'_>) {
         );
         area = Rect::new(area.x, area.y + lines, area.w, (area.h - lines).max(0.0));
     }
-    if let Some(problem) = problem
+    // A blank editor first wants its size.
+    let blank = app.editor().is_some_and(Editor::is_blank);
+    if blank && area.h > 0.0 {
+        block(
+            p,
+            text(app.lang, Text::SizeFirst),
+            area,
+            font,
+            theme::ACCENT,
+            Align::Left,
+        );
+    } else if let Some(problem) = problem
         && area.h > 0.0
     {
         let colored = app.editor().is_some_and(|ed| ed.colors().len() > 1);

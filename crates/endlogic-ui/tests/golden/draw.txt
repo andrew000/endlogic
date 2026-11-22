@@ -27,7 +27,7 @@ wln006-2 silhouette: f96f12e35abda54d, 1057 calls
 wln006-2 blamed piece: a0ff3422aa351569, 1056 calls
 wln006-2 blamed piece fading: 05defcab978cb001, 1056 calls
 wln006-2 won with hints: 193edbaa449f53ff, 817 calls
-editor empty: d8abc934f40d2aa1, 404 calls
+editor empty: c029b4bbd09b0cc5, 425 calls
 editor wln006-2 1366x768 en: ef7760a09e2cb7c8, 635 calls
 editor digit strip 1366x768 en: c317a84341241665, 670 calls
 editor piece editor 1366x768 en: 4cbe1c6d290c9906, 621 calls
@@ -48,29 +48,29 @@ editor wla980-1 orange piece 844x390: 0a6c9046dea7ead7, 524 calls
 editor solution of wla980-1: a17a4a86204639b0, 768 calls
 editor tray pages: 835ab6c1695020ee, 1984 calls
 editor tray page 2: 007c48049db0c9f7, 1983 calls
-editor recognizing 1366x768: bcafb7d9211d9084, 427 calls
-editor replace prompt 1366x768: 5ab32547bd230f9b, 686 calls
-editor doubts 1366x768: 88ccd604e6db8fd6, 399 calls
-editor failure 1366x768: 20c853d05afe0ea6, 474 calls
-editor recognizing 390x844: a114db66115343c9, 422 calls
-editor replace prompt 390x844: 93f8e36bb3402f0f, 572 calls
-editor doubts 390x844: b2e2ee739fe168d5, 383 calls
-editor failure 390x844: 6112e2cb286ff84a, 448 calls
-editor recognizing 844x390: ebba93a5159aa102, 410 calls
-editor replace prompt 844x390: c9d80d4479a02006, 559 calls
-editor doubts 844x390: a2928337e8f2e127, 382 calls
-editor failure 844x390: 587d6702e7b8662e, 457 calls
 custom play wln006-2 1366x768 en: 26c665062e42fa77, 759 calls
 custom play wln006-2 844x390 ua: 786a927c551ec45c, 645 calls
+editor recognizing 1366x768: f7a09748b3911df0, 448 calls
+editor replace prompt 1366x768: 5ab32547bd230f9b, 686 calls
+editor doubts 1366x768: 88ccd604e6db8fd6, 399 calls
+editor failure 1366x768: f706d2ac18feccea, 495 calls
+editor recognizing 390x844: 6efa7f6d29c0be15, 435 calls
+editor replace prompt 390x844: 93f8e36bb3402f0f, 572 calls
+editor doubts 390x844: b2e2ee739fe168d5, 383 calls
+editor failure 390x844: 22fa821a60751156, 461 calls
+editor recognizing 844x390: a0f5f76524b882e7, 431 calls
+editor replace prompt 844x390: c9d80d4479a02006, 559 calls
+editor doubts 844x390: a2928337e8f2e127, 382 calls
+editor failure 844x390: 4e308f5569b35dc9, 478 calls
 normal two colors 1366x768: 9a003224e08ca47e, 687 calls
 normal two colors 390x844-touch: d97e0e8ad5d4346a, 515 calls
 expert two colors 1366x768: ac33bde0cd60b548, 929 calls
 expert two colors 390x844-touch: 956536209045ecb7, 757 calls
-wla980-1 1366x768 en: a7f1d22562fb1f68, 712 calls
-wla980-1 390x844 ua: 97ce481ed421307c, 561 calls
-wla980-2 1366x768 en: c4c1b45e418f4509, 724 calls
-wla980-2 390x844 ua: 65e7d0ac1d0927b8, 573 calls
-wla980-1 numbers: 675a61ee4be73899, 742 calls
-wla980-1 orange in a teal row: 8ef1f6d04ca9e7bc, 716 calls
-wla980-1 silhouette: 7eb7304ee5f5c6d0, 1063 calls
-wla980-1 won with hints: 3921429e37f480b6, 763 calls
+wla980-1 1366x768 en: 636e1bfdb4b89c01, 712 calls
+wla980-1 390x844 ua: 6ec32bee27e7b2d5, 561 calls
+wla980-2 1366x768 en: 5b93474d72c18d8c, 724 calls
+wla980-2 390x844 ua: 91c8d82c3f0e26d1, 573 calls
+wla980-1 numbers: b6d54219054918a2, 742 calls
+wla980-1 orange in a teal row: a42be5a42391e669, 716 calls
+wla980-1 silhouette: 6af475044fea8ddf, 1063 calls
+wla980-1 won with hints: b662764ff6706193, 763 calls

@@ -266,7 +266,7 @@ fn draw_top_controls(app: &App, p: &mut Ink<'_>) {
         }
     }
     if let Some(rect) = l.colors.filter(|_| !app.is_custom()) {
-        colors_switch(p, rect, app.colors, l.compact, l.font * 0.9);
+        colors_switch(p, rect, app.shown_colors(), l.compact, l.font * 0.9);
     }
     if l.compact {
         button(p, l.lang, app.lang.label(), Style::Normal, l.font * 0.9);
@@ -339,17 +339,19 @@ fn draw_bottom_controls(app: &App, p: &mut Ink<'_>) {
 }
 
 /// The colors switch: `1 | 2`, each number followed by a swatch of every
-/// color it brings; with `compact` one button showing the current number.
-fn colors_switch(p: &mut Ink<'_>, rect: Rect, colors: usize, compact: bool, font: f32) {
+/// color it brings, the count of the puzzle on the board highlighted (none
+/// for more colors); with `compact` one button showing that count.
+fn colors_switch(p: &mut Ink<'_>, rect: Rect, colors: Option<usize>, compact: bool, font: f32) {
     let radius = rect.h / 2.0;
     p.fill_rect(rect, radius, theme::PANEL);
     p.stroke_rect(rect.inset(0.5), radius, 1.0, theme::CELL_MARK);
-    let counts: &[usize] = if compact { &[colors] } else { &[1, 2] };
+    let one = [colors.unwrap_or(2)];
+    let counts: &[usize] = if compact { &one } else { &[1, 2] };
     let w = rect.w / to_f32(counts.len());
     let font = text_font(font, true);
     for (k, &n) in counts.iter().enumerate() {
         let seg = Rect::new(rect.x + w * to_f32(k), rect.y, w, rect.h);
-        let active = !compact && n == colors;
+        let active = !compact && Some(n) == colors;
         let color = if active {
             p.fill_rect(seg.inset(3.0), (rect.h - 6.0) / 2.0, theme::TEXT);
             theme::BACKGROUND
