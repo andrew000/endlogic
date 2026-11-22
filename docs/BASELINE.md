@@ -516,3 +516,44 @@ Sizes (`just size`; the wasm of every column goes through binaryen 133):
 The solver's tables and lane code add 2.5 to 4 KB; the heapsort removes
 about 10 KB from each `.exe` and 14.6 KB from the wasm (the "std:
 sorting" part above).
+
+## After the screenshot import
+
+Measured on 2026-11-22 on the same machine and toolchain, commit after
+`8ed9930`. The recognizer (`endlogic-vision`, release profile:
+`opt-level = "z"`) on screens drawn in memory (`just bench`):
+
+| screen | size | mean | best |
+|---|---|---:|---:|
+| wla980-1 | 1280×720 | 3.11 ms | 3.05 ms |
+| wla980-1 | 1920×1080 | 5.91 ms | 5.84 ms |
+| wla980-1 | 2560×1440 | 10.00 ms | 9.91 ms |
+| wla980-1 | 3840×2160 | 22.15 ms | 21.95 ms |
+| expert, 2 colors | 1280×720 | 3.25 ms | 3.19 ms |
+| expert, 2 colors | 1920×1080 | 6.03 ms | 5.95 ms |
+| expert, 2 colors | 2560×1440 | 10.29 ms | 10.20 ms |
+| expert, 2 colors | 3840×2160 | 22.08 ms | 21.98 ms |
+
+On the game's own screenshots the same build takes 3.1 to 3.7 ms at
+1356×768 and 21.8 to 22.5 ms at 3840×2160. In the browser (release
+page), the frame that reads a 3840×2160 picture takes 35 to 49 ms,
+drawing included.
+
+Sizes (`just size`):
+
+| artifact | before | after |
+|---|---:|---:|
+| `endlogic-win.exe` | 375,296 | 428,544 |
+| `endlogic.exe` (CLI) | 233,984 | 233,984 |
+| `endlogic_web_bg.wasm` | 217,958 | 265,249 |
+| `endlogic_web_bg.wasm`, gzip -9 | 96,051 | 117,810 |
+| `endlogic_web.js` | — | 34,290 |
+
+Of the growth, the recognizer is about 44 KB of code in the `.exe` and
+35 KB (before binaryen) in the wasm; the editor's import, the question,
+the marks and typing about 8 KB; the shells' paste, drop and file picking
+about 4 KB (web: also the event types of `web-sys`). Tried: the standard
+stable sort of the doubts and of the clue maps (replaced by the crate's
+insertion sort and one core function that builds the map, 3 to 10 KB);
+`opt-level = "s"` for the recognizer (7 KB larger); identical code folding
+in the linker (no change); more binaryen passes (under 1 KB).
