@@ -490,15 +490,7 @@ fn tight_button(p: &mut Ink<'_>, rect: Rect, label: &str, font: f32) {
         return;
     }
     button(p, rect, "", Style::Normal, font);
-    let half = label.len() / 2;
-    let split = label
-        .char_indices()
-        .filter(|&(_, c)| c == ' ')
-        .map(|(i, _)| i)
-        .min_by_key(|&i| i.abs_diff(half))
-        .unwrap_or(half);
-    let (first, second) = label.split_at(split);
-    let (first, second) = (first.trim(), second.trim());
+    let (first, second) = super::halves(label);
     let base = text_font((rect.h * 0.32).min(font), true);
     let room = rect.w - font * 0.6;
     let shrunk = fit(p, first, fit(p, second, base, room), room);

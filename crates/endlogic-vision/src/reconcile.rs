@@ -3,10 +3,9 @@
 //! not, other readings of the pieces and of unclear counters are tried; the
 //! cheapest set of changes that makes them agree wins.
 
-use alloc::collections::BTreeMap;
 use alloc::vec::Vec;
 
-use endlogic_core::{Cell, Color, Grid, LineClues, Shape};
+use endlogic_core::{Cell, Color, Grid, LineClues, MAX_COLORS, Shape};
 
 use crate::tray::TrayPiece;
 use crate::{Doubt, Place, Reason};
@@ -21,22 +20,26 @@ pub(crate) struct Settled {
 const MAX_TRIED: usize = 10;
 
 /// The cheapest choice of readings, one per piece, whose areas add up to
-/// `target`: the index of the reading for each piece, and the cost.
-fn choose(options: &[Vec<usize>], target: usize) -> Option<(Vec<usize>, usize)> {
-    // best[s] = (cost, choices) for area s after the pieces so far.
+/// `target`, never reading `skip.0` as its reading `skip.1`: the reading
+/// of each piece (its index, which is also its cost) and the total cost.
+fn choose(
+    options: &[Vec<usize>],
+    target: usize,
+    skip: Option<(usize, usize)>,
+) -> Option<(Vec<usize>, usize)> {
+    // best[s] = (cost, readings) for area s after the pieces so far.
     let mut best: Vec<Option<(usize, Vec<usize>)>> = alloc::vec![None; target + 1];
     best[0] = Some((0, Vec::new()));
-    for areas in options {
+    for (i, areas) in options.iter().enumerate() {
         let mut next: Vec<Option<(usize, Vec<usize>)>> = alloc::vec![None; target + 1];
         for (s, slot) in best.iter().enumerate() {
             let Some((cost, picks)) = slot else { continue };
             for (k, &a) in areas.iter().enumerate() {
-                let t = s + a;
-                if t > target {
-                    continue;
-                }
-                let c = cost + k;
-                if next[t].as_ref().is_none_or(|(old, _)| c < *old) {
+                let (t, c) = (s + a, cost + k);
+                if t <= target
+                    && skip != Some((i, k))
+                    && next[t].as_ref().is_none_or(|(old, _)| c < *old)
+                {
                     let mut p = picks.clone();
                     p.push(k);
                     next[t] = Some((c, p));
@@ -48,35 +51,20 @@ fn choose(options: &[Vec<usize>], target: usize) -> Option<(Vec<usize>, usize)> 
     best[target].take().map(|(c, p)| (p, c))
 }
 
-/// The sum of the row clues with the unclear counters in `mask` read the
-/// other way.
-fn rows_total(lines: &LineClues, unclear: &[(Place, usize)], mask: usize) -> usize {
-    let mut sum: usize = lines.rows.iter().sum();
-    for (bit, &(place, alt)) in unclear.iter().enumerate() {
-        if mask & (1 << bit) != 0
-            && let Place::Clue {
-                row: true, index, ..
-            } = place
-        {
-            sum = sum - lines.rows[index] + alt;
-        }
-    }
-    sum
-}
-
 /// Settles the sums of every color, changing `clues` where an unclear
 /// counter reads better another way.
-#[allow(clippy::too_many_lines)]
 pub(crate) fn settle(
     grid: &Grid,
-    clues: &mut BTreeMap<Color, LineClues>,
+    clues: &mut [Option<LineClues>; MAX_COLORS],
     pieces: &[TrayPiece],
     colors: &[Color],
     alternatives: &[(Place, usize)],
 ) -> Settled {
     let mut picks: Vec<usize> = alloc::vec![0; pieces.len()];
     let mut doubts = Vec::new();
-    for (&color, lines) in clues.iter_mut() {
+    let mut doubt = |place, reason| doubts.push(Doubt { place, reason });
+    for (color, lines) in Color::ALL.into_iter().zip(clues.iter_mut()) {
+        let Some(lines) = lines else { continue };
         let locks = grid
             .cells()
             .iter()
@@ -93,33 +81,32 @@ pub(crate) fn settle(
             .take(MAX_TRIED)
             .copied()
             .collect();
-        // Every combination of unclear counters: (cost, changed, choice).
-        let mut found: Option<(usize, usize, Vec<usize>)> = None;
+        // Every combination of unclear counters read the other way:
+        // (cost, combination, readings, piece cells).
+        let mut found: Option<(usize, usize, Vec<usize>, usize)> = None;
         for mask in 0..(1usize << unclear.len()) {
-            let (mut rows, mut cols) = (
-                lines.rows.iter().sum::<usize>(),
-                lines.cols.iter().sum::<usize>(),
-            );
+            let mut sums = [lines.rows.iter().sum::<usize>(), lines.cols.iter().sum()];
             for (bit, &(place, alt)) in unclear.iter().enumerate() {
                 if mask & (1 << bit) != 0
                     && let Place::Clue { row, index, .. } = place
                 {
                     let list = if row { &lines.rows } else { &lines.cols };
-                    let sum = if row { &mut rows } else { &mut cols };
+                    let sum = &mut sums[usize::from(!row)];
                     *sum = *sum - list[index] + alt;
                 }
             }
-            if rows != cols || rows < locks {
+            if sums[0] != sums[1] || sums[0] < locks {
                 continue;
             }
-            if let Some((choice, cost)) = choose(&options, rows - locks) {
+            let target = sums[0] - locks;
+            if let Some((choice, cost)) = choose(&options, target, None) {
                 let cost = cost + mask.count_ones() as usize;
-                if found.as_ref().is_none_or(|(c, _, _)| cost < *c) {
-                    found = Some((cost, mask, choice));
+                if found.as_ref().is_none_or(|f| cost < f.0) {
+                    found = Some((cost, mask, choice, target));
                 }
             }
         }
-        if let Some((_, mask, choice)) = found {
+        if let Some((_, mask, choice, target)) = found {
             for (bit, &(place, alt)) in unclear.iter().enumerate() {
                 if let Place::Clue { row, index, .. } = place {
                     if mask & (1 << bit) != 0 {
@@ -130,53 +117,32 @@ pub(crate) fn settle(
                         };
                         list[index] = alt;
                     }
-                    doubts.push(Doubt {
-                        place,
-                        reason: Reason::Unclear,
-                    });
+                    doubt(place, Reason::Unclear);
                 }
             }
-            let target = rows_total(lines, &unclear, mask) - locks;
             let best: usize = choice.iter().sum();
             for (k, &i) in mine.iter().enumerate() {
                 picks[i] = choice[k];
                 // Another reading of this piece that adds up as cheaply
                 // leaves it unclear.
-                let other = (0..options[k].len()).filter(|&r| r != choice[k]).any(|r| {
-                    let mut forced = options.clone();
-                    forced[k] = alloc::vec![options[k][r]];
-                    choose(&forced, target).is_some_and(|(_, cost)| cost + r <= best)
-                });
-                if other {
-                    doubts.push(Doubt {
-                        place: Place::Piece(i),
-                        reason: Reason::Unclear,
-                    });
+                if choose(&options, target, Some((k, choice[k]))).is_some_and(|(_, c)| c <= best) {
+                    doubt(Place::Piece(i), Reason::Unclear);
                 }
             }
         } else {
-            // Nothing adds up: keep the first readings and point at
-            // what could be wrong.
+            // Nothing adds up: keep the first readings and point at what
+            // could be wrong.
             for &(place, _) in &unclear {
-                doubts.push(Doubt {
-                    place,
-                    reason: Reason::Sums,
-                });
+                doubt(place, Reason::Sums);
             }
             if unclear.is_empty() {
                 for &i in &mine {
-                    doubts.push(Doubt {
-                        place: Place::Piece(i),
-                        reason: Reason::Sums,
-                    });
+                    doubt(Place::Piece(i), Reason::Sums);
                 }
                 for (row, list) in [(true, &lines.rows), (false, &lines.cols)] {
                     for (index, &v) in list.iter().enumerate() {
                         if v > 0 {
-                            doubts.push(Doubt {
-                                place: Place::Clue { color, row, index },
-                                reason: Reason::Sums,
-                            });
+                            doubt(Place::Clue { color, row, index }, Reason::Sums);
                         }
                     }
                 }

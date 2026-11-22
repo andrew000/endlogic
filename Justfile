@@ -41,9 +41,9 @@ check-nostd:
 # Check formatting, lint, test, build without std and build for wasm, in that order.
 ci: fmt-check lint test check-nostd check-wasm check-web
 
-# Run the benchmarks of the core and the trainer (release build); prints tables.
+# Run the benchmarks of the core, the trainer and the recognizer (release build); prints tables.
 bench:
-    cargo bench -p endlogic-core -p endlogic-ui --bench core --bench ui
+    cargo bench -p endlogic-core -p endlogic-ui -p endlogic-vision --bench core --bench ui --bench vision
 
 # Build the release artifacts and print their sizes in bytes.
 [unix]

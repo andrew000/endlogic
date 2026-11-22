@@ -266,8 +266,8 @@ pub(crate) fn board(image: &Image, counters: &Counters) -> Result<Board, NoGrid>
         let last = side.lines.last().map_or(0, |l| l.index);
         (first, last)
     };
-    let (mut r0, mut r1) = span(&counters.rows);
-    let (mut c0, mut c1) = span(&counters.cols);
+    let (r0, r1) = span(&counters.rows);
+    let (c0, c1) = span(&counters.cols);
     if r1 - r0 >= MAX_LINES || c1 - c0 >= MAX_LINES {
         return Err(NoGrid::Cells);
     }
@@ -286,32 +286,31 @@ pub(crate) fn board(image: &Image, counters: &Counters) -> Result<Board, NoGrid>
         }
         n > 0 && yes * 3 >= n * 2
     };
+    // Each side in turn, twice (a column added may let a row in).
+    let mut edges = [r0, r1, c0, c1];
     for _ in 0..2 {
-        while r1 - r0 + 1 < MAX_LINES
-            && reader.row_sign(r0 - 1)
-            && line_like(&mut (c0..=c1).map(|c| cell_like(r0 - 1, c)))
-        {
-            r0 -= 1;
-        }
-        while r1 - r0 + 1 < MAX_LINES
-            && reader.row_sign(r1 + 1)
-            && line_like(&mut (c0..=c1).map(|c| cell_like(r1 + 1, c)))
-        {
-            r1 += 1;
-        }
-        while c1 - c0 + 1 < MAX_LINES
-            && reader.col_sign(c0 - 1)
-            && line_like(&mut (r0..=r1).map(|r| cell_like(r, c0 - 1)))
-        {
-            c0 -= 1;
-        }
-        while c1 - c0 + 1 < MAX_LINES
-            && reader.col_sign(c1 + 1)
-            && line_like(&mut (r0..=r1).map(|r| cell_like(r, c1 + 1)))
-        {
-            c1 += 1;
+        for side in 0..4 {
+            loop {
+                let [r0, r1, c0, c1] = edges;
+                let rows = side < 2;
+                let (lo, hi) = if rows { (r0, r1) } else { (c0, c1) };
+                let next = if side % 2 == 0 { lo - 1 } else { hi + 1 };
+                let fits = hi - lo + 1 < MAX_LINES
+                    && if rows {
+                        reader.row_sign(next)
+                            && line_like(&mut (c0..=c1).map(|c| cell_like(next, c)))
+                    } else {
+                        reader.col_sign(next)
+                            && line_like(&mut (r0..=r1).map(|r| cell_like(r, next)))
+                    };
+                if !fits {
+                    break;
+                }
+                edges[side] = next;
+            }
         }
     }
+    let [r0, r1, c0, c1] = edges;
     let mut cells = Vec::new();
     for r in r0..=r1 {
         for c in c0..=c1 {

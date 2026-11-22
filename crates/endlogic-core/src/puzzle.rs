@@ -121,6 +121,24 @@ impl Puzzle {
         Puzzle::new(grid, pieces, clues)
     }
 
+    /// [`Puzzle::new`] with the clues as a list of colors and their clues
+    /// (a later entry for a color replaces an earlier one).
+    ///
+    /// # Errors
+    ///
+    /// Same as [`Puzzle::new`].
+    pub fn with_clues(
+        grid: Grid,
+        pieces: Vec<Piece>,
+        clues: Vec<(Color, LineClues)>,
+    ) -> Result<Puzzle, ModelError> {
+        let mut map = BTreeMap::new();
+        for (color, lines) in clues {
+            map.insert(color, lines);
+        }
+        Puzzle::new(grid, pieces, map)
+    }
+
     /// The board.
     #[must_use]
     pub fn grid(&self) -> &Grid {

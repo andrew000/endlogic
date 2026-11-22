@@ -1029,6 +1029,19 @@ fn draw_overlays(app: &App, p: &mut Ink<'_>) {
     draw_toast(app, p);
 }
 
+/// Text split in two lines at the space nearest its middle.
+pub(crate) fn halves(label: &str) -> (&str, &str) {
+    let half = label.len() / 2;
+    let split = label
+        .char_indices()
+        .filter(|&(_, c)| c == ' ')
+        .map(|(i, _)| i)
+        .min_by_key(|&i| i.abs_diff(half))
+        .unwrap_or(0);
+    let (first, second) = label.split_at(split);
+    (first.trim(), second.trim())
+}
+
 /// The toast, on one line or, when too long, two.
 fn draw_toast(app: &App, p: &mut Ink<'_>) {
     let l = &app.layout;
@@ -1048,16 +1061,7 @@ fn draw_toast(app: &App, p: &mut Ink<'_>) {
     if p.text_width(&label, font) <= room {
         pill(p, l.notice, &label, font, stroke, alpha);
     } else {
-        // Two lines, split at the space nearest the middle.
-        let half = label.len() / 2;
-        let split = label
-            .char_indices()
-            .filter(|&(_, c)| c == ' ')
-            .map(|(i, _)| i)
-            .min_by_key(|&i| i.abs_diff(half))
-            .unwrap_or(half);
-        let (first, second) = label.split_at(split);
-        let (first, second) = (first.trim(), second.trim());
+        let (first, second) = halves(&label);
         let font = fit(p, first, fit(p, second, font, room), room);
         let wide = p.text_width(first, font).max(p.text_width(second, font)) + font.size * 2.4;
         let rect = Rect::centered(l.notice, wide, font.size * 3.9);

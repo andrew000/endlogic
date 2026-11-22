@@ -11,3 +11,7 @@ endlogic-core.workspace = true
 
 [lints]
 workspace = true
+
+[[bench]]
+name = "vision"
+harness = false

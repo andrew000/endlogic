@@ -1,7 +1,6 @@
 //! The custom tab: an editor for puzzles copied from the game, a solver
 //! that lists their solutions, and a way to play them.
 
-use alloc::collections::BTreeMap;
 use alloc::vec;
 use alloc::vec::Vec;
 
@@ -99,18 +98,18 @@ impl Editor {
         if colors.is_empty() {
             colors.push(Color::DEFAULT);
         }
-        let clues: BTreeMap<Color, LineClues> = colors
+        let clues = colors
             .into_iter()
             .map(|color| {
                 let k = color.index();
-                let clues = LineClues {
+                let lines = LineClues {
                     rows: self.rows[k].clone(),
                     cols: self.cols[k].clone(),
                 };
-                (color, clues)
+                (color, lines)
             })
             .collect();
-        Puzzle::new(grid, self.pieces.clone(), clues).expect("clues match the grid")
+        Puzzle::with_clues(grid, self.pieces.clone(), clues).expect("clues match the grid")
     }
 
     /// The colors in use: those with a piece, a lock or a clue above 0, in

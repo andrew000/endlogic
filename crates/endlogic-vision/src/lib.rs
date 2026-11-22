@@ -36,7 +36,6 @@ mod sort;
 pub mod synth;
 mod tray;
 
-use alloc::collections::BTreeMap;
 use alloc::vec::Vec;
 
 use endlogic_core::{Cell, Color, Grid, LineClues, MAX_COLORS, MAX_PIECES, Piece, Puzzle};
@@ -143,26 +142,28 @@ fn palette(hue: f32) -> Option<Color> {
     }
 }
 
-/// Colors given out so far: palette colors by hue, others by first sight.
+/// Colors given out so far: palette colors by hue, others (`c` and `d`)
+/// by first sight.
 #[derive(Default)]
 struct Colors {
-    others: Vec<(f32, Color)>,
+    others: Vec<f32>,
 }
 
 impl Colors {
-    fn of(&mut self, hue: f32) -> (Color, bool) {
+    fn of(&mut self, hue: f32) -> Color {
         if let Some(color) = palette(hue) {
-            return (color, false);
+            return color;
         }
-        if let Some(&(_, color)) = self.others.iter().find(|(h, _)| hue_gap(*h, hue) <= 20.0) {
-            return (color, true);
-        }
-        let next = 2 + self.others.len();
+        let k = if let Some(k) = self.others.iter().position(|&h| hue_gap(h, hue) <= 20.0) {
+            k
+        } else {
+            self.others.push(hue);
+            self.others.len() - 1
+        };
         // At most four colors; any more share the last letter.
         #[allow(clippy::cast_possible_truncation)]
-        let color = Color(next.min(MAX_COLORS - 1) as u8);
-        self.others.push((hue, color));
-        (color, true)
+        let color = Color((2 + k).min(MAX_COLORS - 1) as u8);
+        color
     }
 }
 
@@ -218,18 +219,13 @@ fn assemble(
     let pieces = tray_pieces;
     let mut colors = Colors::default();
     let mut doubts: Vec<Doubt> = Vec::new();
-    let mut new_colors: Vec<Color> = Vec::new();
-    let mut color_of = |hue: f32, colors: &mut Colors| {
-        let (color, new) = colors.of(hue);
-        if new && !new_colors.contains(&color) {
-            new_colors.push(color);
-        }
-        color
+    // The clues of each color, made on first use.
+    let mut clues: [Option<LineClues>; MAX_COLORS] = Default::default();
+    let blank = || LineClues {
+        rows: alloc::vec![0; board.height],
+        cols: alloc::vec![0; board.width],
     };
-    // Clues: (color, row?, index) -> (count, other reading).
-    let mut clues: BTreeMap<Color, LineClues> = BTreeMap::new();
     let mut alternatives: Vec<(Place, usize)> = Vec::new();
-    let mut filled: Vec<(Place, usize)> = Vec::new();
     for (row, side, first, len) in [
         (true, &counters.rows, board.row0, board.height),
         (false, &counters.cols, board.col0, board.width),
@@ -242,11 +238,8 @@ fn assemble(
                 continue;
             }
             for stack in &line.stacks {
-                let color = color_of(stack.hue, &mut colors);
-                let entry = clues.entry(color).or_insert_with(|| LineClues {
-                    rows: alloc::vec![0; board.height],
-                    cols: alloc::vec![0; board.width],
-                });
+                let color = colors.of(stack.hue);
+                let entry = clues[color.index()].get_or_insert_with(blank);
                 let list = if row {
                     &mut entry.rows
                 } else {
@@ -257,7 +250,6 @@ fn assemble(
                 if stack.blobs != stack.count {
                     alternatives.push((place, stack.blobs));
                 }
-                filled.push((place, stack.filled));
             }
         }
     }
@@ -266,60 +258,29 @@ fn assemble(
         cells.push(match *look {
             Look::Free(_) => Cell::Free,
             Look::Dead => Cell::Dead,
-            Look::Colored { hue, .. } => Cell::Lock(color_of(hue, &mut colors)),
+            Look::Colored { hue, .. } => Cell::Lock(colors.of(hue)),
         });
     }
     let grid =
         Grid::from_cells(board.width, board.height, cells).map_err(|_| Failure::Unreadable)?;
-    let piece_colors: Vec<Color> = pieces
-        .iter()
-        .map(|p| color_of(p.hue, &mut colors))
-        .collect();
-    for &color in &piece_colors {
-        clues.entry(color).or_insert_with(|| LineClues {
-            rows: alloc::vec![0; board.height],
-            cols: alloc::vec![0; board.width],
-        });
-    }
-    for r in 0..board.height {
-        for c in 0..board.width {
-            if let Some(Cell::Lock(color)) = grid.get(r, c) {
-                clues.entry(color).or_insert_with(|| LineClues {
-                    rows: alloc::vec![0; board.height],
-                    cols: alloc::vec![0; board.width],
-                });
-            }
-        }
+    let piece_colors: Vec<Color> = pieces.iter().map(|p| colors.of(p.hue)).collect();
+    let locks = grid.cells().iter().filter_map(|c| match c {
+        Cell::Lock(color) => Some(*color),
+        _ => None,
+    });
+    for color in piece_colors.iter().copied().chain(locks) {
+        clues[color.index()].get_or_insert_with(blank);
     }
     // Every letter up to the last one used has clues, as in the text format.
-    let last = clues.keys().map(|c| c.index()).max().unwrap_or(0);
-    for k in 0..last {
-        // At most four colors.
-        #[allow(clippy::cast_possible_truncation)]
-        clues.entry(Color(k as u8)).or_insert_with(|| LineClues {
-            rows: alloc::vec![0; board.height],
-            cols: alloc::vec![0; board.width],
-        });
-    }
-    // Filled ticks count the locks of their color in their line.
-    for &(place, n) in &filled {
-        if let Place::Clue { color, row, index } = place {
-            let locks = (0..if row { board.width } else { board.height })
-                .filter(|&k| {
-                    let (r, c) = if row { (index, k) } else { (k, index) };
-                    grid.get(r, c) == Some(Cell::Lock(color))
-                })
-                .count();
-            if locks != n {
-                doubts.push(Doubt {
-                    place,
-                    reason: Reason::Unclear,
-                });
-            }
-        }
+    let last = clues.iter().rposition(Option::is_some).unwrap_or(0);
+    for slot in &mut clues[..last] {
+        slot.get_or_insert_with(blank);
     }
     for &(row, index) in &board.unmarked {
-        for &color in clues.keys() {
+        for color in Color::ALL
+            .into_iter()
+            .filter(|c| clues[c.index()].is_some())
+        {
             doubts.push(Doubt {
                 place: Place::Clue { color, row, index },
                 reason: Reason::Unclear,
@@ -328,14 +289,13 @@ fn assemble(
     }
     let settled = reconcile::settle(&grid, &mut clues, pieces, &piece_colors, &alternatives);
     doubts.extend(settled.doubts);
-    for &color in &new_colors {
-        for (i, &c) in piece_colors.iter().enumerate() {
-            if c == color {
-                doubts.push(Doubt {
-                    place: Place::Piece(i),
-                    reason: Reason::NewColor,
-                });
-            }
+    // Pieces of a color outside the palette.
+    for (i, c) in piece_colors.iter().enumerate() {
+        if c.index() >= 2 {
+            doubts.push(Doubt {
+                place: Place::Piece(i),
+                reason: Reason::NewColor,
+            });
         }
     }
     let pieces: Vec<Piece> = settled
@@ -344,8 +304,13 @@ fn assemble(
         .zip(&piece_colors)
         .map(|(shape, &color)| Piece::new(color, shape))
         .collect();
-    let puzzle = Puzzle::new(grid, pieces, clues).map_err(|_| Failure::Unreadable)?;
-    doubts.sort();
+    let clues = Color::ALL
+        .into_iter()
+        .zip(clues)
+        .filter_map(|(color, lines)| lines.map(|l| (color, l)))
+        .collect();
+    let puzzle = Puzzle::with_clues(grid, pieces, clues).map_err(|_| Failure::Unreadable)?;
+    sort::sort_ord(&mut doubts);
     doubts.dedup();
     // The cards reach about 0.8 cell beyond their pieces.
     let card = 0.8 * board.pitch;

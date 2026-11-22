@@ -33,8 +33,6 @@ pub(crate) struct Stack {
     pub count: usize,
     /// Tick blobs found, when not the same as `count`.
     pub blobs: usize,
-    /// Filled ticks among them.
-    pub filled: usize,
     /// Center across the stack: y for a row counter, x for a column.
     pub center: f32,
     /// The end next to the grid: right edge for a row, bottom for a column.
@@ -203,13 +201,11 @@ fn stacks(ticks: &[Tick], vertical: bool, long: f32) -> Vec<(Stack, f32)> {
             } else {
                 to_f32(last.y1 as u64)
             };
-            let filled = chain.iter().filter(|b| b.fill() >= 0.8).count();
             (
                 Stack {
                     hue,
                     count,
                     blobs: chain.len(),
-                    filled,
                     center,
                     base,
                 },

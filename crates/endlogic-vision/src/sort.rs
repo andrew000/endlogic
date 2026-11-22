@@ -1,6 +1,17 @@
 //! The one sort of the crate: a stable insertion sort, small in code and
 //! fast enough for the few hundred items it orders.
 
+/// Sorts by the items' own order; equal items keep their order.
+pub(crate) fn sort_ord<T: Ord>(items: &mut [T]) {
+    for i in 1..items.len() {
+        let mut j = i;
+        while j > 0 && items[j - 1] > items[j] {
+            items.swap(j - 1, j);
+            j -= 1;
+        }
+    }
+}
+
 /// Sorts numbers ascending.
 pub(crate) fn sort(values: &mut [f32]) {
     sort_by_key(values, |v| *v);
