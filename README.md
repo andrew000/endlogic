@@ -171,6 +171,18 @@ The custom tab copies a puzzle from the game: set the board size, tap cells
 to cycle free, locked and dead, tap a counter to type the clues, and draw
 the pieces. "Solve" lists up to 50 solutions; "Play" plays the puzzle.
 
+Clues can be typed on the keyboard too: a digit sets the selected counter
+(the first one if none is) and moves to the next, in the same order as the
+digit strip; the arrows and `Backspace` move between counters without
+changing them, `Enter` finishes. On lines longer than 9 a digit that can
+start a two-digit clue waits about 0.6 s for the second digit (or `Enter`).
+
+A screenshot of the game's repair screen in the "Grid" display fills the
+editor by itself: paste it (`Ctrl+V`), drop the file on the page, or pick
+it with "From screenshot". Places the reading is not sure about are
+outlined in yellow until changed or closed. The picture is read on the
+device and kept nowhere; only the puzzle read from it is remembered.
+
 A puzzle's link (`#p=<code>`) opens the same puzzle; an editor link
 (`#e=<code>`) opens it in the custom tab's editor, and a custom link
 (`#c=<code>`) plays it in the custom tab.
@@ -228,7 +240,10 @@ just win-run "https://andrew000.github.io/endlogic/#p=<code>"
 
 - "Share" copies a web link to the puzzle, so anyone can open it in a
   browser.
-- `Ctrl+V` opens the puzzle in a link or code on the clipboard.
+- `Ctrl+V` reads a screenshot on the clipboard, or opens the puzzle in a
+  link or code there; a picture file dropped on the window is read too.
+- `endlogic-win --screenshot out.png --size 1366x768 --image shot.png`
+  draws the app after importing `shot.png` (PNG, JPEG or BMP).
 - The icon is `crates/endlogic-win/res/endlogic.ico`; `res/endlogic.res`
   holds the same images compiled for the linker, which the build links in
   as they are. Both come from `cargo run -p endlogic-win --example icon`,
