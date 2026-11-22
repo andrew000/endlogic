@@ -25,6 +25,9 @@ cell counts only towards the counts of its own color.
   generator, puzzle generator and puzzle codes. Builds for
   `wasm32-unknown-unknown`.
 - `crates/endlogic-cli` — the `endlogic` command-line tool.
+- `crates/endlogic-vision` — reads a puzzle from a screenshot of the
+  game's repair screen; `no_std` with `alloc`, depends only on the core,
+  no image libraries.
 - `crates/endlogic-ui` — the trainer itself: state, rules, layout,
   drawing and its own stroke font, independent of any platform; `no_std`
   with `alloc`.

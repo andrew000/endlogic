@@ -1,0 +1,13 @@
+[package]
+name = "endlogic-vision"
+description = "Reads endlogic puzzles from screenshots of the game's repair screen."
+version.workspace = true
+edition.workspace = true
+publish.workspace = true
+license.workspace = true
+
+[dependencies]
+endlogic-core.workspace = true
+
+[lints]
+workspace = true

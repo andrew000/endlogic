@@ -33,6 +33,13 @@ dependencies = [
 ]
 
 [[package]]
+name = "endlogic-vision"
+version = "0.1.0"
+dependencies = [
+ "endlogic-core",
+]
+
+[[package]]
 name = "endlogic-web"
 version = "0.1.0"
 dependencies = [
@@ -48,6 +55,7 @@ version = "0.1.0"
 dependencies = [
  "endlogic-core",
  "endlogic-ui",
+ "endlogic-vision",
  "windows",
 ]
 

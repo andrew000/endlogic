@@ -26,17 +26,17 @@ lint:
 test:
     cargo test --workspace
 
-# Build the core and UI crates for wasm32-unknown-unknown.
+# Build the core, vision and UI crates for wasm32-unknown-unknown.
 check-wasm:
-    cargo build -p endlogic-core -p endlogic-ui --target wasm32-unknown-unknown
+    cargo build -p endlogic-core -p endlogic-vision -p endlogic-ui --target wasm32-unknown-unknown
 
 # Build the web shell for wasm32-unknown-unknown.
 check-web:
     cargo build -p endlogic-web --target wasm32-unknown-unknown
 
-# Build the core and UI crates for a target without the standard library, so any use of std fails.
+# Build the core, vision and UI crates for a target without the standard library, so any use of std fails.
 check-nostd:
-    cargo build -p endlogic-core -p endlogic-ui --target wasm32v1-none
+    cargo build -p endlogic-core -p endlogic-vision -p endlogic-ui --target wasm32v1-none
 
 # Check formatting, lint, test, build without std and build for wasm, in that order.
 ci: fmt-check lint test check-nostd check-wasm check-web

@@ -2,6 +2,8 @@
 //! PNG files back with Windows Imaging.
 #![allow(dead_code)]
 
+pub mod derive;
+
 use std::path::{Path, PathBuf};
 use std::process::Command;
 
