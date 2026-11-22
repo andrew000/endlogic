@@ -31,6 +31,7 @@ use windows::Win32::UI::Input::KeyboardAndMouse::{
     GetKeyState, ReleaseCapture, SetCapture, VK_CONTROL, VK_LWIN, VK_MENU, VK_RWIN, VK_SHIFT,
 };
 use windows::Win32::UI::Input::Pointer::GetPointerType;
+use windows::Win32::UI::Shell::{DragAcceptFiles, HDROP};
 use windows::Win32::UI::WindowsAndMessaging::{
     CS_HREDRAW, CS_VREDRAW, CW_USEDEFAULT, CreateWindowExW, DefWindowProcW, DispatchMessageW,
     GetClientRect, GetMessageW, GetSystemMetrics, HICON, HTCLIENT, IDC_ARROW, IDC_HAND,
@@ -39,12 +40,13 @@ use windows::Win32::UI::WindowsAndMessaging::{
     SM_CXICON, SM_CXSMICON, SM_CYICON, SM_CYSMICON, SPI_GETWORKAREA, SW_SHOW, SWP_NOACTIVATE,
     SWP_NOZORDER, SYSTEM_PARAMETERS_INFO_UPDATE_FLAGS, SetCursor, SetWindowPos, ShowWindow,
     SystemParametersInfoW, TranslateMessage, WINDOW_EX_STYLE, WM_CAPTURECHANGED, WM_DESTROY,
-    WM_DPICHANGED, WM_ERASEBKGND, WM_GETMINMAXINFO, WM_KEYDOWN, WM_LBUTTONDOWN, WM_LBUTTONUP,
-    WM_MOUSEMOVE, WM_PAINT, WM_POINTERCAPTURECHANGED, WM_POINTERDOWN, WM_POINTERUP,
+    WM_DPICHANGED, WM_DROPFILES, WM_ERASEBKGND, WM_GETMINMAXINFO, WM_KEYDOWN, WM_LBUTTONDOWN,
+    WM_LBUTTONUP, WM_MOUSEMOVE, WM_PAINT, WM_POINTERCAPTURECHANGED, WM_POINTERDOWN, WM_POINTERUP,
     WM_POINTERUPDATE, WM_QUIT, WM_SETCURSOR, WM_SIZE, WNDCLASSEXW, WS_OVERLAPPEDWINDOW,
 };
 use windows::core::{BOOL, PCWSTR, Result, w};
 
+use super::image::{self, Clip};
 use super::painter::{D2dPainter, polyline_style};
 use super::system;
 use crate::keys::{self, Modifiers, Press};
@@ -96,6 +98,9 @@ struct Shell {
     /// Counter value of the previous frame while frames run back to back.
     last_frame: Option<i64>,
     tick_rate: i64,
+    /// The app asked to pick a picture; the dialog opens outside the
+    /// message handler.
+    pick: bool,
 }
 
 thread_local! {
@@ -273,15 +278,40 @@ impl Shell {
                     self.cursor = cursor;
                     apply_cursor(cursor);
                 }
+                Effect::PickImage => self.pick = true,
             }
         }
     }
 
+    /// `Ctrl+V`: a picture on the clipboard to read, else a puzzle link.
     fn paste(&mut self) {
-        let parsed = system::read_clipboard(self.hwnd).and_then(|t| link::parse_link(&t));
-        if let Some((kind, code)) = parsed {
-            self.send(Event::CodeChanged(kind, code));
+        match image::clipboard(self.hwnd) {
+            Clip::Picture(pixels) => self.send(picture(pixels)),
+            Clip::Broken => self.send(Event::ImageFailed),
+            Clip::None => {
+                let parsed = system::read_clipboard(self.hwnd).and_then(|t| link::parse_link(&t));
+                if let Some((kind, code)) = parsed {
+                    self.send(Event::CodeChanged(kind, code));
+                }
+            }
         }
+    }
+
+    /// A picture file to read, dropped or picked.
+    fn open_picture(&mut self, path: Option<std::path::PathBuf>) {
+        if let Some(path) = path {
+            let event = image::from_file(&path).map_or(Event::ImageFailed, picture);
+            self.send(event);
+        }
+    }
+}
+
+/// The event for decoded pixels.
+fn picture((width, height, rgba): image::Pixels) -> Event {
+    Event::Image {
+        width,
+        height,
+        rgba,
     }
 }
 
@@ -496,6 +526,10 @@ extern "system" fn window_proc(hwnd: HWND, msg: u32, wparam: WPARAM, lparam: LPA
                 Press::Ignore => default_proc(hwnd, msg, wparam, lparam),
             }
         }
+        WM_DROPFILES => {
+            let path = image::dropped(HDROP(wparam.0 as *mut core::ffi::c_void));
+            handled(with_shell(|s| s.open_picture(path)))
+        }
         WM_SETCURSOR if u32::from(word(lparam.0.cast_unsigned(), 0)) == HTCLIENT => {
             let cursor = with_shell(|s| s.cursor).unwrap_or_default();
             apply_cursor(cursor);
@@ -663,7 +697,10 @@ pub fn run(start: Option<&str>) -> ExitCode {
 }
 
 fn open(start: Option<&str>) -> Result<()> {
+    image::init_com();
     let (hwnd, _) = create_window()?;
+    // SAFETY: our new window takes files dropped on it (WM_DROPFILES).
+    unsafe { DragAcceptFiles(hwnd, true) };
     // SAFETY: a plain query for our window.
     let dpi = unsafe { GetDpiForWindow(hwnd) }.max(96);
     dark_title(hwnd);
@@ -705,6 +742,7 @@ fn open(start: Option<&str>) -> Result<()> {
         pending: true,
         last_frame: None,
         tick_rate: system::tick_rate(),
+        pick: false,
     };
     SHELL.with(|cell| *cell.borrow_mut() = Some(shell));
     with_shell(Shell::run_effects);
@@ -730,6 +768,7 @@ fn message_loop() {
                 dispatch(&msg);
             }
             with_shell(Shell::render);
+            pick_picture();
         } else {
             // SAFETY: as above; blocks until a message arrives.
             let got = unsafe { GetMessageW(&raw mut msg, None, 0, 0) };
@@ -737,8 +776,19 @@ fn message_loop() {
                 return;
             }
             dispatch(&msg);
+            pick_picture();
         }
     }
+}
+
+/// Opens the picture dialog if the app asked for it. The dialog runs its
+/// own message loop, so the shell must not be in use meanwhile.
+fn pick_picture() {
+    let Some(hwnd) = with_shell(|s| std::mem::take(&mut s.pick).then_some(s.hwnd)).flatten() else {
+        return;
+    };
+    let path = image::pick(hwnd);
+    with_shell(|s| s.open_picture(path));
 }
 
 fn dispatch(msg: &MSG) {

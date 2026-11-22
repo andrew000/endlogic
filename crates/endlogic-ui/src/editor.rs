@@ -13,10 +13,13 @@ use endlogic_core::{
     Solution,
 };
 
-use crate::app::{App, Control, Gesture};
+use endlogic_vision::{Doubt, Failure, Image, Place, recognize};
+
+use crate::app::{App, Control, Gesture, Import};
 use crate::layout::{EditLayout, Layout, Mode, to_f32};
 use crate::painter::Rect;
 use crate::shell::{CodeKind, Effect, SETTING_EDITOR};
+use crate::text::Text;
 use crate::theme;
 
 /// Side of the piece editor's grid for a new piece.
@@ -226,6 +229,20 @@ impl Editor {
         }
     }
 
+    /// Whether nothing has been entered: no pieces, locks, dead cells or
+    /// clues above 0, whatever the size.
+    #[must_use]
+    pub fn is_blank(&self) -> bool {
+        self.pieces.is_empty()
+            && self.cells.iter().all(|&c| c == Cell::Free)
+            && self
+                .rows
+                .iter()
+                .chain(&self.cols)
+                .flatten()
+                .all(|&v| v == 0)
+    }
+
     /// The longest side of any piece, at least 1.
     #[must_use]
     pub fn max_piece_side(&self) -> usize {
@@ -348,6 +365,9 @@ pub(crate) struct EditState {
     pub solver: Option<Solver>,
     /// The color new locks and pieces get.
     pub active: Color,
+    /// Places a screenshot reading was not sure about, marked until they
+    /// are changed or the marks are closed.
+    pub doubts: Vec<Doubt>,
 }
 
 /// An editor action from a control.
@@ -398,6 +418,14 @@ pub enum EditControl {
     SolveCancel,
     /// Give the solver more nodes.
     SolveContinue,
+    /// Pick a screenshot to read.
+    Import,
+    /// Let the read puzzle replace the editor's.
+    ReplaceYes,
+    /// Keep the editor's puzzle.
+    ReplaceNo,
+    /// Close the marks of doubtful places.
+    CloseDoubts,
     /// Previous solution.
     SolutionPrev,
     /// Next solution.
@@ -413,6 +441,7 @@ impl EditControl {
                 | EditControl::Clue(_)
                 | EditControl::DraftCell(_)
                 | EditControl::Dismiss
+                | EditControl::CloseDoubts
         )
     }
 }
@@ -482,6 +511,25 @@ impl App {
         diagnose(&self.editor.puzzle()).into_iter().next()
     }
 
+    /// Whether a screenshot is being read.
+    #[must_use]
+    pub fn is_recognizing(&self) -> bool {
+        matches!(self.import, Some(Import::Pending { .. }))
+    }
+
+    /// Whether the editor asks if a puzzle read from a screenshot may
+    /// replace its own.
+    #[must_use]
+    pub fn asks_replace(&self) -> bool {
+        matches!(self.import, Some(Import::Ask(_)))
+    }
+
+    /// The places marked as doubtful after reading a screenshot.
+    #[must_use]
+    pub fn doubts(&self) -> &[Doubt] {
+        &self.edit.doubts
+    }
+
     /// The color new locks and pieces get in the editor.
     #[must_use]
     pub fn active_color(&self) -> Color {
@@ -520,6 +568,87 @@ impl App {
         self.tray_page = 0;
         self.publish_editor();
         self.relayout();
+    }
+
+    /// Opens the editor of the custom tab if it is not open: the custom
+    /// puzzle being played goes back to it, from a level its last puzzle
+    /// comes back. Open overlays close.
+    pub(crate) fn open_custom_editor(&mut self) {
+        if self.custom && self.game.is_some() {
+            self.back_to_editor();
+        } else if !self.is_editing() {
+            let editor = self.editor.clone();
+            self.open_editor(editor);
+        }
+        self.edit.selected = None;
+        self.edit.draft = None;
+    }
+
+    /// Takes a picture to read: the editor opens and shows that it reads.
+    pub(crate) fn receive_image(&mut self, width: usize, height: usize, rgba: Vec<u8>) {
+        self.open_custom_editor();
+        self.toast = None;
+        self.import = Some(Import::Pending {
+            width,
+            height,
+            rgba,
+            shown: false,
+        });
+    }
+
+    /// Reads a waiting picture once "Recognizing…" has been drawn.
+    pub(crate) fn step_import(&mut self) {
+        if !matches!(self.import, Some(Import::Pending { shown: true, .. })) {
+            return;
+        }
+        let Some(Import::Pending {
+            width,
+            height,
+            rgba,
+            ..
+        }) = self.import.take()
+        else {
+            return;
+        };
+        let read = Image::new(width, height, &rgba)
+            .map_or(Err(Failure::Unreadable), |image| recognize(&image));
+        drop(rgba);
+        match read {
+            Ok(read) if self.editor.is_blank() => self.apply_import(read),
+            Ok(read) => self.import = Some(Import::Ask(read)),
+            Err(failure) => {
+                let message = match failure {
+                    Failure::NumbersMode => Text::NumbersMode,
+                    Failure::PiecesOnBoard => Text::PiecesOnBoard,
+                    Failure::Unreadable => Text::Unreadable,
+                    Failure::NotPuzzle | Failure::NoBoard | Failure::NoTray => Text::NotGame,
+                };
+                self.show_toast(message, true);
+            }
+        }
+    }
+
+    /// Puts a read puzzle into the editor, its doubtful places marked.
+    fn apply_import(&mut self, read: endlogic_vision::Recognized) {
+        self.import = None;
+        let editor = Editor::from_puzzle(&read.puzzle);
+        let counts = [
+            editor.width(),
+            editor.height(),
+            editor.pieces().len(),
+            editor.colors().len().max(1),
+        ];
+        self.open_editor(editor);
+        self.edit.doubts = read.doubts;
+        self.show_toast(Text::Recognized, false);
+        if let Some(toast) = &mut self.toast {
+            toast.counts = counts;
+        }
+    }
+
+    /// Forgets the doubt about `place`, which the user has just changed.
+    fn settle_doubt(&mut self, place: Place) {
+        self.edit.doubts.retain(|d| d.place != place);
     }
 
     /// Shows the editor's puzzle in the address and remembers it.
@@ -596,6 +725,17 @@ impl App {
         };
         let ed = |c: EditControl| Control::Edit(c);
         let mut controls = Vec::new();
+        match &self.import {
+            Some(Import::Ask(_)) => {
+                let prompt = e.prompt(self.lang, l.font);
+                return vec![
+                    (ed(EditControl::ReplaceYes), prompt.yes, true),
+                    (ed(EditControl::ReplaceNo), prompt.no, true),
+                ];
+            }
+            Some(Import::Pending { .. }) => return controls,
+            None => {}
+        }
         if let Some(draft) = &self.edit.draft {
             return self.draft_controls(&e, draft);
         }
@@ -633,6 +773,12 @@ impl App {
             (ed(EditControl::Play), e.play, has_pieces),
             (ed(EditControl::Solve), e.solve, has_pieces && !running),
         ]);
+        if !self.under_overlay(e.import) {
+            controls.push((ed(EditControl::Import), e.import, true));
+        }
+        if !self.edit.doubts.is_empty() && !self.under_overlay(e.status) {
+            controls.push((ed(EditControl::CloseDoubts), e.status, true));
+        }
         if let Some(solver) = &self.edit.solver {
             let panel = e.result_panel(self.lang, l.font);
             let many = solver.solutions().len() > 1;
@@ -776,6 +922,7 @@ impl App {
     }
 
     /// Carries out an editor control.
+    #[allow(clippy::too_many_lines)]
     pub(crate) fn edit_action(&mut self, control: EditControl) {
         match control {
             EditControl::Size { width, plus } => {
@@ -786,11 +933,18 @@ impl App {
                 } else {
                     self.editor.resize(w, step(h));
                 }
+                let (w, h) = (self.editor.width, self.editor.height);
+                self.edit.doubts.retain(|d| match d.place {
+                    Place::Clue { row, index, .. } => index < if row { h } else { w },
+                    Place::Cell { row, col } => row < h && col < w,
+                    Place::Piece(_) => true,
+                });
                 self.edited();
             }
             EditControl::Active(color) => self.edit.active = color,
             EditControl::Cell(r, c) => {
                 self.editor.cycle(r, c, self.edit.active);
+                self.settle_doubt(Place::Cell { row: r, col: c });
                 self.edited();
             }
             EditControl::Clue(clue) => self.edit.selected = Some(clue),
@@ -800,6 +954,11 @@ impl App {
                 };
                 self.editor
                     .set_clue(clue.color, clue.row, clue.index, value);
+                self.settle_doubt(Place::Clue {
+                    color: clue.color,
+                    row: clue.row,
+                    index: clue.index,
+                });
                 self.edit.selected = Some(self.next_clue(clue));
                 self.edited();
             }
@@ -823,6 +982,7 @@ impl App {
                 if self.edit.clear_armed.is_some() {
                     self.editor = Editor::empty(self.editor.width, self.editor.height);
                     self.edit.active = Color::DEFAULT;
+                    self.edit.doubts.clear();
                     self.tray_page = 0;
                     self.edited();
                 } else {
@@ -853,6 +1013,14 @@ impl App {
                     solver.state = SolveState::Running;
                 }
             }
+            EditControl::Import => self.effects.push(Effect::PickImage),
+            EditControl::ReplaceYes => {
+                if let Some(Import::Ask(read)) = self.import.take() {
+                    self.apply_import(read);
+                }
+            }
+            EditControl::ReplaceNo => self.import = None,
+            EditControl::CloseDoubts => self.edit.doubts.clear(),
             EditControl::SolutionPrev | EditControl::SolutionNext => {
                 if let Some(solver) = &mut self.edit.solver {
                     let n = solver.solutions().len().max(1);
@@ -891,6 +1059,9 @@ impl App {
                     return;
                 };
                 let piece = Piece::new(draft.color, shape);
+                if let Some(i) = draft.index {
+                    self.settle_doubt(Place::Piece(i));
+                }
                 match draft.index {
                     Some(i) => self.editor.pieces[i] = piece.clone(),
                     None => self.editor.pieces.push(piece.clone()),
@@ -906,6 +1077,15 @@ impl App {
             EditControl::DraftDelete => {
                 if let Some(i) = self.edit.draft.take().and_then(|d| d.index) {
                     self.editor.pieces.remove(i);
+                    // Later pieces move up one place.
+                    self.edit.doubts.retain(|d| d.place != Place::Piece(i));
+                    for d in &mut self.edit.doubts {
+                        if let Place::Piece(k) = &mut d.place
+                            && *k > i
+                        {
+                            *k -= 1;
+                        }
+                    }
                     self.edited();
                 }
             }
@@ -957,6 +1137,8 @@ impl App {
             e.piece
         } else if self.edit.selected.is_some() {
             e.strip
+        } else if self.edit.solver.is_some() || self.asks_replace() {
+            e.result
         } else {
             return false;
         };

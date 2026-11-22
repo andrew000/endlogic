@@ -168,6 +168,19 @@ pub enum Event {
     /// The result of an [`Effect::CopyLink`]: `true` if the link reached
     /// the clipboard.
     CopyFinished(bool),
+    /// A picture to read a puzzle from: pasted, dropped on the window or
+    /// picked after [`Effect::PickImage`]. The UI reads it and lets it go;
+    /// it is kept nowhere.
+    Image {
+        /// Width in pixels.
+        width: usize,
+        /// Height in pixels.
+        height: usize,
+        /// Pixels row by row, four bytes each: red, green, blue, alpha.
+        rgba: Vec<u8>,
+    },
+    /// A picture was offered but could not be decoded.
+    ImageFailed,
 }
 
 /// The mouse cursor the UI wants.
@@ -201,4 +214,8 @@ pub enum Effect {
     },
     /// Change the mouse cursor.
     SetCursor(Cursor),
+    /// Let the user pick a picture (a file, or a photo on a phone), then
+    /// pass it in with [`Event::Image`] or report [`Event::ImageFailed`].
+    /// Nothing is sent if the user cancels.
+    PickImage,
 }

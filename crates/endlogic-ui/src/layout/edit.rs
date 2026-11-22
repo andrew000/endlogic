@@ -60,6 +60,8 @@ pub struct EditLayout {
     pub play: Rect,
     /// Solve button.
     pub solve: Rect,
+    /// The button that reads a puzzle from a screenshot.
+    pub import: Rect,
     /// Where the digit strip opens.
     pub strip: Rect,
     /// Where the piece editor opens.
@@ -93,6 +95,18 @@ pub struct PieceEditor {
     pub duplicate: Rect,
     /// Remove the piece (an existing piece only).
     pub delete: Rect,
+}
+
+/// The question asked before a puzzle read from a screenshot replaces the
+/// one in the editor.
+#[derive(Debug, Clone, Copy, PartialEq)]
+pub struct Prompt {
+    /// The question.
+    pub text: Rect,
+    /// Replace.
+    pub yes: Rect,
+    /// Keep the puzzle in the editor.
+    pub no: Rect,
 }
 
 /// The parts of the solver's answer.
@@ -184,6 +198,7 @@ impl EditLayout {
             ("clear", self.clear),
             ("play", self.play),
             ("solve", self.solve),
+            ("import", self.import),
         ]);
         rects.extend(PALETTE_NAMES.into_iter().zip(self.palette));
         rects
@@ -200,6 +215,7 @@ impl EditLayout {
             ("clear", self.clear),
             ("play", self.play),
             ("solve", self.solve),
+            ("import", self.import),
             ("teal", self.palette[0]),
             ("orange", self.palette[1]),
             ("violet", self.palette[2]),
@@ -312,6 +328,36 @@ impl EditLayout {
             done: Rect::new(rest.x + bw + PAD, row1, bw, MIN_TARGET),
             duplicate: Rect::new(rest.x, row2, bw, MIN_TARGET),
             delete: Rect::new(rest.x + bw + PAD, row2, bw, MIN_TARGET),
+        }
+    }
+
+    /// The question before a read puzzle replaces the editor's, in the
+    /// answer's place: text on the left and the buttons on the right when
+    /// there is room, else text above the buttons.
+    #[must_use]
+    pub fn prompt(&self, lang: crate::text::Lang, font: f32) -> Prompt {
+        let area = self.result.inset(PAD);
+        let bw = button_width(text(lang, Text::Yes), font)
+            .max(button_width(text(lang, Text::No), font))
+            .min((area.w - PAD) / 2.0);
+        if area.w >= 360.0 {
+            let y = area.center().y - MIN_TARGET / 2.0;
+            let no = Rect::new(area.right() - bw, y, bw, MIN_TARGET);
+            let yes = Rect::new(no.x - PAD - bw, y, bw, MIN_TARGET);
+            Prompt {
+                text: Rect::new(area.x, area.y, yes.x - PAD - area.x, area.h),
+                yes,
+                no,
+            }
+        } else {
+            let y = area.bottom() - MIN_TARGET;
+            let no = Rect::new(area.right() - bw, y, bw, MIN_TARGET);
+            let yes = Rect::new(no.x - PAD - bw, y, bw, MIN_TARGET);
+            Prompt {
+                text: Rect::new(area.x, area.y, area.w, (y - PAD - area.y).max(1.0)),
+                yes,
+                no,
+            }
         }
     }
 
@@ -510,21 +556,41 @@ pub(super) fn tall(input: &LayoutInput) -> Layout {
     let tabs =
         core::array::from_fn(|k| Rect::new(x0 + tab_w * to_f32(k), tabs_y, tab_w, TALL_TABS));
 
-    // The board size under the tabs.
+    // The board size under the tabs, and the screenshot button beside it:
+    // the size as `− 6 + × − 6 +` then. Where even that leaves no room,
+    // the sizes keep their labels and the button gets a row of its own
+    // above the bottom row.
     let size_y = tabs_y + TALL_TABS + gap;
-    let half = (width - gap) / 2.0;
-    // The number gives up a little room when a label needs it.
-    let label_w = [Text::Width, Text::Height]
-        .into_iter()
-        .map(|t| text_width(text(input.lang, t), Font::new(font * 0.9, false)) + 4.0)
-        .fold(0.0, f32::max);
-    let value_w = (half - 2.0 * MIN_TARGET - label_w).clamp(20.0, 28.0);
-    let stepper = |x: f32| Stepper::at(x, size_y, half, MIN_TARGET, MIN_TARGET, value_w);
-    let width_stepper = stepper(x0);
-    let height_stepper = stepper(x0 + half + gap);
+    let bottom_y = safe.bottom() - TALL_BOTTOM - TALL_BUTTON;
+    // The label may shrink a little to leave the steppers room.
+    let label = text(input.lang, Text::Import);
+    let import_w = button_width(label, font)
+        .min((width - gap - COMPACT_STEPPERS).max(button_width(label, 12.0)));
+    let row_w = width - gap - import_w;
+    let (width_stepper, height_stepper, times, import) = if row_w >= COMPACT_STEPPERS {
+        let (w, h, times) = stepper_row(x0, row_w, size_y);
+        let import = Rect::new(x1 - import_w, size_y, import_w, MIN_TARGET);
+        (w, h, Some(times), import)
+    } else {
+        let half = (width - gap) / 2.0;
+        // The number gives up a little room when a label needs it.
+        let label_w = [Text::Width, Text::Height]
+            .into_iter()
+            .map(|t| text_width(text(input.lang, t), Font::new(font * 0.9, false)) + 4.0)
+            .fold(0.0, f32::max);
+        let value_w = (half - 2.0 * MIN_TARGET - label_w).clamp(20.0, 28.0);
+        let stepper = |x: f32| Stepper::at(x, size_y, half, MIN_TARGET, MIN_TARGET, value_w);
+        let import = Rect::new(
+            x0,
+            bottom_y - gap - TALL_BUTTON,
+            import_w.min(width),
+            TALL_BUTTON,
+        );
+        (stepper(x0), stepper(x0 + half + gap), None, import)
+    };
+    let above_bottom = if times.is_some() { bottom_y } else { import.y };
 
     // Bottom row: clear, play, solve.
-    let bottom_y = safe.bottom() - TALL_BOTTOM - TALL_BUTTON;
     let clear = Rect::new(x0, bottom_y, clear_width(input, font), TALL_BUTTON);
     let solve_w = button_width(text(input.lang, Text::Solve), font);
     let solve = Rect::new(x1 - solve_w, bottom_y, solve_w, TALL_BUTTON);
@@ -538,7 +604,7 @@ pub(super) fn tall(input: &LayoutInput) -> Layout {
     // Under the board: the status line, and the color marks on its right
     // (a phone has no room for another row of controls).
     let region_top = size_y + MIN_TARGET + gap;
-    let region = (bottom_y - gap - region_top).max(0.0);
+    let region = (above_bottom - gap - region_top).max(0.0);
     let (fit, cell) = tall_tray_with(input, width, region, gap, STATUS_H + gap, PANEL_MIN);
     let (_, block_h) = board_size(input, cell);
     let panel_h = fit.height(gap).max(PANEL_MIN);
@@ -556,11 +622,12 @@ pub(super) fn tall(input: &LayoutInput) -> Layout {
         piece_font: (input.lang, font),
         width: width_stepper,
         height: height_stepper,
-        times: None,
+        times,
         status,
         clear,
         play,
         solve,
+        import,
         strip: tray,
         piece: tray,
         result: Rect::new(x0, tray.center().y - result_h / 2.0, width, result_h),
@@ -634,6 +701,7 @@ struct LeftPanel {
     width: Stepper,
     height: Stepper,
     palette: [Rect; 4],
+    import: Rect,
     status: Rect,
 }
 
@@ -652,9 +720,10 @@ fn left_panel(m: &Metrics, x0: f32, top: f32, side: f32) -> LeftPanel {
         inner_w,
         MIN_TARGET,
     ));
+    let import = Rect::new(inner_x, palette[0].bottom() + m.gap, inner_w, MIN_TARGET);
     let status = Rect::new(
         inner_x,
-        palette[0].bottom() + m.gap,
+        import.bottom() + m.gap,
         inner_w,
         m.font * 0.9 * 1.35 * 4.0,
     );
@@ -665,6 +734,7 @@ fn left_panel(m: &Metrics, x0: f32, top: f32, side: f32) -> LeftPanel {
         width,
         height,
         palette,
+        import,
         status,
     }
 }
@@ -738,6 +808,7 @@ pub(super) fn wide(input: &LayoutInput) -> Layout {
         clear,
         play,
         solve,
+        import: left.import,
         strip: under,
         piece: column,
         result,
@@ -774,6 +845,9 @@ pub(super) fn wide(input: &LayoutInput) -> Layout {
 }
 
 // ---- low wide ----
+
+/// Least width of [`stepper_row`] (with its narrower buttons).
+const COMPACT_STEPPERS: f32 = 2.0 * (2.0 * 34.0 + 16.0) + 12.0;
 
 /// Two steppers in one row with a `×` between them; where the column is
 /// narrow their buttons are narrower than a target, the zones still apart.
@@ -871,6 +945,7 @@ pub(super) fn low_wide(input: &LayoutInput) -> Layout {
         clear,
         play,
         solve,
+        import: top.colors,
         strip: column,
         piece: column,
         result: {

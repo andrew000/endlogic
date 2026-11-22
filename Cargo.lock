@@ -30,6 +30,7 @@ name = "endlogic-ui"
 version = "0.1.0"
 dependencies = [
  "endlogic-core",
+ "endlogic-vision",
 ]
 
 [[package]]

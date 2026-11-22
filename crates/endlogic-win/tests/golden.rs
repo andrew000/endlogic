@@ -33,6 +33,7 @@ const WLA_1: &str = "AVUgADzcizcihMohMogAABABANEeiPRHhDeM_mMGQ_B3zw";
 const WLA_2: &str = "AVUgADUKJUKJoxIoxIgMDAwMDHCPRHhD5EeiPRHhDyDLZQ";
 
 /// Name, size and the other arguments of every golden picture.
+#[allow(clippy::too_many_lines)]
 fn scenes() -> Vec<(&'static str, &'static str, Vec<String>)> {
     let web = "https://andrew000.github.io/endlogic/";
     let code = |c: &str| vec!["--code".to_owned(), c.to_owned()];
@@ -122,7 +123,80 @@ fn scenes() -> Vec<(&'static str, &'static str, Vec<String>)> {
             "390x844",
             with(code(WLA_2), &["--touch", "--lang", "uk"]),
         ),
+        // A screenshot of the game, drawn in memory, pasted into the editor.
+        (
+            "editor-import-prompt-1366x768-en",
+            "1366x768",
+            with(
+                code(&format!("{web}#e={WLN}")),
+                &["--image", &picture("wla980-2", false)],
+            ),
+        ),
+        (
+            "editor-import-390x844-touch-uk",
+            "390x844",
+            with(
+                code(&format!("{web}#e={BLANK}")),
+                &[
+                    "--touch",
+                    "--lang",
+                    "uk",
+                    "--image",
+                    &picture("wla980-2", false),
+                ],
+            ),
+        ),
+        (
+            "editor-doubts-1366x768-en",
+            "1366x768",
+            with(
+                code(&format!("{web}#e={BLANK}")),
+                &["--image", &picture("ambiguous", true)],
+            ),
+        ),
     ]
+}
+
+/// A blank 5×5 editor puzzle.
+const BLANK: &str = "AUQAEAAAAAAAAAAAweA";
+
+/// A picture of the game's screen with a sample puzzle (or, for
+/// `ambiguous`, two flat pieces whose size only the sums tell), drawn in
+/// memory and written to a scratch file; its path.
+fn picture(name: &str, flat: bool) -> String {
+    let puzzle = if name == "ambiguous" {
+        endlogic_core::format::parse(
+            "endlogic 1
+grid
+....
+....
+....
+....
+rows 2 2 1 0
+cols 2 2 1 0
+piece
+##
+##
+piece
+#
+",
+        )
+        .unwrap()
+    } else {
+        let path =
+            PathBuf::from(env!("CARGO_MANIFEST_DIR")).join(format!("../../puzzles/{name}.txt"));
+        endlogic_core::format::parse(&std::fs::read_to_string(path).unwrap()).unwrap()
+    };
+    let mut scene = endlogic_vision::synth::Scene::new(puzzle, 1280, 720);
+    scene.shaded = !flat;
+    let file = support::scratch(&format!("{name}-picture.png"));
+    support::encode(
+        &file,
+        scene.width,
+        scene.height,
+        &endlogic_vision::synth::draw(&scene),
+    );
+    file.to_string_lossy().into_owned()
 }
 
 fn golden_path(name: &str) -> PathBuf {

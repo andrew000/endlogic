@@ -21,6 +21,7 @@ use crate::layout::{EditLayout, Stepper, to_f32};
 use crate::painter::{Point, Rect, Rgba};
 use crate::text::{Text, problem_line, problem_text, solution_of, text};
 use crate::theme::{self, palette};
+use endlogic_vision::Place;
 
 pub(super) fn draw(app: &App, p: &mut Ink<'_>) {
     let l = &app.layout;
@@ -31,6 +32,15 @@ pub(super) fn draw(app: &App, p: &mut Ink<'_>) {
     draw_clues(app, editor, p);
     draw_solution(app, p);
     draw_status(app, &e, p);
+    if app.asks_replace() {
+        if !e.result.intersects(l.tray) {
+            draw_tray(app, editor, p);
+        }
+        draw_controls(app, &e, editor, p);
+        draw_doubts(app, p, false);
+        draw_prompt(app, &e, p);
+        return;
+    }
     let overlay = if app.draft().is_some() {
         Some(e.piece)
     } else if app.selected_clue().is_some() {
@@ -47,11 +57,59 @@ pub(super) fn draw(app: &App, p: &mut Ink<'_>) {
         draw_answer(app, &e, p);
     }
     draw_controls(app, &e, editor, p);
+    let tray_shown = overlay.is_none_or(|o| !o.intersects(l.tray)) && !answer_on_tray;
+    draw_doubts(app, p, tray_shown);
     if let Some(draft) = app.draft() {
         draw_piece_editor(app, &e, draft, p);
     } else if let Some(clue) = app.selected_clue() {
         draw_strip(app, &e, editor, clue, p);
     }
+}
+
+/// Yellow outlines around the places a screenshot reading is not sure
+/// about: clue fields, cells, and (when the tray is on screen) cards.
+fn draw_doubts(app: &App, p: &mut Ink<'_>, tray: bool) {
+    let l = &app.layout;
+    let fields = app.clue_fields();
+    let seam = (l.cell * 0.03).max(1.0);
+    for doubt in app.doubts() {
+        let rect = match doubt.place {
+            Place::Clue { color, row, index } => fields
+                .iter()
+                .find(|(c, _)| c.color == color && c.row == row && c.index == index)
+                .map(|&(_, area)| Rect::centered(area.center(), area.w * 0.9, area.h * 0.9)),
+            Place::Cell { row, col } => Some(l.cell_rect(row, col).inset(seam / 2.0)),
+            Place::Piece(i) => app.card_of(i).filter(|_| tray),
+        };
+        if let Some(rect) = rect
+            && !app.under_overlay(rect)
+        {
+            p.stroke_rect(rect.inset(-1.0), 4.0, 2.0, theme::MARKER);
+        }
+    }
+}
+
+/// "Replace the current puzzle?" with Yes and No, in the answer's place.
+fn draw_prompt(app: &App, e: &EditLayout, p: &mut Ink<'_>) {
+    let lang = app.lang;
+    let font = app.layout.font;
+    let parts = e.prompt(lang, font);
+    panel(p, e.result);
+    block(
+        p,
+        text(lang, Text::Replace),
+        Rect::new(
+            parts.text.x,
+            parts.text.center().y - font * 0.65,
+            parts.text.w,
+            parts.text.h.min(font * 2.6),
+        ),
+        font,
+        theme::TEXT,
+        Align::Left,
+    );
+    button(p, parts.yes, text(lang, Text::Yes), Style::Primary, font);
+    button(p, parts.no, text(lang, Text::No), Style::Normal, font);
 }
 
 fn panel(p: &mut Ink<'_>, rect: Rect) {
@@ -188,14 +246,37 @@ fn block(p: &mut Ink<'_>, text: &str, rect: Rect, size: f32, color: Rgba, align:
     }
 }
 
+/// The status line: the marks to check after reading a screenshot (a tap
+/// closes them), and the puzzle's first problem.
 fn draw_status(app: &App, e: &EditLayout, p: &mut Ink<'_>) {
-    if let Some(problem) = app.first_problem() {
-        let font = app.layout.font * 0.9;
+    let font = app.layout.font * 0.9;
+    let problem = app.first_problem();
+    let mut area = e.status;
+    if !app.doubts().is_empty() {
+        let line = format!("{} ×", text(app.lang, Text::CheckDoubts));
+        let lines = if problem.is_some() {
+            (area.h / 2.0).max(font * 1.3)
+        } else {
+            area.h
+        };
+        block(
+            p,
+            &line,
+            Rect::new(area.x, area.y, area.w, lines),
+            font,
+            theme::MARKER,
+            Align::Left,
+        );
+        area = Rect::new(area.x, area.y + lines, area.w, (area.h - lines).max(0.0));
+    }
+    if let Some(problem) = problem
+        && area.h > 0.0
+    {
         let colored = app.editor().is_some_and(|ed| ed.colors().len() > 1);
         block(
             p,
             &problem_line(app.lang, &problem, colored),
-            e.status,
+            area,
             font,
             theme::ERROR,
             Align::Left,
@@ -358,6 +439,9 @@ fn draw_controls(app: &App, e: &EditLayout, editor: &Editor, p: &mut Ink<'_>) {
     } else {
         Text::Clear
     };
+    if !app.under_overlay(e.import) {
+        tight_button(p, e.import, text(lang, Text::Import), font);
+    }
     for (rect, label, style) in [
         (e.clear, clear, Style::Normal),
         (e.play, Text::Play, enabled(has_pieces)),
@@ -375,6 +459,34 @@ fn draw_controls(app: &App, e: &EditLayout, editor: &Editor, p: &mut Ink<'_>) {
             button(p, rect, text(lang, label), style, font);
         }
     }
+}
+
+/// A button whose label shrinks a little, or takes two lines, where the
+/// button had to give up room.
+fn tight_button(p: &mut Ink<'_>, rect: Rect, label: &str, font: f32) {
+    let size = fit(p, label, text_font(font, true), rect.w - font * 0.8).size;
+    if size >= font * 0.85 || !label.contains(' ') {
+        button(p, rect, label, Style::Normal, size);
+        return;
+    }
+    button(p, rect, "", Style::Normal, font);
+    let half = label.len() / 2;
+    let split = label
+        .char_indices()
+        .filter(|&(_, c)| c == ' ')
+        .map(|(i, _)| i)
+        .min_by_key(|&i| i.abs_diff(half))
+        .unwrap_or(half);
+    let (first, second) = label.split_at(split);
+    let (first, second) = (first.trim(), second.trim());
+    let base = text_font((rect.h * 0.32).min(font), true);
+    let room = rect.w - font * 0.6;
+    let shrunk = fit(p, first, fit(p, second, base, room), room);
+    let dy = shrunk.size * 0.6;
+    let mid = rect.center();
+    let at = |y: f32| Point::new(mid.x, y);
+    p.text(first, at(mid.y - dy), shrunk, Align::Center, theme::TEXT);
+    p.text(second, at(mid.y + dy), shrunk, Align::Center, theme::TEXT);
 }
 
 fn draw_piece_editor(app: &App, e: &EditLayout, draft: &Draft, p: &mut Ink<'_>) {

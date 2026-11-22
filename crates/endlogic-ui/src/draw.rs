@@ -940,6 +940,17 @@ fn pill(p: &mut Ink<'_>, center: Point, label: &str, font: Font, stroke: Rgba, a
 
 fn draw_overlays(app: &App, p: &mut Ink<'_>) {
     let l = &app.layout;
+    if app.is_recognizing() {
+        p.fill_rect(l.board_block(), 6.0, theme::BACKGROUND.alpha(0.6));
+        pill(
+            p,
+            l.frame.center(),
+            text(app.lang, Text::Recognizing),
+            text_font(l.font, true),
+            theme::ACCENT,
+            1.0,
+        );
+    }
     if app.is_generating() {
         p.fill_rect(l.board_block(), 6.0, theme::BACKGROUND.alpha(0.6));
         let label = text(app.lang, Text::Generating);
@@ -1013,16 +1024,59 @@ fn draw_overlays(app: &App, p: &mut Ink<'_>) {
             l.font,
         );
     }
-    if let Some(toast) = app.toast {
-        let remaining = theme::TOAST_TIME - toast.elapsed;
-        let alpha = (remaining / 0.3).clamp(0.0, 1.0) * (toast.elapsed / 0.12).clamp(0.0, 1.0);
-        let stroke = if toast.error {
-            theme::ERROR
-        } else {
-            theme::ACCENT
-        };
-        let label = text(app.lang, toast.text);
-        let font = fit(p, label, text_font(l.font * 0.95, true), app.width * 0.8);
-        pill(p, l.notice, label, font, stroke, alpha);
+    draw_toast(app, p);
+}
+
+/// The toast, on one line or, when too long, two.
+fn draw_toast(app: &App, p: &mut Ink<'_>) {
+    let l = &app.layout;
+    let Some(toast) = app.toast else {
+        return;
+    };
+    let remaining = theme::TOAST_TIME - toast.elapsed;
+    let alpha = (remaining / 0.3).clamp(0.0, 1.0) * (toast.elapsed / 0.12).clamp(0.0, 1.0);
+    let stroke = if toast.error {
+        theme::ERROR
+    } else {
+        theme::ACCENT
+    };
+    let label = app.toast_label().unwrap_or_default();
+    let font = text_font(l.font * 0.95, true);
+    let room = app.width * 0.8;
+    if p.text_width(&label, font) <= room {
+        pill(p, l.notice, &label, font, stroke, alpha);
+    } else {
+        // Two lines, split at the space nearest the middle.
+        let half = label.len() / 2;
+        let split = label
+            .char_indices()
+            .filter(|&(_, c)| c == ' ')
+            .map(|(i, _)| i)
+            .min_by_key(|&i| i.abs_diff(half))
+            .unwrap_or(half);
+        let (first, second) = label.split_at(split);
+        let (first, second) = (first.trim(), second.trim());
+        let font = fit(p, first, fit(p, second, font, room), room);
+        let wide = p.text_width(first, font).max(p.text_width(second, font)) + font.size * 2.4;
+        let rect = Rect::centered(l.notice, wide, font.size * 3.9);
+        let radius = font.size * 1.3;
+        p.fill_rect(rect, radius, theme::PANEL.alpha(0.96 * alpha));
+        p.stroke_rect(rect.inset(0.5), radius, 1.5, stroke.alpha(alpha));
+        let dy = font.size * 0.65;
+        let color = theme::TEXT.alpha(alpha);
+        p.text(
+            first,
+            Point::new(l.notice.x, l.notice.y - dy),
+            font,
+            Align::Center,
+            color,
+        );
+        p.text(
+            second,
+            Point::new(l.notice.x, l.notice.y + dy),
+            font,
+            Align::Center,
+            color,
+        );
     }
 }

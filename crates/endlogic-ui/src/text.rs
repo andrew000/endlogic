@@ -147,10 +147,35 @@ pub enum Text {
     DisconnectedPiece,
     /// The puzzle has no pieces.
     NoPieces,
+    /// Reads a puzzle from a screenshot of the game.
+    Import,
+    /// While a screenshot is read.
+    Recognizing,
+    /// Toast after a screenshot was read; see [`recognized`].
+    Recognized,
+    /// Asks before a read puzzle replaces the one in the editor.
+    Replace,
+    /// Yes.
+    Yes,
+    /// No.
+    No,
+    /// The picture is not the game's repair screen.
+    NotGame,
+    /// The game shows numbers instead of ticks.
+    NumbersMode,
+    /// Some pieces are on the grid already.
+    PiecesOnBoard,
+    /// The picture could not be read.
+    Unreadable,
+    /// Places the reading is not sure about are marked.
+    CheckDoubts,
+    /// Shown in an empty editor next to the board size.
+    SizeFirst,
 }
 
 /// The text for `key` in `lang`.
 #[must_use]
+#[allow(clippy::too_many_lines)]
 pub const fn text(lang: Lang, key: Text) -> &'static str {
     match lang {
         Lang::En => match key {
@@ -192,6 +217,18 @@ pub const fn text(lang: Lang, key: Text) -> &'static str {
             Text::EmptyPiece => "Add at least one cell",
             Text::DisconnectedPiece => "Cells must be connected",
             Text::NoPieces => "Add a piece",
+            Text::Import => "From screenshot",
+            Text::Recognizing => "Recognizing…",
+            Text::Recognized => "Recognized",
+            Text::Replace => "Replace the current puzzle?",
+            Text::Yes => "Yes",
+            Text::No => "No",
+            Text::NotGame => "This doesn't look like the repair puzzle screen",
+            Text::NumbersMode => "Switch the game to Grid mode and try again",
+            Text::PiecesOnBoard => "Return all pieces to the tray and try again",
+            Text::Unreadable => "Couldn't read the image",
+            Text::CheckDoubts => "Check the highlighted spots",
+            Text::SizeFirst => "Set the board size first",
         },
         Lang::Ua => match key {
             Text::Subtitle => "Розмістіть компоненти на платі, щоб відремонтувати",
@@ -232,6 +269,18 @@ pub const fn text(lang: Lang, key: Text) -> &'static str {
             Text::EmptyPiece => "Додайте хоча б одну клітинку",
             Text::DisconnectedPiece => "Клітинки мають бути з'єднані",
             Text::NoPieces => "Додайте фігуру",
+            Text::Import => "Зі скріна",
+            Text::Recognizing => "Розпізнаю…",
+            Text::Recognized => "Розпізнано",
+            Text::Replace => "Замінити поточну головоломку?",
+            Text::Yes => "Так",
+            Text::No => "Ні",
+            Text::NotGame => "Це не схоже на екран головоломки",
+            Text::NumbersMode => "Перемкніть гру в режим «Сітка» і спробуйте ще раз",
+            Text::PiecesOnBoard => "Поверніть усі фігури в лоток і спробуйте ще раз",
+            Text::Unreadable => "Не вдалося прочитати зображення",
+            Text::CheckDoubts => "Перевірте підсвічені місця",
+            Text::SizeFirst => "Спершу задайте розмір поля",
         },
     }
 }
@@ -248,6 +297,25 @@ pub const fn difficulty_label(lang: Lang, difficulty: Difficulty) -> &'static st
         (Lang::Ua, Difficulty::Normal) => "НОРМА",
         (Lang::Ua, Difficulty::Hard) => "ВАЖКО",
         (Lang::Ua, Difficulty::Expert) => "ЕКСПЕРТ",
+    }
+}
+
+/// The toast after reading a screenshot: `Recognized: 6×6, 7 pieces, 2
+/// colors`.
+#[must_use]
+pub fn recognized(lang: Lang, width: usize, height: usize, pieces: usize, colors: usize) -> String {
+    match lang {
+        Lang::En => {
+            let s = |n: usize| if n == 1 { "" } else { "s" };
+            format!(
+                "Recognized: {width}×{height}, {pieces} piece{}, {colors} color{}",
+                s(pieces),
+                s(colors)
+            )
+        }
+        Lang::Ua => {
+            format!("Розпізнано: {width}×{height}, фігур: {pieces}, кольорів: {colors}")
+        }
     }
 }
 

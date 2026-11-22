@@ -35,7 +35,8 @@ pub const DEAD_HATCH: Rgba = Rgba::hex(0x5E_6160);
 pub const DEAD_ICON: Rgba = Rgba::hex(0x7A_7D7C);
 /// Errors and over-filled lines.
 pub const ERROR: Rgba = Rgba::hex(0xFF_4D5E);
-/// The yellow marker next to the puzzle id.
+/// The yellow marker next to the puzzle id; also the outline of places a
+/// screenshot reading is not sure about.
 pub const MARKER: Rgba = Rgba::hex(0xFF_D51F);
 /// Main text.
 pub const TEXT: Rgba = Rgba::hex(0xE6_ECEA);

@@ -8,6 +8,7 @@ license.workspace = true
 
 [dependencies]
 endlogic-core.workspace = true
+endlogic-vision.workspace = true
 
 [lints]
 workspace = true

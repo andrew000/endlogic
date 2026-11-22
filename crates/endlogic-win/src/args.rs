@@ -34,13 +34,15 @@ pub struct Shot {
     pub scale: u32,
     /// Draw the font sample instead of the app.
     pub font_sample: bool,
+    /// A picture to import, as if pasted.
+    pub image: Option<PathBuf>,
 }
 
 /// Largest side of a screenshot.
 const MAX_SIDE: u32 = 8192;
 
 /// The usage line of the screenshot mode.
-pub const USAGE: &str = "endlogic-win [LINK] | endlogic-win --screenshot <FILE.png> --size <W>x<H> [--code <LINK>] [--lang en|uk] [--touch] [--scale 1|2|3] [--font-sample]";
+pub const USAGE: &str = "endlogic-win [LINK] | endlogic-win --screenshot <FILE.png> --size <W>x<H> [--code <LINK>] [--lang en|uk] [--touch] [--scale 1|2|3] [--font-sample] [--image <FILE>]";
 
 /// Parses the arguments after the program name.
 ///
@@ -64,6 +66,7 @@ pub fn parse(args: &[String]) -> Result<Command, String> {
     let mut touch = false;
     let mut scale = 1;
     let mut font_sample = false;
+    let mut image = None;
     let mut it = args.iter();
     while let Some(arg) = it.next() {
         let mut value = |name: &str| {
@@ -92,6 +95,7 @@ pub fn parse(args: &[String]) -> Result<Command, String> {
                 };
             }
             "--font-sample" => font_sample = true,
+            "--image" => image = Some(PathBuf::from(value("--image")?)),
             other => return Err(format!("unexpected argument {other}")),
         }
     }
@@ -109,6 +113,7 @@ pub fn parse(args: &[String]) -> Result<Command, String> {
         touch,
         scale,
         font_sample,
+        image,
     }))
 }
 
@@ -166,6 +171,7 @@ mod tests {
                 touch: true,
                 scale: 1,
                 font_sample: false,
+                image: None,
             }))
         );
         let sample = parse(&args(&[
@@ -182,6 +188,7 @@ mod tests {
             Ok(Command::Screenshot(Shot {
                 scale: 2,
                 font_sample: true,
+                image: None,
                 ..
             }))
         ));

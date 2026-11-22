@@ -24,6 +24,7 @@ use windows::Win32::System::Com::{
 };
 use windows::core::{HSTRING, Result};
 
+use super::image;
 use super::painter::{D2dPainter, polyline_style};
 use crate::args::Shot;
 use crate::link;
@@ -137,6 +138,17 @@ fn draw(shot: &Shot, code: Option<(endlogic_ui::CodeKind, String)>) -> Result<()
         touch: shot.touch,
         budgets: Budgets::default(),
     });
+    if let Some(path) = &shot.image {
+        let event =
+            image::from_file(path).map_or(endlogic_ui::Event::ImageFailed, |(w, h, rgba)| {
+                endlogic_ui::Event::Image {
+                    width: w,
+                    height: h,
+                    rgba,
+                }
+            });
+        app.handle(event);
+    }
     for _ in 0..MAX_FRAMES {
         if !app.frame(STEP, &mut Blank) {
             break;

@@ -1,6 +1,5 @@
 //! Puzzle links: reading one from pasted text and making a shareable one.
 
-use endlogic_core::code::decode;
 use endlogic_ui::CodeKind;
 
 /// The web page that opens shared links.
@@ -21,28 +20,7 @@ pub fn share_link(kind: CodeKind, code: &str) -> String {
     format!("{WEB_ADDRESS}#{}={code}", key(kind))
 }
 
-/// Reads a puzzle from pasted or passed text: a full link with a `p=`, `e=`
-/// or `c=` fragment, the fragment alone (with or without `#`), or a bare
-/// code, which means a puzzle to play. Returns `None` for anything else,
-/// including a code that does not decode to a puzzle.
-#[must_use]
-pub fn parse_link(text: &str) -> Option<(CodeKind, String)> {
-    let text = text.trim();
-    let fragment = text.rsplit_once('#').map_or(text, |(_, f)| f);
-    let (kind, code) = match fragment.split_once('=') {
-        Some((k, code)) => {
-            let kind = [CodeKind::Play, CodeKind::Edit, CodeKind::Custom]
-                .into_iter()
-                .find(|&kind| k.len() == 1 && k.starts_with(key(kind)))?;
-            (kind, code)
-        }
-        // A bare code only when the text is nothing but the code.
-        None if fragment == text => (CodeKind::Play, text),
-        None => return None,
-    };
-    decode(code).ok()?;
-    Some((kind, code.to_owned()))
-}
+pub use endlogic_ui::parse_link;
 
 #[cfg(test)]
 mod tests {

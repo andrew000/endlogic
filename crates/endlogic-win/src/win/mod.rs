@@ -2,6 +2,7 @@
 //! each block is as small as it can be and says why it is sound.
 #![allow(unsafe_code)]
 
+mod image;
 mod painter;
 mod shot;
 mod system;

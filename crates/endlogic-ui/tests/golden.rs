@@ -21,9 +21,10 @@ use endlogic_core::format::parse;
 use endlogic_core::solver::{DEFAULT_NODE_BUDGET, search};
 use endlogic_core::{Color, Puzzle, Solution};
 use endlogic_ui::{
-    App, CodeKind, Config, Event, Key, Painter, Point, PointerKind, Rect, Rgba, SETTING_COLORS,
-    SETTING_COUNTERS, SETTING_DIFFICULTY, SETTING_LANG,
+    App, CodeKind, Config, Editor, Event, Key, Painter, Point, PointerKind, Rect, Rgba,
+    SETTING_COLORS, SETTING_COUNTERS, SETTING_DIFFICULTY, SETTING_LANG,
 };
+use endlogic_vision::synth::{self, Scene};
 
 /// Generated puzzles from the solver's fixed list in `endlogic-core`.
 const HARD_00: &str = "AWYAGyOW-e1AAGEQjEDiABRHRJ4j5JMj8yDgzbA";
@@ -477,6 +478,7 @@ fn scenes() -> Vec<(String, Writer)> {
     }
     out.extend(play_scenes());
     out.extend(editor_scenes());
+    out.extend(import_scenes());
     out.extend(colored_scenes());
     out
 }
@@ -665,6 +667,67 @@ fn editor_scenes() -> Vec<(String, Writer)> {
             format!("custom play wln006-2 {size} {lang}"),
             rest(&mut app),
         ));
+    }
+    out
+}
+
+/// A screenshot read: while reading, the question before replacing a
+/// puzzle, doubtful places, a failure. The pictures are drawn here.
+fn import_scenes() -> Vec<(String, Writer)> {
+    let mut out: Vec<(String, Writer)> = Vec::new();
+    let wln = sample("wln006-2.txt");
+    let wla = sample("wla980-1.txt");
+    let picture = |puzzle: &Puzzle, flat: bool| {
+        let mut scene = Scene::new(puzzle.clone(), 1280, 720);
+        scene.shaded = !flat;
+        Event::Image {
+            width: scene.width,
+            height: scene.height,
+            rgba: synth::draw(&scene),
+        }
+    };
+    let ambiguous = parse(
+        "endlogic 1
+grid
+....
+....
+....
+....
+rows 2 2 1 0
+cols 2 2 1 0
+piece
+##
+##
+piece
+#
+",
+    )
+    .unwrap();
+    let blank = Editor::default().puzzle();
+    let nothing = Event::Image {
+        width: 320,
+        height: 200,
+        rgba: vec![40; 320 * 200 * 4],
+    };
+    for (size, w, h, lang) in [
+        ("1366x768", 1366.0, 768.0, "en"),
+        ("390x844", 390.0, 844.0, "ua"),
+        ("844x390", 844.0, 390.0, "en"),
+    ] {
+        let mut app = with_code(CodeKind::Edit, &blank, w, h, lang);
+        app.handle(picture(&wla, false));
+        out.push((format!("editor recognizing {size}"), one(&mut app, 0.016)));
+        let mut app = with_code(CodeKind::Edit, &wln, w, h, lang);
+        app.handle(picture(&sample("wla980-2.txt"), false));
+        out.push((format!("editor replace prompt {size}"), rest(&mut app)));
+        let mut app = with_code(CodeKind::Edit, &blank, w, h, lang);
+        app.handle(picture(&ambiguous, true));
+        out.push((format!("editor doubts {size}"), rest(&mut app)));
+        let mut app = with_code(CodeKind::Edit, &blank, w, h, lang);
+        app.handle(nothing.clone());
+        one(&mut app, 0.016);
+        one(&mut app, 0.016);
+        out.push((format!("editor failure {size}"), one(&mut app, 0.5)));
     }
     out
 }

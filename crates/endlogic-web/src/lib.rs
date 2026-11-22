@@ -4,6 +4,10 @@
 //! implements its [`Painter`] on a Canvas 2D context, forwards DOM events,
 //! carries out the effects the app asks for and runs the frame loop, which
 //! sleeps whenever the app needs no frames.
+//!
+//! A screenshot to import arrives by pasting, by dropping a file on the
+//! page or through a hidden file input; the browser decodes it and the
+//! pixels go to the app. Nothing is uploaded or stored.
 
 use std::cell::RefCell;
 use std::f64::consts::TAU;
@@ -16,7 +20,8 @@ use endlogic_ui::{
 use wasm_bindgen::JsCast;
 use wasm_bindgen::prelude::*;
 use web_sys::{
-    CanvasRenderingContext2d, HtmlCanvasElement, KeyboardEvent, PointerEvent, Storage, Window,
+    Blob, CanvasRenderingContext2d, ClipboardEvent, DragEvent, HtmlCanvasElement, HtmlInputElement,
+    ImageBitmap, KeyboardEvent, PointerEvent, Storage, Window,
 };
 
 /// Id of the canvas in `index.html`.
@@ -85,10 +90,12 @@ pub fn start() -> Result<(), JsValue> {
         budgets: Budgets::default(),
     };
 
+    let picker = file_input(&window)?;
     let shell = Rc::new(RefCell::new(Shell {
         app: App::new(config),
         window: window.clone(),
         canvas: canvas.clone(),
+        picker,
         painter: CanvasPainter { ctx },
         storage,
         size: (0, 0),
@@ -104,6 +111,17 @@ pub fn start() -> Result<(), JsValue> {
     listen(&shell)?;
     Shell::request_frame(&shell);
     Ok(())
+}
+
+/// Adds a hidden file input for pictures; on a phone it offers photos.
+fn file_input(window: &Window) -> Result<HtmlInputElement, JsValue> {
+    let document = window.document().ok_or("no document")?;
+    let input: HtmlInputElement = document.create_element("input")?.dyn_into()?;
+    input.set_type("file");
+    input.set_accept("image/*");
+    input.set_attribute("style", "display:none")?;
+    document.body().ok_or("no body")?.append_child(&input)?;
+    Ok(input)
 }
 
 /// Adds an invisible element whose padding is the safe-area insets.
@@ -201,6 +219,8 @@ struct Shell {
     app: App,
     window: Window,
     canvas: HtmlCanvasElement,
+    /// The hidden file input that picks a picture.
+    picker: HtmlInputElement,
     painter: CanvasPainter,
     storage: Option<Storage>,
     /// Canvas backing store size in device pixels.
@@ -356,9 +376,82 @@ impl Shell {
                     };
                     let _ = self.canvas.style().set_property("cursor", name);
                 }
+                Effect::PickImage => {
+                    // Cleared first, so picking the same file again counts.
+                    self.picker.set_value("");
+                    self.picker.click();
+                }
             }
         }
     }
+
+    /// Decodes a picture with the browser and passes its pixels to the app,
+    /// or reports that it could not be read.
+    fn decode(shell: &SharedShell, blob: &Blob) {
+        let (window, this) = {
+            let s = shell.borrow();
+            (s.window.clone(), s.this.clone())
+        };
+        let report = move |event: Event| {
+            if let Some(shell) = this.upgrade() {
+                Shell::dispatch(&shell, event);
+            }
+        };
+        let Ok(promise) = window.create_image_bitmap_with_blob(blob) else {
+            report(Event::ImageFailed);
+            return;
+        };
+        let failed = report.clone();
+        let done = Closure::<dyn FnMut(JsValue)>::new(move |bitmap: JsValue| {
+            let event = bitmap
+                .dyn_into::<ImageBitmap>()
+                .ok()
+                .and_then(|bitmap| pixels(&bitmap))
+                .unwrap_or(Event::ImageFailed);
+            report(event);
+        });
+        let refused = Closure::<dyn FnMut(JsValue)>::new(move |_: JsValue| {
+            failed(Event::ImageFailed);
+        });
+        let _ = promise.then2(&done, &refused);
+        // Two small closures per picture; they must outlive the promise.
+        done.forget();
+        refused.forget();
+    }
+}
+
+/// The pixels of a decoded picture, drawn on a canvas made for it.
+fn pixels(bitmap: &ImageBitmap) -> Option<Event> {
+    let (w, h) = (bitmap.width(), bitmap.height());
+    let canvas: HtmlCanvasElement = web_sys::window()?
+        .document()?
+        .create_element("canvas")
+        .ok()?
+        .dyn_into()
+        .ok()?;
+    canvas.set_width(w);
+    canvas.set_height(h);
+    let ctx: CanvasRenderingContext2d = canvas.get_context("2d").ok()??.dyn_into().ok()?;
+    ctx.draw_image_with_image_bitmap(bitmap, 0.0, 0.0).ok()?;
+    bitmap.close();
+    let data = ctx
+        .get_image_data(0.0, 0.0, f64::from(w), f64::from(h))
+        .ok()?
+        .data();
+    Some(Event::Image {
+        width: usize::try_from(w).ok()?,
+        height: usize::try_from(h).ok()?,
+        rgba: data.0,
+    })
+}
+
+/// The first picture among the files of a paste or a drop.
+fn picture_in(data: &web_sys::DataTransfer) -> Option<Blob> {
+    let files = data.files()?;
+    (0..files.length())
+        .filter_map(|i| files.item(i))
+        .find(|f| f.type_().starts_with("image/"))
+        .map(Into::into)
 }
 
 fn install_frame_callback(shell: &SharedShell) {
@@ -457,6 +550,7 @@ fn listen(shell: &SharedShell) -> Result<(), JsValue> {
         };
         Shell::dispatch(&s, Event::Key(key));
     })?;
+    listen_pictures(shell)?;
     let s = shell.clone();
     on(window_target, "resize", move |_: web_sys::Event| {
         Shell::request_frame(&s);
@@ -469,6 +563,55 @@ fn listen(shell: &SharedShell) -> Result<(), JsValue> {
         };
         if let Some((kind, code)) = code {
             Shell::dispatch(&s, Event::CodeChanged(kind, code));
+        }
+    })?;
+    Ok(())
+}
+
+/// Pictures to import: pasted, dropped on the page or picked with the
+/// hidden file input. Pasted text with a puzzle link opens the puzzle.
+fn listen_pictures(shell: &SharedShell) -> Result<(), JsValue> {
+    let window = shell.borrow().window.clone();
+    let window_target: &web_sys::EventTarget = window.as_ref();
+    // Pasting: a picture to read, else a puzzle link.
+    let s = shell.clone();
+    on(window_target, "paste", move |e: ClipboardEvent| {
+        let Some(data) = e.clipboard_data() else {
+            return;
+        };
+        if let Some(blob) = picture_in(&data) {
+            e.prevent_default();
+            Shell::decode(&s, &blob);
+        } else if let Some((kind, code)) = data
+            .get_data("text")
+            .ok()
+            .and_then(|t| endlogic_ui::parse_link(&t))
+        {
+            e.prevent_default();
+            Shell::dispatch(&s, Event::CodeChanged(kind, code));
+        }
+    })?;
+    // Dropping a picture file anywhere on the page.
+    on(window_target, "dragover", move |e: DragEvent| {
+        e.prevent_default();
+    })?;
+    let s = shell.clone();
+    on(window_target, "drop", move |e: DragEvent| {
+        e.prevent_default();
+        if let Some(blob) = e.data_transfer().as_ref().and_then(picture_in) {
+            Shell::decode(&s, &blob);
+        }
+    })?;
+    let (s, picker) = {
+        let shell = shell.borrow();
+        (shell.this.clone(), shell.picker.clone())
+    };
+    let input = picker.clone();
+    let picker_target: &web_sys::EventTarget = picker.as_ref();
+    on(picker_target, "change", move |_: web_sys::Event| {
+        let file = input.files().and_then(|files| files.item(0));
+        if let (Some(file), Some(shell)) = (file, s.upgrade()) {
+            Shell::decode(&shell, &file.into());
         }
     })?;
     Ok(())

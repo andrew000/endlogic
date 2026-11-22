@@ -146,6 +146,31 @@ pub struct Toast {
     pub error: bool,
     /// Seconds since it appeared.
     pub elapsed: f32,
+    /// For [`Text::Recognized`]: width, height, pieces and colors.
+    pub counts: [usize; 4],
+}
+
+/// A screenshot on its way into the editor.
+#[derive(Clone)]
+pub(crate) enum Import {
+    /// Waiting to be read; `shown` once "Recognizing…" is on screen.
+    Pending {
+        width: usize,
+        height: usize,
+        rgba: Vec<u8>,
+        shown: bool,
+    },
+    /// Read; waits for the answer to "Replace the current puzzle?".
+    Ask(endlogic_vision::Recognized),
+}
+
+impl core::fmt::Debug for Import {
+    fn fmt(&self, f: &mut core::fmt::Formatter<'_>) -> core::fmt::Result {
+        match self {
+            Import::Pending { width, height, .. } => write!(f, "Pending({width}x{height})"),
+            Import::Ask(r) => write!(f, "Ask({:?})", r.doubts),
+        }
+    }
 }
 
 /// A piece moving towards its resting place.
@@ -269,6 +294,8 @@ pub struct App {
     /// The puzzle in the custom tab's editor.
     pub(crate) editor: Editor,
     pub(crate) edit: EditState,
+    /// A screenshot being read or waiting for an answer.
+    pub(crate) import: Option<Import>,
     pub(crate) layout: Layout,
 }
 
@@ -323,6 +350,7 @@ impl App {
                 .and_then(|code| decode(code).ok())
                 .map_or_else(Editor::default, |p| Editor::from_puzzle(&p)),
             edit: EditState::default(),
+            import: None,
             layout: Layout::compute(&LayoutInput {
                 width: 1.0,
                 height: 1.0,
@@ -385,6 +413,16 @@ impl App {
                     self.show_toast(Text::CopyFailed, true);
                 }
             }
+            Event::Image {
+                width,
+                height,
+                rgba,
+            } => self.receive_image(width, height, rgba),
+            Event::ImageFailed => {
+                self.open_custom_editor();
+                self.import = None;
+                self.show_toast(Text::Unreadable, true);
+            }
         }
         self.update_cursor();
     }
@@ -403,8 +441,12 @@ impl App {
         self.step_generator();
         self.step_hint();
         self.step_editor(dt);
+        self.step_import();
         self.animate(dt);
         draw::draw(self, &mut Ink::new(painter));
+        if let Some(Import::Pending { shown, .. }) = &mut self.import {
+            *shown = true;
+        }
         self.busy()
     }
 
@@ -713,6 +755,7 @@ impl App {
     fn busy(&self) -> bool {
         self.generator.is_some()
             || self.toast.is_some()
+            || matches!(self.import, Some(Import::Pending { .. }))
             || self.editor_busy()
             || self.game.as_ref().is_some_and(|g| {
                 (g.won && g.win_elapsed < theme::WIN_TIME)
@@ -796,7 +839,20 @@ impl App {
             text,
             error,
             elapsed: 0.0,
+            counts: [0; 4],
         });
+    }
+
+    /// The words of the toast on screen, if any.
+    #[must_use]
+    pub fn toast_label(&self) -> Option<String> {
+        let toast = self.toast?;
+        Some(if toast.text == Text::Recognized {
+            let [w, h, n, c] = toast.counts;
+            crate::text::recognized(self.lang, w, h, n, c)
+        } else {
+            crate::text::text(self.lang, toast.text).to_owned()
+        })
     }
 
     fn save(&mut self, key: &'static str, value: &str) {

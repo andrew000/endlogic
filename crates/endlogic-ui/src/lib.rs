@@ -20,6 +20,7 @@ mod font;
 mod hint;
 mod ink;
 mod layout;
+mod link;
 mod math;
 mod painter;
 mod shell;
@@ -40,15 +41,18 @@ pub use draw::draw_icon;
 pub use editor::{
     ClueRef, DRAFT_SIDE, Draft, DraftError, EditControl, Editor, SOLUTION_LIMIT, SolveState,
 };
+/// What a screenshot reading is not sure about, as the editor marks it.
+pub use endlogic_vision::{Doubt, Place, Reason};
 pub use font::{
     Align, FONT_SAMPLE_SIZE, Font, MIN_CAP_HEIGHT, MIN_FONT_SIZE, draw_font_sample, draw_text,
     has_glyph, repertoire, text_width,
 };
 pub use layout::{
     Arrangement, BAND, COUNTER_GAP, EditLayout, HelpRow, LOW_WIDE_HEIGHT, Layout, LayoutInput,
-    MAX_TRAY_SHARE, MIN_TARGET, MIN_TRAY_CELL, Mode, Pager, PieceEditor, ResultPanel, Stepper,
-    TRAY_MIN_SCALE, TRAY_SCALE, TextBlock, tab_label,
+    MAX_TRAY_SHARE, MIN_TARGET, MIN_TRAY_CELL, Mode, Pager, PieceEditor, Prompt, ResultPanel,
+    Stepper, TRAY_MIN_SCALE, TRAY_SCALE, TextBlock, tab_label,
 };
+pub use link::parse_link;
 pub use painter::{Painter, Point, Rect, Rgba};
 pub use shell::{
     Budgets, CodeKind, Config, Cursor, Effect, Event, Insets, Key, Pointer, PointerKind,
@@ -56,6 +60,7 @@ pub use shell::{
     SETTING_LANG,
 };
 pub use text::{
-    Lang, Text, color_name, difficulty_label, problem_line, problem_text, solution_of, text,
+    Lang, Text, color_name, difficulty_label, problem_line, problem_text, recognized, solution_of,
+    text,
 };
 pub use theme::{BACKGROUND, PALETTES, Palette, palette};

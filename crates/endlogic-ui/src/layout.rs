@@ -32,7 +32,7 @@ use endlogic_core::generator::Difficulty;
 
 mod edit;
 
-pub use edit::{EditLayout, Mode, PieceEditor, ResultPanel, Stepper};
+pub use edit::{EditLayout, Mode, PieceEditor, Prompt, ResultPanel, Stepper};
 
 /// Smallest side of the touch zone of anything that can be tapped.
 pub const MIN_TARGET: f32 = 44.0;
@@ -1294,7 +1294,8 @@ struct LeftTop {
     title: Rect,
     puzzle_id: Rect,
     tabs: [Rect; 5],
-    /// The colors switch, beside the custom tab (unused in the editor).
+    /// The colors switch beside the custom tab; in the editor, the
+    /// screenshot button.
     colors: Rect,
     lang: Rect,
     share: Rect,
@@ -1332,20 +1333,18 @@ fn left_top(
     let tab_w = (side - gap) / 2.0;
     let tabs_y = title.bottom().max(puzzle_id.bottom()) + gap;
     // Tabs a full target apart, so their zones just touch; under the 2×2
-    // grid the custom tab takes the whole width in the editor, and shares
-    // the row with the colors switch while playing.
-    let playing = input.mode == Mode::Play;
+    // grid the custom tab shares the row with the colors switch while
+    // playing, and with the screenshot button in the editor.
     let tabs = core::array::from_fn(|k| {
-        let (w, x) = if k == 4 && !playing {
-            (side, lx)
-        } else if k == 4 {
+        let (w, x) = if k == 4 {
             (side - gap - tab_w.max(2.0 * MIN_TARGET), lx)
         } else {
             (tab_w, lx + to_f32(k % 2) * (tab_w + gap))
         };
         Rect::new(x, tabs_y + to_f32(k / 2) * MIN_TARGET, w, LOW_TAB)
     });
-    // The switch needs two targets; the custom tab gives it room.
+    // The switch (or the screenshot button) needs two targets; the custom
+    // tab gives it room.
     let colors_w = tab_w.max(2.0 * MIN_TARGET);
     let colors = Rect::new(lx + side - colors_w, tabs[4].y, colors_w, LOW_TAB);
     let row_y = tabs_y + tabs_h + gap;
