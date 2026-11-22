@@ -534,20 +534,41 @@ fn listen(shell: &SharedShell) -> Result<(), JsValue> {
         if e.ctrl_key() || e.meta_key() || e.alt_key() {
             return;
         }
-        // Physical keys, so `R` works in every keyboard layout.
-        let key = match e.code().as_str() {
-            "KeyR" if !e.repeat() => Key::R,
-            "KeyH" if !e.repeat() => Key::H,
-            "Tab" => {
+        // Physical keys, so `R` works in every keyboard layout; digits
+        // from the top row and the numeric keypad alike.
+        let code = e.code();
+        let digit = code
+            .strip_prefix("Digit")
+            .or_else(|| code.strip_prefix("Numpad"))
+            .and_then(|d| d.parse::<u8>().ok())
+            .filter(|d| *d <= 9);
+        let key = match (code.as_str(), digit) {
+            (_, Some(d)) if !e.repeat() => Key::Digit(d),
+            ("KeyR", _) if !e.repeat() => Key::R,
+            ("KeyH", _) if !e.repeat() => Key::H,
+            ("Tab", _) => {
                 e.prevent_default();
                 if e.repeat() {
                     return;
                 }
                 Key::Tab
             }
-            "Escape" => Key::Escape,
+            ("Escape", _) => Key::Escape,
+            ("ArrowLeft", _) => Key::Left,
+            ("ArrowRight", _) => Key::Right,
+            ("ArrowUp", _) => Key::Up,
+            ("ArrowDown", _) => Key::Down,
+            ("Backspace", _) => Key::Backspace,
+            ("Enter" | "NumpadEnter", _) if !e.repeat() => Key::Enter,
             _ => return,
         };
+        if matches!(
+            key,
+            Key::Left | Key::Right | Key::Up | Key::Down | Key::Backspace
+        ) {
+            // Not for scrolling or going back.
+            e.prevent_default();
+        }
         Shell::dispatch(&s, Event::Key(key));
     })?;
     listen_pictures(shell)?;

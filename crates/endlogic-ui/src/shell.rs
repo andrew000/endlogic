@@ -134,10 +134,26 @@ pub enum Key {
     R,
     /// Switch the counter display.
     Tab,
-    /// Cancel a drag.
+    /// Cancel a drag; close the editor's digit strip.
     Escape,
     /// Ask for a hint.
     H,
+    /// A digit, 0 to 9, from the top row or the numeric keypad: the value
+    /// of the selected clue field in the editor.
+    Digit(u8),
+    /// The previous clue field.
+    Left,
+    /// The next clue field.
+    Right,
+    /// The previous clue field.
+    Up,
+    /// The next clue field.
+    Down,
+    /// The previous clue field, values unchanged.
+    Backspace,
+    /// Finishes the entry: a digit waiting for a second one stands alone,
+    /// otherwise the digit strip closes.
+    Enter,
 }
 
 /// Input from the shell.

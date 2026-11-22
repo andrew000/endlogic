@@ -109,6 +109,10 @@ pub const CLEAR_TIME: f32 = 3.0;
 pub const ROTATE_TIME: f32 = 0.10;
 /// Seconds for the win highlight to fade in.
 pub const WIN_TIME: f32 = 0.6;
+/// Seconds a digit that may start a two-digit clue waits for the second.
+pub const SECOND_DIGIT_TIME: f32 = 0.6;
+/// Seconds a clue field shakes when it refuses a value.
+pub const SHAKE_TIME: f32 = 0.3;
 /// Seconds a toast stays on screen, fade included.
 pub const TOAST_TIME: f32 = 2.2;
 

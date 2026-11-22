@@ -13,14 +13,55 @@ pub const SCAN_H: u32 = 0x23;
 /// Scan code of the key labelled `V` on a US keyboard, for `Ctrl+V`.
 pub const SCAN_V: u32 = 0x2F;
 
-/// The game key at scan code `scan` (set 1, without the extended flag).
+/// Scan code of `Backspace`.
+pub const SCAN_BACKSPACE: u32 = 0x0E;
+/// Scan code of `Enter` (with the extended flag: the keypad's).
+pub const SCAN_ENTER: u32 = 0x1C;
+
+/// The game key at scan code `scan` (set 1, without the extended flag):
+/// letters, digits of the top row and of the numeric keypad.
 #[must_use]
 pub fn key_for_scan(scan: u32) -> Option<Key> {
+    // Keypad digits by position, whatever Num Lock says.
+    let keypad = [
+        (0x52, 0),
+        (0x4F, 1),
+        (0x50, 2),
+        (0x51, 3),
+        (0x4B, 4),
+        (0x4C, 5),
+        (0x4D, 6),
+        (0x47, 7),
+        (0x48, 8),
+        (0x49, 9),
+    ];
     match scan {
         SCAN_R => Some(Key::R),
         SCAN_H => Some(Key::H),
         SCAN_TAB => Some(Key::Tab),
         SCAN_ESCAPE => Some(Key::Escape),
+        SCAN_BACKSPACE => Some(Key::Backspace),
+        SCAN_ENTER => Some(Key::Enter),
+        // The top row: 1 to 9, then 0.
+        0x02..=0x0A => u8::try_from(scan - 1).ok().map(Key::Digit),
+        0x0B => Some(Key::Digit(0)),
+        _ => keypad
+            .iter()
+            .find(|&&(s, _)| s == scan)
+            .map(|&(_, d)| Key::Digit(d)),
+    }
+}
+
+/// The game key at an extended scan code: the arrows and the keypad's
+/// `Enter`.
+#[must_use]
+pub fn key_for_extended(scan: u32) -> Option<Key> {
+    match scan {
+        0x48 => Some(Key::Up),
+        0x50 => Some(Key::Down),
+        0x4B => Some(Key::Left),
+        0x4D => Some(Key::Right),
+        SCAN_ENTER => Some(Key::Enter),
         _ => None,
     }
 }
@@ -51,20 +92,30 @@ pub struct Modifiers {
     pub win: bool,
 }
 
-/// Decides what a key press does: game keys without modifiers and without
-/// auto-repeat, and `Ctrl+V`; nothing else.
+/// Decides what a key press does: game keys without modifiers, and
+/// `Ctrl+V`; nothing else. Held keys repeat only to move between clue
+/// fields (arrows and `Backspace`).
 #[must_use]
-pub fn press(scan: u32, repeat: bool, mods: Modifiers) -> Press {
-    if repeat {
+pub fn press(scan: u32, extended: bool, repeat: bool, mods: Modifiers) -> Press {
+    let key = if extended {
+        key_for_extended(scan)
+    } else {
+        key_for_scan(scan)
+    };
+    let moves = matches!(
+        key,
+        Some(Key::Left | Key::Right | Key::Up | Key::Down | Key::Backspace)
+    );
+    if repeat && !moves {
         return Press::Ignore;
     }
-    if mods.ctrl && !mods.alt && !mods.win && !mods.shift && scan == SCAN_V {
-        return Press::Paste;
+    if mods.ctrl && !mods.alt && !mods.win && !mods.shift && !extended && scan == SCAN_V {
+        return if repeat { Press::Ignore } else { Press::Paste };
     }
     if mods.ctrl || mods.alt || mods.win {
         return Press::Ignore;
     }
-    key_for_scan(scan).map_or(Press::Ignore, Press::Key)
+    key.map_or(Press::Ignore, Press::Key)
 }
 
 #[cfg(test)]
@@ -78,35 +129,63 @@ mod tests {
         assert_eq!(key_for_scan(0x0F), Some(Key::Tab));
         assert_eq!(key_for_scan(0x01), Some(Key::Escape));
         // Neighbours and other keys do nothing.
-        for scan in [0x12, 0x14, 0x22, 0x24, 0x10, 0x1C, 0x39, 0x2F, 0x00, 0xFF] {
+        for scan in [0x12, 0x14, 0x22, 0x24, 0x10, 0x39, 0x2F, 0x00, 0xFF] {
             assert_eq!(key_for_scan(scan), None, "{scan:#x}");
         }
+    }
+
+    #[test]
+    fn digits_of_the_top_row_and_the_keypad() {
+        for (scan, d) in [(0x02, 1), (0x0A, 9), (0x0B, 0), (0x06, 5)] {
+            assert_eq!(key_for_scan(scan), Some(Key::Digit(d)));
+        }
+        for (scan, d) in [(0x52, 0), (0x4F, 1), (0x4C, 5), (0x49, 9)] {
+            assert_eq!(key_for_scan(scan), Some(Key::Digit(d)));
+        }
+        assert_eq!(key_for_scan(0x0E), Some(Key::Backspace));
+        assert_eq!(key_for_scan(0x1C), Some(Key::Enter));
+        // The arrows share scan codes with the keypad, marked extended.
+        assert_eq!(key_for_extended(0x48), Some(Key::Up));
+        assert_eq!(key_for_extended(0x50), Some(Key::Down));
+        assert_eq!(key_for_extended(0x4B), Some(Key::Left));
+        assert_eq!(key_for_extended(0x4D), Some(Key::Right));
+        assert_eq!(key_for_extended(0x1C), Some(Key::Enter));
+        assert_eq!(key_for_extended(0x13), None);
+        let none = Modifiers::default();
+        // Held arrows repeat, held digits do not.
+        assert_eq!(press(0x4B, true, true, none), Press::Key(Key::Left));
+        assert_eq!(press(0x0E, false, true, none), Press::Key(Key::Backspace));
+        assert_eq!(press(0x02, false, true, none), Press::Ignore);
     }
 
     #[test]
     fn presses_respect_repeat_and_modifiers() {
         let none = Modifiers::default();
         let ctrl = Modifiers { ctrl: true, ..none };
-        assert_eq!(press(SCAN_R, false, none), Press::Key(Key::R));
-        assert_eq!(press(SCAN_R, true, none), Press::Ignore);
+        assert_eq!(press(SCAN_R, false, false, none), Press::Key(Key::R));
+        assert_eq!(press(SCAN_R, false, true, none), Press::Ignore);
         // Shift does not change the physical key.
         let shift = Modifiers {
             shift: true,
             ..none
         };
-        assert_eq!(press(SCAN_H, false, shift), Press::Key(Key::H));
-        assert_eq!(press(SCAN_V, false, ctrl), Press::Paste);
-        assert_eq!(press(SCAN_V, true, ctrl), Press::Ignore);
-        assert_eq!(press(SCAN_V, false, none), Press::Ignore);
+        assert_eq!(press(SCAN_H, false, false, shift), Press::Key(Key::H));
+        assert_eq!(press(SCAN_V, false, false, ctrl), Press::Paste);
+        assert_eq!(press(SCAN_V, false, true, ctrl), Press::Ignore);
+        assert_eq!(press(SCAN_V, false, false, none), Press::Ignore);
         for mods in [
             ctrl,
             Modifiers { alt: true, ..none },
             Modifiers { win: true, ..none },
         ] {
-            assert_eq!(press(SCAN_R, false, mods), Press::Ignore, "{mods:?}");
-            assert_eq!(press(SCAN_TAB, false, mods), Press::Ignore, "{mods:?}");
+            assert_eq!(press(SCAN_R, false, false, mods), Press::Ignore, "{mods:?}");
+            assert_eq!(
+                press(SCAN_TAB, false, false, mods),
+                Press::Ignore,
+                "{mods:?}"
+            );
         }
         let ctrl_alt = Modifiers { alt: true, ..ctrl };
-        assert_eq!(press(SCAN_V, false, ctrl_alt), Press::Ignore);
+        assert_eq!(press(SCAN_V, false, false, ctrl_alt), Press::Ignore);
     }
 }

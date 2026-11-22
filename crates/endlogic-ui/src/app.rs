@@ -1279,6 +1279,9 @@ impl App {
     }
 
     fn key(&mut self, key: Key) {
+        if self.is_editing() && self.edit_key(key) {
+            return;
+        }
         match key {
             Key::R => match self.gesture {
                 Gesture::Dragging(drag) => self.rotate_dragged(drag),
@@ -1300,11 +1303,19 @@ impl App {
             Key::Escape => {
                 self.edit.selected = None;
                 self.edit.draft = None;
+                self.edit.second = None;
                 if let Gesture::Dragging(drag) = self.gesture {
                     self.cancel_drag(drag);
                     self.gesture = Gesture::Ignored { id: drag.id };
                 }
             }
+            Key::Digit(_)
+            | Key::Left
+            | Key::Right
+            | Key::Up
+            | Key::Down
+            | Key::Backspace
+            | Key::Enter => {}
         }
     }
 

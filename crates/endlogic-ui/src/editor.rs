@@ -18,7 +18,7 @@ use endlogic_vision::{Doubt, Failure, Image, Place, recognize};
 use crate::app::{App, Control, Gesture, Import};
 use crate::layout::{EditLayout, Layout, Mode, to_f32};
 use crate::painter::Rect;
-use crate::shell::{CodeKind, Effect, SETTING_EDITOR};
+use crate::shell::{CodeKind, Effect, Key, SETTING_EDITOR};
 use crate::text::Text;
 use crate::theme;
 
@@ -368,6 +368,11 @@ pub(crate) struct EditState {
     /// Places a screenshot reading was not sure about, marked until they
     /// are changed or the marks are closed.
     pub doubts: Vec<Doubt>,
+    /// A digit typed that may start a two-digit clue: the field, the digit
+    /// and the seconds it has waited for the second digit.
+    pub second: Option<(ClueRef, usize, f32)>,
+    /// A field that refused a typed value, and the seconds it has shaken.
+    pub shake: Option<(ClueRef, f32)>,
 }
 
 /// An editor action from a control.
@@ -680,8 +685,138 @@ impl App {
         }
     }
 
+    /// The clue fields in the order typing goes through them: for each
+    /// color with fields its rows top to bottom, then its columns.
+    #[must_use]
+    pub fn clue_order(&self) -> Vec<ClueRef> {
+        let (width, height) = (self.editor.width, self.editor.height);
+        let mut order = Vec::new();
+        for color in self.clue_colors() {
+            order.extend((0..height).map(|index| ClueRef {
+                color,
+                row: true,
+                index,
+            }));
+            order.extend((0..width).map(|index| ClueRef {
+                color,
+                row: false,
+                index,
+            }));
+        }
+        order
+    }
+
+    /// A clue field shaking after refusing a value, and how far through the
+    /// shake it is (0 to 1).
+    #[must_use]
+    pub fn shaking(&self) -> Option<(ClueRef, f32)> {
+        self.edit
+            .shake
+            .map(|(clue, t)| (clue, (t / theme::SHAKE_TIME).min(1.0)))
+    }
+
+    /// The field before `clue` in [`clue_order`](App::clue_order).
+    fn previous_clue(&self, clue: ClueRef) -> ClueRef {
+        let order = self.clue_order();
+        let at = order.iter().position(|&c| c == clue).unwrap_or(0);
+        order[(at + order.len() - 1) % order.len().max(1)]
+    }
+
+    /// A key in the editor: digits type clue values, arrows and backspace
+    /// move between fields, enter finishes. Returns whether it was used.
+    pub(crate) fn edit_key(&mut self, key: Key) -> bool {
+        if self.edit.draft.is_some() || self.import.is_some() {
+            return false;
+        }
+        let first = self.clue_order().first().copied();
+        match key {
+            Key::Digit(d) => {
+                let Some(clue) = self.edit.selected.or(first) else {
+                    return true;
+                };
+                self.edit.selected = Some(clue);
+                self.type_digit(clue, usize::from(d));
+            }
+            Key::Left | Key::Up | Key::Backspace | Key::Right | Key::Down => {
+                self.edit.second = None;
+                let forward = matches!(key, Key::Right | Key::Down);
+                self.edit.selected = match self.edit.selected {
+                    Some(clue) if forward => Some(self.next_clue(clue)),
+                    Some(clue) => Some(self.previous_clue(clue)),
+                    None => first,
+                };
+            }
+            Key::Enter => match self.edit.second.take() {
+                Some((clue, _, _)) => self.edit.selected = Some(self.next_clue(clue)),
+                None => self.edit.selected = None,
+            },
+            Key::R | Key::Tab | Key::Escape | Key::H => return false,
+        }
+        true
+    }
+
+    /// A digit typed into `clue`. Over the line's length it is refused (the
+    /// field shakes). On a line longer than 9 a digit that can start a
+    /// two-digit value waits for a second digit; otherwise it is the value
+    /// and the next field is selected.
+    fn type_digit(&mut self, clue: ClueRef, digit: usize) {
+        let len = self.line_len(clue);
+        if let Some((waiting, first, _)) = self.edit.second
+            && waiting == clue
+        {
+            let value = first * 10 + digit;
+            if value > len {
+                self.edit.shake = Some((clue, 0.0));
+                return;
+            }
+            self.edit.second = None;
+            self.set_typed(clue, value);
+            self.edit.selected = Some(self.next_clue(clue));
+            return;
+        }
+        self.edit.second = None;
+        if digit > len {
+            self.edit.shake = Some((clue, 0.0));
+            return;
+        }
+        self.set_typed(clue, digit);
+        if digit > 0 && digit * 10 <= len {
+            self.edit.second = Some((clue, digit, 0.0));
+        } else {
+            self.edit.selected = Some(self.next_clue(clue));
+        }
+    }
+
+    /// Sets a clue the user typed or tapped.
+    fn set_typed(&mut self, clue: ClueRef, value: usize) {
+        self.editor
+            .set_clue(clue.color, clue.row, clue.index, value);
+        self.settle_doubt(Place::Clue {
+            color: clue.color,
+            row: clue.row,
+            index: clue.index,
+        });
+        self.edited();
+    }
+
     /// Runs the solver for one frame and counts down the clear button.
     pub(crate) fn step_editor(&mut self, dt: f32) {
+        if let Some((clue, _, waited)) = &mut self.edit.second {
+            *waited += dt;
+            if *waited >= theme::SECOND_DIGIT_TIME {
+                let clue = *clue;
+                self.edit.second = None;
+                if self.edit.selected == Some(clue) {
+                    self.edit.selected = Some(self.next_clue(clue));
+                }
+            }
+        }
+        if let Some((_, shaken)) = &mut self.edit.shake {
+            *shaken += dt;
+            if *shaken >= theme::SHAKE_TIME {
+                self.edit.shake = None;
+            }
+        }
         if let Some(armed) = &mut self.edit.clear_armed {
             *armed += dt;
             if *armed >= theme::CLEAR_TIME {
@@ -709,6 +844,8 @@ impl App {
     /// counts down.
     pub(crate) fn editor_busy(&self) -> bool {
         self.edit.clear_armed.is_some()
+            || self.edit.second.is_some()
+            || self.edit.shake.is_some()
             || self
                 .edit
                 .solver
@@ -947,22 +1084,22 @@ impl App {
                 self.settle_doubt(Place::Cell { row: r, col: c });
                 self.edited();
             }
-            EditControl::Clue(clue) => self.edit.selected = Some(clue),
+            EditControl::Clue(clue) => {
+                self.edit.second = None;
+                self.edit.selected = Some(clue);
+            }
             EditControl::Digit(value) => {
                 let Some(clue) = self.edit.selected else {
                     return;
                 };
-                self.editor
-                    .set_clue(clue.color, clue.row, clue.index, value);
-                self.settle_doubt(Place::Clue {
-                    color: clue.color,
-                    row: clue.row,
-                    index: clue.index,
-                });
+                self.edit.second = None;
+                self.set_typed(clue, value);
                 self.edit.selected = Some(self.next_clue(clue));
-                self.edited();
             }
-            EditControl::DigitsDone | EditControl::Dismiss => self.edit.selected = None,
+            EditControl::DigitsDone | EditControl::Dismiss => {
+                self.edit.second = None;
+                self.edit.selected = None;
+            }
             EditControl::Card(i) => {
                 let piece = self.editor.pieces.get(i).cloned();
                 let color = piece.as_ref().map_or(self.edit.active, |p| p.color);

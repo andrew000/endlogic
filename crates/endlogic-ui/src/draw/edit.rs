@@ -142,7 +142,16 @@ fn draw_clues(app: &App, editor: &Editor, p: &mut Ink<'_>) {
     let selected = app.selected_clue();
     let fields = app.clue_fields();
     let several = fields.iter().any(|(c, _)| c.color != Color::DEFAULT);
+    let shake = app.shaking();
     for (clue, area) in fields {
+        // A field that refused a value shakes side to side, fading out.
+        let area = match shake {
+            Some((c, t)) if c == clue => {
+                let dx = math::sin(t * core::f32::consts::TAU * 3.0) * 4.0 * (1.0 - t);
+                Rect::new(area.x + dx, area.y, area.w, area.h)
+            }
+            _ => area,
+        };
         let accent = palette(clue.color).accent;
         let value = editor.clue(clue.color, clue.row, clue.index);
         let label = value.to_string();

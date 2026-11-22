@@ -515,11 +515,7 @@ extern "system" fn window_proc(hwnd: HWND, msg: u32, wparam: WPARAM, lparam: LPA
             let scan = u32::try_from((lparam.0 >> 16) & 0xFF).unwrap_or(0);
             let extended = (lparam.0 >> 24) & 1 == 1;
             let repeat = (lparam.0 >> 30) & 1 == 1;
-            let press = if extended {
-                Press::Ignore
-            } else {
-                keys::press(scan, repeat, modifiers())
-            };
+            let press = keys::press(scan, extended, repeat, modifiers());
             match press {
                 Press::Key(key) => handled(with_shell(|s| s.send(Event::Key(key)))),
                 Press::Paste => handled(with_shell(Shell::paste)),
